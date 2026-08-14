@@ -1,0 +1,26 @@
+# Local reference inputs
+/proxmox-/
+/private-cloud-control-*.md
+
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+.turbo/
+.nx/
+test-results/
+playwright-report/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Tool and operating-system state
+.DS_Store
+.idea/
+.vscode/
+*.log
