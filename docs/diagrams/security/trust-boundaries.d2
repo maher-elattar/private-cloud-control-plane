@@ -1,0 +1,214 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 0
+    pad: 48
+  }
+}
+
+direction: right
+
+classes: {
+  actor: {
+    shape: person
+    style.fill: "#FFF7D6"
+    style.stroke: "#B7791F"
+    style.stroke-width: 2
+  }
+  edge: {
+    style.fill: "#E8F0FE"
+    style.stroke: "#3568B8"
+    style.stroke-width: 2
+  }
+  app: {
+    style.fill: "#DDF7F3"
+    style.stroke: "#087F6A"
+    style.stroke-width: 2
+  }
+  privileged: {
+    style.fill: "#FFE3E3"
+    style.stroke: "#B42318"
+    style.stroke-width: 3
+  }
+  data: {
+    shape: cylinder
+    style.fill: "#E8F0FE"
+    style.stroke: "#3568B8"
+    style.stroke-width: 2
+  }
+  queue: {
+    shape: queue
+    style.fill: "#F3E8FF"
+    style.stroke: "#7A3E9D"
+    style.stroke-width: 2
+  }
+  delivery: {
+    style.fill: "#F3F5F7"
+    style.stroke: "#667085"
+    style.stroke-width: 2
+  }
+  telemetry: {
+    style.fill: "#EAF7E8"
+    style.stroke: "#3B7D3A"
+    style.stroke-width: 2
+  }
+  aws: {
+    style.fill: "#FFF0E1"
+    style.stroke: "#C45B14"
+    style.stroke-width: 2
+  }
+}
+
+untrusted: Untrusted Client Zone {
+  style.fill: "#FFFCF2"
+  style.stroke: "#D9B44A"
+  style.stroke-width: 2
+  style.stroke-dash: 6
+
+  tenant: Tenant or Administrator {
+    class: actor
+    icon: https://icons.terrastruct.com/essentials/365-user.svg
+  }
+}
+
+edge: Existing Edge + Identity Zone {
+  direction: down
+  style.fill: "#F4F8FF"
+  style.stroke: "#3568B8"
+  style.stroke-width: 2
+  style.stroke-dash: 6
+
+  identity: Identity Provider {
+    class: edge
+    shape: hexagon
+  }
+  gateway: Gateway API + TLS Termination {
+    class: edge
+    shape: hexagon
+    icon: https://icons.terrastruct.com/infra/019-network.svg
+  }
+}
+
+application: Kubernetes Application Zone {
+  direction: down
+  style.fill: "#F2FCFA"
+  style.stroke: "#087F6A"
+  style.stroke-width: 2
+  style.stroke-dash: 6
+
+  api: Control API {class: app}
+  orchestrator: Provisioning Orchestrator {class: app}
+  provider: Proxmox Provider {class: privileged}
+  reconciler: Reconciler {class: app}
+}
+
+data: Kubernetes Data + Messaging Zone {
+  direction: down
+  style.fill: "#F7FBFF"
+  style.stroke: "#3568B8"
+  style.stroke-width: 2
+  style.stroke-dash: 6
+
+  postgres: PostgreSQL {class: data}
+  debezium: Debezium {class: edge; shape: hexagon}
+  kafka: Kafka {class: queue}
+}
+
+provider_zone: Provider Management Zone {
+  style.fill: "#FFF6F6"
+  style.stroke: "#B42318"
+  style.stroke-width: 3
+  style.stroke-dash: 6
+
+  pve: Proxmox API {
+    class: privileged
+    shape: cloud
+  }
+}
+
+observability: Observability Zone {
+  direction: down
+  style.fill: "#F5FBF3"
+  style.stroke: "#3B7D3A"
+  style.stroke-width: 2
+  style.stroke-dash: 6
+
+  collector: OpenTelemetry Collector {class: telemetry; shape: hexagon}
+  backends: Prometheus + Tempo + Loki + Grafana {class: telemetry; shape: stored_data}
+}
+
+delivery: Delivery Control Zone {
+  direction: down
+  style.fill: "#F8FAFC"
+  style.stroke: "#667085"
+  style.stroke-width: 2
+  style.stroke-dash: 6
+
+  ci: CI Identity {class: delivery; shape: hexagon}
+  registry: Image Registry {class: delivery; shape: stored_data}
+  live: Live GitOps Repository {class: delivery; shape: document}
+  argo: Argo CD {class: delivery; shape: hexagon}
+}
+
+aws: AWS Sandbox Account {
+  direction: down
+  style.fill: "#FFF8F0"
+  style.stroke: "#C45B14"
+  style.stroke-width: 3
+  style.stroke-dash: 6
+
+  api_gateway: API Gateway {
+    class: aws
+    icon: https://icons.terrastruct.com/aws/Networking%20&%20Content%20Delivery/Amazon-API-Gateway.svg
+  }
+  lambda: Lambda Functions {
+    class: aws
+    icon: https://icons.terrastruct.com/aws/Compute/AWS-Lambda.svg
+  }
+  dynamodb: DynamoDB + Streams {
+    class: aws
+    shape: cylinder
+    icon: https://icons.terrastruct.com/aws/Database/Amazon-DynamoDB.svg
+  }
+  sqs: SQS FIFO + DLQ {class: queue}
+  archive: S3 Audit Archive {
+    class: aws
+    shape: cylinder
+    icon: https://icons.terrastruct.com/aws/Storage/Amazon-Simple-Storage-Service-S3.svg
+  }
+}
+
+untrusted.tenant -> edge.identity: TB-01 authenticate
+untrusted.tenant -> edge.gateway: TB-02 HTTPS
+edge.gateway -> application.api: TB-03 asserted identity
+
+application.api -> data.postgres: TB-04 SQL role
+application.orchestrator -> data.postgres: TB-04 SQL role
+application.reconciler -> data.postgres: TB-04 SQL role
+data.postgres -> data.debezium: TB-05 scoped WAL
+data.debezium -> data.kafka: TB-06 topic ACL
+data.kafka -> application.orchestrator: TB-07 validated events
+data.kafka -> application.api: TB-07 validated events
+
+application.orchestrator -> application.provider: TB-08 authorized gRPC
+application.reconciler -> application.provider: TB-08 read-only gRPC
+application.provider -> provider_zone.pve: TB-09 least-privilege API {
+  style.stroke: "#B42318"
+  style.stroke-width: 3
+}
+
+application.api -> observability.collector: TB-10 redacted OTLP
+application.orchestrator -> observability.collector: TB-10 redacted OTLP
+application.provider -> observability.collector: TB-10 redacted OTLP
+application.reconciler -> observability.collector: TB-10 redacted OTLP
+observability.collector -> observability.backends: TB-11 retained telemetry
+
+delivery.ci -> delivery.registry: TB-12 signed artifact
+delivery.ci -> delivery.live: TB-13 reviewed digest
+delivery.live -> delivery.argo: TB-14 desired state
+
+aws.api_gateway -> aws.lambda: TB-15 authorized invoke
+aws.lambda -> aws.dynamodb: TB-16 scoped transaction
+aws.dynamodb -> aws.lambda: TB-17 duplicate-safe stream
+aws.lambda -> aws.sqs: TB-18 ordered publish
+aws.lambda -> aws.archive: TB-19 append-only audit
