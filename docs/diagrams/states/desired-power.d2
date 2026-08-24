@@ -1,0 +1,42 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 48
+  }
+}
+
+direction: right
+
+classes: {
+  start: {
+    shape: circle
+    style.fill: "#344054"
+    style.stroke: "#1D2939"
+    style.stroke-width: 2
+  }
+  running: {
+    style.fill: "#DFF3DF"
+    style.stroke: "#2E7D32"
+    style.stroke-width: 3
+    style.shadow: true
+  }
+  stopped: {
+    style.fill: "#E8F0FE"
+    style.stroke: "#3568B8"
+    style.stroke-width: 3
+    style.shadow: true
+  }
+}
+
+start: Start {class: start; width: 70; height: 70}
+running: RUNNING {class: running}
+stopped: STOPPED {class: stopped}
+
+start -> running: create default
+running -> stopped: stop or shutdown accepted
+stopped -> running: start accepted
+running -> running: reboot accepted {
+  style.stroke: "#7A3E9D"
+  style.stroke-dash: 5
+}

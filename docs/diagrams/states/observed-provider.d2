@@ -1,0 +1,91 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 0
+    pad: 48
+  }
+}
+
+direction: right
+
+classes: {
+  start: {
+    shape: circle
+    style.fill: "#344054"
+    style.stroke: "#1D2939"
+    style.stroke-width: 2
+  }
+  unknown: {
+    style.fill: "#FFF7D6"
+    style.stroke: "#B7791F"
+    style.stroke-width: 3
+  }
+  healthy: {
+    style.fill: "#DFF3DF"
+    style.stroke: "#2E7D32"
+    style.stroke-width: 2
+  }
+  stopped: {
+    style.fill: "#E8F0FE"
+    style.stroke: "#3568B8"
+    style.stroke-width: 2
+  }
+  paused: {
+    style.fill: "#F3E8FF"
+    style.stroke: "#7A3E9D"
+    style.stroke-width: 2
+  }
+  danger: {
+    style.fill: "#FFE3E3"
+    style.stroke: "#B42318"
+    style.stroke-width: 3
+  }
+}
+
+start: Start {class: start; width: 70; height: 70}
+unknown: UNKNOWN {class: unknown}
+running: RUNNING {class: healthy}
+stopped: STOPPED {class: stopped}
+paused: PAUSED {class: paused}
+missing: MISSING {class: danger}
+ambiguous: AMBIGUOUS {class: danger}
+
+start -> unknown
+unknown -> running: provider observation
+unknown -> stopped: provider observation
+unknown -> paused: provider observation
+unknown -> missing: conclusive absence {
+  style.stroke: "#B42318"
+}
+unknown -> ambiguous: conflicting identity evidence {
+  style.stroke: "#B42318"
+}
+
+running -> stopped: later observation
+running -> paused: later observation
+running -> missing: conclusive absence {
+  style.stroke: "#B42318"
+}
+stopped -> running: later observation
+stopped -> missing: conclusive absence {
+  style.stroke: "#B42318"
+}
+paused -> running: later observation
+paused -> stopped: later observation
+
+missing -> running: late or corrected observation {
+  style.stroke: "#2E7D32"
+  style.stroke-dash: 5
+}
+missing -> stopped: late or corrected observation {
+  style.stroke: "#3568B8"
+  style.stroke-dash: 5
+}
+ambiguous -> running: operator resolves identity {
+  style.stroke: "#2E7D32"
+  style.stroke-dash: 5
+}
+ambiguous -> stopped: operator resolves identity {
+  style.stroke: "#3568B8"
+  style.stroke-dash: 5
+}

@@ -2,27 +2,9 @@
 
 ## Instance Lifecycle
 
-```mermaid
-stateDiagram-v2
-    [*] --> PROVISIONING: create intent committed
-    PROVISIONING --> ACTIVE: owned VM observed
-    PROVISIONING --> FAILED: no VM or compensation verified
-    PROVISIONING --> MANUAL_REVIEW: outcome or ownership unknown
-    FAILED --> PROVISIONING: authorized create retry
+[![Instance lifecycle](../diagrams/states/instance-lifecycle.svg)](../diagrams/states/instance-lifecycle.svg)
 
-    ACTIVE --> DELETING: soft delete accepted
-    DELETING --> RETAINED: access detached and retention recorded
-    DELETING --> MANUAL_REVIEW: detach outcome unknown
-    RETAINED --> PURGING: eligible administrative purge accepted
-    PURGING --> PURGED: provider absence verified
-    PURGING --> MANUAL_REVIEW: deletion outcome or ownership unknown
-
-    MANUAL_REVIEW --> ACTIVE: owned VM proven healthy
-    MANUAL_REVIEW --> FAILED: absence or safe compensation proven
-    MANUAL_REVIEW --> RETAINED: administrator retains owned resource
-    MANUAL_REVIEW --> PURGED: provider absence proven after authorized purge
-    PURGED --> [*]
-```
+[D2 source](../diagrams/states/instance-lifecycle.d2)
 
 | State | Meaning | Tenant mutation |
 | --- | --- | --- |
@@ -39,69 +21,25 @@ Power changes, resize, and snapshot operations do not change the instance lifecy
 
 ## Desired Power State
 
-```mermaid
-stateDiagram-v2
-    [*] --> RUNNING: create default
-    RUNNING --> STOPPED: stop or shutdown accepted
-    STOPPED --> RUNNING: start accepted
-    RUNNING --> RUNNING: reboot accepted
-```
+[![Desired power state](../diagrams/states/desired-power.svg)](../diagrams/states/desired-power.svg)
+
+[D2 source](../diagrams/states/desired-power.d2)
 
 Desired power state records accepted intent. It does not prove the provider has reached that state.
 
 ## Observed Provider State
 
-```mermaid
-stateDiagram-v2
-    [*] --> UNKNOWN
-    UNKNOWN --> RUNNING: provider observation
-    UNKNOWN --> STOPPED: provider observation
-    UNKNOWN --> PAUSED: provider observation
-    UNKNOWN --> MISSING: conclusive absence
-    UNKNOWN --> AMBIGUOUS: conflicting identity evidence
+[![Observed provider state](../diagrams/states/observed-provider.svg)](../diagrams/states/observed-provider.svg)
 
-    RUNNING --> STOPPED: later observation
-    RUNNING --> PAUSED: later observation
-    RUNNING --> MISSING: conclusive absence
-    STOPPED --> RUNNING: later observation
-    STOPPED --> MISSING: conclusive absence
-    PAUSED --> RUNNING: later observation
-    PAUSED --> STOPPED: later observation
-
-    MISSING --> RUNNING: late or corrected observation
-    MISSING --> STOPPED: late or corrected observation
-    AMBIGUOUS --> RUNNING: operator resolves identity
-    AMBIGUOUS --> STOPPED: operator resolves identity
-```
+[D2 source](../diagrams/states/observed-provider.d2)
 
 Observed state is evidence with a timestamp and provenance. Staleness is a property of the observation, not another provider state.
 
 ## Operation Lifecycle
 
-```mermaid
-stateDiagram-v2
-    [*] --> ACCEPTED: intent and outbox committed
-    ACCEPTED --> QUEUED: command published
-    QUEUED --> RUNNING: inbox and workflow lease claimed
+[![Operation lifecycle](../diagrams/states/operation-lifecycle.svg)](../diagrams/states/operation-lifecycle.svg)
 
-    RUNNING --> SUCCEEDED: intended result observed
-    RUNNING --> RETRY_SCHEDULED: transient failure
-    RETRY_SCHEDULED --> RUNNING: retry becomes due
-    RUNNING --> COMPENSATING: partial permanent failure
-    COMPENSATING --> FAILED: compensation verified
-    COMPENSATING --> MANUAL_REVIEW: compensation failed or unknown
-    RUNNING --> FAILED: permanent failure before side effect
-    RUNNING --> MANUAL_REVIEW: provider outcome unknown
-    RUNNING --> DEAD_LETTERED: poison or exhausted processing
-
-    DEAD_LETTERED --> QUEUED: authorized replay
-    MANUAL_REVIEW --> RUNNING: authorized safe resume
-    MANUAL_REVIEW --> SUCCEEDED: observed success recorded
-    MANUAL_REVIEW --> FAILED: observed failure or absence recorded
-
-    SUCCEEDED --> [*]
-    FAILED --> [*]
-```
+[D2 source](../diagrams/states/operation-lifecycle.d2)
 
 | State | Meaning | Terminal |
 | --- | --- | --- |

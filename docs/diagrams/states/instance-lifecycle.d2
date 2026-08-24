@@ -1,0 +1,107 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 0
+    pad: 48
+  }
+}
+
+direction: right
+
+classes: {
+  start: {
+    shape: circle
+    style.fill: "#344054"
+    style.stroke: "#1D2939"
+    style.stroke-width: 2
+  }
+  pending: {
+    style.fill: "#E8F0FE"
+    style.stroke: "#3568B8"
+    style.stroke-width: 2
+    style.shadow: true
+  }
+  active: {
+    style.fill: "#DFF3DF"
+    style.stroke: "#2E7D32"
+    style.stroke-width: 3
+    style.shadow: true
+  }
+  failed: {
+    style.fill: "#FFE3E3"
+    style.stroke: "#B42318"
+    style.stroke-width: 2
+  }
+  retained: {
+    style.fill: "#F3E8FF"
+    style.stroke: "#7A3E9D"
+    style.stroke-width: 2
+  }
+  review: {
+    style.fill: "#FFF7D6"
+    style.stroke: "#B7791F"
+    style.stroke-width: 3
+    style.shadow: true
+  }
+  terminal: {
+    style.fill: "#E4E7EC"
+    style.stroke: "#475467"
+    style.stroke-width: 3
+  }
+}
+
+start: Start {class: start; width: 70; height: 70}
+provisioning: PROVISIONING {class: pending}
+active: ACTIVE {class: active}
+failed: FAILED {class: failed}
+deleting: DELETING {class: pending}
+retained: RETAINED {class: retained}
+purging: PURGING {class: pending}
+purged: PURGED {class: terminal}
+manual: MANUAL REVIEW {class: review}
+end: End {class: start; width: 70; height: 70}
+
+start -> provisioning: create intent committed
+provisioning -> active: owned VM observed {
+  style.stroke: "#2E7D32"
+  style.stroke-width: 2
+}
+provisioning -> failed: no VM or compensation verified {
+  style.stroke: "#B42318"
+}
+provisioning -> manual: outcome or ownership unknown {
+  style.stroke: "#B7791F"
+  style.stroke-width: 2
+}
+failed -> provisioning: authorized create retry {
+  style.stroke: "#7A3E9D"
+  style.stroke-dash: 5
+}
+
+active -> deleting: soft delete accepted
+deleting -> retained: access detached + retention recorded
+deleting -> manual: detach outcome unknown {
+  style.stroke: "#B7791F"
+}
+retained -> purging: eligible admin purge accepted
+purging -> purged: provider absence verified {
+  style.stroke: "#2E7D32"
+  style.stroke-width: 2
+}
+purging -> manual: deletion outcome or ownership unknown {
+  style.stroke: "#B7791F"
+}
+
+manual -> active: owned VM proven healthy {
+  style.stroke: "#2E7D32"
+}
+manual -> failed: absence or compensation proven {
+  style.stroke: "#B42318"
+}
+manual -> retained: administrator retains resource {
+  style.stroke: "#7A3E9D"
+}
+manual -> purged: absence proven after authorized purge {
+  style.stroke: "#475467"
+}
+purged -> end
