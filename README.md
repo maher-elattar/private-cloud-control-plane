@@ -29,6 +29,7 @@ The repository boundaries and promotion contract are defined in [Repository Boun
 - [Failure Sequences](docs/architecture/failure-sequences.md): broker outage, provider timeout, duplicate delivery, and compensation behavior
 - [State Machines](docs/architecture/state-machines.md): instance, desired power, observed provider, and operation lifecycles
 - [Data Ownership Map](docs/architecture/data-ownership.md): authoritative writers, schemas, topics, transactions, and AWS ownership
+- [Diagram Sources](docs/diagrams/README.md): editable D2 sources, rendered SVGs, visual language, and render workflow
 
 ### Security and Decisions
 
