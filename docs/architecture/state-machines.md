@@ -2,9 +2,9 @@
 
 ## Instance Lifecycle
 
-![Instance lifecycle](../diagrams/rendered/instance-lifecycle.drawio.png)
+![Instance lifecycle](../diagrams/rendered/instance-lifecycle.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/instance-lifecycle.drawio).
+[Open the Mermaid source](../diagrams/mermaid/instance-lifecycle.mmd).
 
 | State | Meaning | Tenant mutation |
 | --- | --- | --- |
@@ -21,17 +21,17 @@ Power changes, resize, and snapshot operations do not change the instance lifecy
 
 ## Desired Power State
 
-![Desired power state](../diagrams/rendered/desired-power-state.drawio.png)
+![Desired power state](../diagrams/rendered/desired-power-state.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/desired-power-state.drawio).
+[Open the Mermaid source](../diagrams/mermaid/desired-power-state.mmd).
 
 Desired power state records accepted intent. It does not prove the provider has reached that state.
 
 ## Observed Provider State
 
-![Observed provider state](../diagrams/rendered/observed-provider-state.drawio.png)
+![Observed provider state](../diagrams/rendered/observed-provider-state.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/observed-provider-state.drawio).
+[Open the Mermaid source](../diagrams/mermaid/observed-provider-state.mmd).
 
 | Transition family | Required evidence |
 | --- | --- |
@@ -45,9 +45,9 @@ Observed state is evidence with a timestamp and provenance. Staleness is a prope
 
 ## Operation Lifecycle
 
-![Operation lifecycle](../diagrams/rendered/operation-lifecycle.drawio.png)
+![Operation lifecycle](../diagrams/rendered/operation-lifecycle.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/operation-lifecycle.drawio).
+[Open the Mermaid source](../diagrams/mermaid/operation-lifecycle.mmd).
 
 | State | Meaning | Terminal |
 | --- | --- | --- |

@@ -1,0 +1,11 @@
+%%{init: {"theme":"base","htmlLabels":false,"themeVariables":{"fontFamily":"Inter, Arial, sans-serif","background":"#ffffff","primaryColor":"#dbeafe","primaryBorderColor":"#1e40af","primaryTextColor":"#1e293b","lineColor":"#475569","secondaryColor":"#dcfce7","tertiaryColor":"#f1f5f9"},"state":{"useMaxWidth":false,"nodeSpacing":120,"rankSpacing":100}}}%%
+stateDiagram-v2
+    [*] --> RUNNING: create default
+    RUNNING --> STOPPED: stop or shutdown accepted
+    STOPPED --> RUNNING: start accepted
+    RUNNING --> RUNNING: reboot accepted
+
+    classDef healthy fill:#dcfce7,stroke:#166534,color:#14532d
+    classDef inactive fill:#e2e8f0,stroke:#475569,color:#1e293b
+    class RUNNING healthy
+    class STOPPED inactive

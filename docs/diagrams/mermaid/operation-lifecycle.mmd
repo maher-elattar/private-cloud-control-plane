@@ -1,0 +1,34 @@
+%%{init: {"theme":"base","htmlLabels":false,"themeVariables":{"fontFamily":"Inter, Arial, sans-serif","background":"#ffffff","primaryColor":"#dbeafe","primaryBorderColor":"#1e40af","primaryTextColor":"#1e293b","lineColor":"#475569","secondaryColor":"#dcfce7","tertiaryColor":"#f1f5f9"},"state":{"useMaxWidth":false,"nodeSpacing":160,"rankSpacing":120}}}%%
+stateDiagram-v2
+    [*] --> ACCEPTED: intent and outbox committed
+    ACCEPTED --> QUEUED: command published
+    QUEUED --> RUNNING: inbox and workflow lease claimed
+
+    RUNNING --> SUCCEEDED: intended result observed
+    RUNNING --> RETRY_SCHEDULED: transient failure
+    RETRY_SCHEDULED --> RUNNING
+    RUNNING --> COMPENSATING: partial permanent failure
+    COMPENSATING --> FAILED: compensation verified
+    COMPENSATING --> MANUAL_REVIEW: compensation failed or unknown
+    RUNNING --> FAILED: permanent failure before side effect
+    RUNNING --> MANUAL_REVIEW: provider outcome unknown
+    RUNNING --> DEAD_LETTERED: poison or exhausted processing
+
+    DEAD_LETTERED --> QUEUED: authorized replay
+    MANUAL_REVIEW --> RUNNING: authorized safe resume
+    MANUAL_REVIEW --> SUCCEEDED: observed success recorded
+    MANUAL_REVIEW --> FAILED: observed failure or absence recorded
+
+    SUCCEEDED --> [*]
+    FAILED --> [*]
+
+    classDef pending fill:#dbeafe,stroke:#1e40af,color:#1e293b
+    classDef running fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+    classDef healthy fill:#dcfce7,stroke:#166534,color:#14532d
+    classDef caution fill:#fef9c3,stroke:#854d0e,color:#713f12
+    classDef failure fill:#fee2e2,stroke:#991b1b,color:#7f1d1d
+    class ACCEPTED,QUEUED pending
+    class RUNNING running
+    class RETRY_SCHEDULED,COMPENSATING,MANUAL_REVIEW caution
+    class SUCCEEDED healthy
+    class DEAD_LETTERED,FAILED failure

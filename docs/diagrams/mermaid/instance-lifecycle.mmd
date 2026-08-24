@@ -1,0 +1,31 @@
+%%{init: {"theme":"base","htmlLabels":false,"themeVariables":{"fontFamily":"Inter, Arial, sans-serif","background":"#ffffff","primaryColor":"#dbeafe","primaryBorderColor":"#1e40af","primaryTextColor":"#1e293b","lineColor":"#475569","secondaryColor":"#dcfce7","tertiaryColor":"#f1f5f9"},"state":{"useMaxWidth":false,"nodeSpacing":160,"rankSpacing":120}}}%%
+stateDiagram-v2
+    [*] --> PROVISIONING: create intent committed
+    PROVISIONING --> ACTIVE: owned VM observed
+    PROVISIONING --> FAILED: no VM or compensation verified
+    PROVISIONING --> MANUAL_REVIEW: outcome or ownership unknown
+    FAILED --> PROVISIONING: authorized create retry
+
+    ACTIVE --> DELETING: soft delete accepted
+    DELETING --> RETAINED: access detached and retention recorded
+    DELETING --> MANUAL_REVIEW: detach outcome unknown
+    RETAINED --> PURGING: eligible administrative purge accepted
+    PURGING --> PURGED: provider absence verified
+    PURGING --> MANUAL_REVIEW: deletion outcome or ownership unknown
+
+    MANUAL_REVIEW --> ACTIVE: owned VM proven healthy
+    MANUAL_REVIEW --> FAILED: absence or compensation proven
+    MANUAL_REVIEW --> RETAINED: administrator retains owned resource
+    MANUAL_REVIEW --> PURGED
+    PURGED --> [*]
+
+    classDef progress fill:#dbeafe,stroke:#1e40af,color:#1e293b
+    classDef healthy fill:#dcfce7,stroke:#166534,color:#14532d
+    classDef caution fill:#fef9c3,stroke:#854d0e,color:#713f12
+    classDef failure fill:#fee2e2,stroke:#991b1b,color:#7f1d1d
+    classDef terminal fill:#e2e8f0,stroke:#475569,color:#1e293b
+    class PROVISIONING,DELETING,PURGING progress
+    class ACTIVE healthy
+    class MANUAL_REVIEW,RETAINED caution
+    class FAILED failure
+    class PURGED terminal
