@@ -1,0 +1,142 @@
+{
+  "title": "Private Cloud Control Plane",
+  "levels": [
+    {
+      "name": "System Context",
+      "elements": [
+        {
+          "id": "ctx_tenant",
+          "type": "person",
+          "label": "Tenant Developer",
+          "desc": "Requests and observes provider-neutral virtual machines"
+        },
+        {
+          "id": "ctx_admin",
+          "type": "person",
+          "label": "Platform Administrator",
+          "desc": "Manages catalog, recovery, retention, and purge"
+        },
+        {
+          "id": "ctx_sre",
+          "type": "person",
+          "label": "Site Reliability Engineer",
+          "desc": "Diagnoses, replays, and reviews reconciliation outcomes"
+        },
+        {
+          "id": "ctx_control_plane",
+          "type": "system",
+          "label": "Private Cloud Control Plane",
+          "desc": "Accepts provider-neutral commands, runs durable workflows, reconciles state, and exposes evidence",
+          "children": "Containers"
+        },
+        {
+          "id": "ctx_identity",
+          "type": "external",
+          "label": "Identity Provider",
+          "desc": "Authenticates users and supplies signed claims"
+        },
+        {
+          "id": "ctx_foundation",
+          "type": "external",
+          "label": "Kubernetes Foundation",
+          "desc": "Gateway API, TLS, RKE2, Cilium, Longhorn, and Argo CD"
+        },
+        {
+          "id": "ctx_proxmox",
+          "type": "external",
+          "label": "Proxmox VE",
+          "desc": "Creates and manages allowlisted lab QEMU virtual machines"
+        },
+        {
+          "id": "ctx_delivery",
+          "type": "external",
+          "label": "Live GitOps Repository",
+          "desc": "Owns runtime desired state and promotion"
+        },
+        {
+          "id": "ctx_aws",
+          "type": "external",
+          "label": "AWS Sandbox",
+          "desc": "Hosts the bounded serverless command reference path"
+        }
+      ],
+      "relations": [
+        {"from": "ctx_tenant", "to": "ctx_control_plane", "label": "Submits commands"},
+        {"from": "ctx_admin", "to": "ctx_control_plane", "label": "Administers"},
+        {"from": "ctx_sre", "to": "ctx_control_plane", "label": "Diagnoses"},
+        {"from": "ctx_control_plane", "to": "ctx_identity", "label": "Validates claims"},
+        {"from": "ctx_foundation", "to": "ctx_control_plane", "label": "Runs workloads"},
+        {"from": "ctx_control_plane", "to": "ctx_proxmox", "label": "Executes provider operations"},
+        {"from": "ctx_delivery", "to": "ctx_foundation", "label": "Declares desired state"},
+        {"from": "ctx_control_plane", "to": "ctx_aws", "label": "Compares AWS path"}
+      ]
+    },
+    {
+      "name": "Containers",
+      "elements": [
+        {"id": "con_client", "type": "person", "label": "CLI or API Client", "desc": "Submits tenant commands and reads operations"},
+        {"id": "con_operator", "type": "person", "label": "Operator Workflow", "desc": "Performs privileged recovery and review"},
+        {"id": "con_gateway", "type": "external", "label": "Gateway API and TLS", "desc": "Existing cluster edge and TLS termination"},
+        {"id": "con_api", "type": "container", "label": "Control API", "tech": "NestJS REST and gRPC", "desc": "Catalog, desired state, operations, outbox, and read projections"},
+        {"id": "con_orchestrator", "type": "container", "label": "Provisioning Orchestrator", "tech": "NestJS Kafka consumer", "desc": "Inbox, checkpoints, retries, and compensation"},
+        {"id": "con_provider", "type": "container", "label": "Proxmox Provider", "tech": "NestJS gRPC", "desc": "Provider translation and task polling"},
+        {"id": "con_reconciler", "type": "container", "label": "Reconciler", "tech": "NestJS scheduled worker", "desc": "Observed-state comparison and late-outcome classification"},
+        {"id": "con_postgres", "type": "database", "label": "PostgreSQL", "tech": "Relational database", "desc": "Domain state, operations, outbox, inbox, checkpoints, leases, and projections"},
+        {"id": "con_debezium", "type": "container", "label": "Kafka Connect and Debezium", "tech": "Change data capture", "desc": "Publishes committed outbox records"},
+        {"id": "con_kafka", "type": "database", "label": "Kafka", "tech": "Event streaming", "desc": "Commands, events, audit, and dead letter topics"},
+        {"id": "con_keda", "type": "container", "label": "KEDA", "tech": "Kubernetes autoscaler", "desc": "Scales consumers from Kafka lag"},
+        {"id": "con_otel", "type": "container", "label": "OpenTelemetry Collector", "tech": "OTLP", "desc": "Receives, processes, and routes telemetry"},
+        {"id": "con_pve", "type": "external", "label": "Proxmox VE API", "desc": "Provider management endpoint"},
+        {"id": "con_prometheus", "type": "external", "label": "Prometheus", "desc": "Metrics storage and query"},
+        {"id": "con_tempo", "type": "external", "label": "Tempo", "desc": "Distributed trace storage"},
+        {"id": "con_loki", "type": "external", "label": "Loki", "desc": "Application log storage"},
+        {"id": "con_grafana", "type": "external", "label": "Grafana", "desc": "Correlated operational dashboards"},
+        {"id": "con_apigw", "type": "container", "label": "API Gateway", "tech": "AWS HTTP API", "desc": "Public serverless command edge"},
+        {"id": "con_command_lambda", "type": "container", "label": "Command Lambda", "tech": "AWS Lambda", "desc": "Validates and accepts commands transactionally"},
+        {"id": "con_dynamodb", "type": "database", "label": "DynamoDB", "tech": "DynamoDB and Streams", "desc": "Aggregate and outbox items"},
+        {"id": "con_relay_lambda", "type": "container", "label": "Streams Relay Lambda", "tech": "AWS Lambda", "desc": "Relays committed outbox records"},
+        {"id": "con_sqs", "type": "database", "label": "SQS FIFO and DLQ", "tech": "Amazon SQS", "desc": "Ordered commands and failed deliveries"},
+        {"id": "con_watchdog", "type": "container", "label": "Outbox Watchdog", "tech": "EventBridge Scheduler and Lambda", "desc": "Detects stranded outbox items"},
+        {"id": "con_archive", "type": "database", "label": "S3 Audit Archive", "tech": "Amazon S3", "desc": "Long-term immutable audit evidence"},
+        {"id": "con_cloudwatch", "type": "external", "label": "CloudWatch", "desc": "AWS logs, metrics, alarms, and execution evidence"}
+      ],
+      "relations": [
+        {"from": "con_client", "to": "con_gateway", "label": "HTTPS or gRPC"},
+        {"from": "con_operator", "to": "con_gateway", "label": "Privileged HTTPS"},
+        {"from": "con_gateway", "to": "con_api", "label": "Authenticated request"},
+        {"from": "con_api", "to": "con_postgres", "label": "Atomic intent and outbox"},
+        {"from": "con_postgres", "to": "con_debezium", "label": "Committed WAL changes"},
+        {"from": "con_debezium", "to": "con_kafka", "label": "Outbox records"},
+        {"from": "con_kafka", "to": "con_orchestrator", "label": "Commands"},
+        {"from": "con_orchestrator", "to": "con_postgres", "label": "Inbox and checkpoints"},
+        {"from": "con_orchestrator", "to": "con_provider", "label": "Provider-neutral gRPC"},
+        {"from": "con_provider", "to": "con_pve", "label": "Allowlisted provider calls"},
+        {"from": "con_reconciler", "to": "con_provider", "label": "Observe owned resources"},
+        {"from": "con_reconciler", "to": "con_postgres", "label": "Observed state"},
+        {"from": "con_reconciler", "to": "con_kafka", "label": "Reconciliation events"},
+        {"from": "con_kafka", "to": "con_api", "label": "Projection events"},
+        {"from": "con_keda", "to": "con_orchestrator", "label": "Scales from lag"},
+        {"from": "con_api", "to": "con_otel", "label": "OTLP"},
+        {"from": "con_orchestrator", "to": "con_otel", "label": "OTLP"},
+        {"from": "con_provider", "to": "con_otel", "label": "OTLP"},
+        {"from": "con_reconciler", "to": "con_otel", "label": "OTLP"},
+        {"from": "con_otel", "to": "con_prometheus", "label": "Metrics"},
+        {"from": "con_otel", "to": "con_tempo", "label": "Traces"},
+        {"from": "con_otel", "to": "con_loki", "label": "Logs"},
+        {"from": "con_prometheus", "to": "con_grafana", "label": "Queries"},
+        {"from": "con_tempo", "to": "con_grafana", "label": "Queries"},
+        {"from": "con_loki", "to": "con_grafana", "label": "Queries"},
+        {"from": "con_client", "to": "con_apigw", "label": "HTTPS reference path"},
+        {"from": "con_apigw", "to": "con_command_lambda", "label": "Invoke"},
+        {"from": "con_command_lambda", "to": "con_dynamodb", "label": "Transactional write"},
+        {"from": "con_dynamodb", "to": "con_relay_lambda", "label": "Stream records"},
+        {"from": "con_relay_lambda", "to": "con_sqs", "label": "FIFO command"},
+        {"from": "con_watchdog", "to": "con_dynamodb", "label": "Scan stale outbox"},
+        {"from": "con_relay_lambda", "to": "con_archive", "label": "Archive audit"},
+        {"from": "con_command_lambda", "to": "con_cloudwatch", "label": "Telemetry"},
+        {"from": "con_relay_lambda", "to": "con_cloudwatch", "label": "Telemetry"},
+        {"from": "con_watchdog", "to": "con_cloudwatch", "label": "Telemetry"}
+      ]
+    }
+  ]
+}

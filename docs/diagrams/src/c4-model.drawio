@@ -1,0 +1,251 @@
+<mxfile>
+  <diagram id="system-context" name="System Context">
+    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="ctx_tenant" value="Tenant Developer&#xa;[Person]&#xa;Requests and observes provider-neutral virtual machines" style="shape=mxgraph.c4.person2;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#083F75;strokeColor=#06315C;" vertex="1" parent="1">
+          <mxGeometry x="0" y="180" width="200" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctx_admin" value="Platform Administrator&#xa;[Person]&#xa;Manages catalog, recovery, retention, and purge" style="shape=mxgraph.c4.person2;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#083F75;strokeColor=#06315C;" vertex="1" parent="1">
+          <mxGeometry x="240" y="180" width="200" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctx_sre" value="Site Reliability Engineer&#xa;[Person]&#xa;Diagnoses, replays, and reviews reconciliation outcomes" style="shape=mxgraph.c4.person2;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#083F75;strokeColor=#06315C;" vertex="1" parent="1">
+          <mxGeometry x="470" y="180" width="200" height="180" as="geometry"/>
+        </mxCell>
+        <UserObject label="Private Cloud Control Plane&#xa;[Software System]&#xa;Accepts provider-neutral commands, runs durable workflows, reconciles state, and exposes evidence" link="data:page/id,containers" id="ctx_control_plane">
+          <mxCell style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#1061B0;strokeColor=#0D5091;" vertex="1" parent="1">
+          <mxGeometry x="330" y="430" width="240" height="120" as="geometry"/>
+        </mxCell>
+        </UserObject>
+        <mxCell id="ctx_identity" value="Identity Provider&#xa;[Software System]&#xa;Authenticates users and supplies signed claims" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="60" y="610" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctx_foundation" value="Kubernetes Foundation&#xa;[Software System]&#xa;Gateway API, TLS, RKE2, Cilium, Longhorn, and Argo CD" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="710" y="210" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctx_proxmox" value="Proxmox VE&#xa;[Software System]&#xa;Creates and manages allowlisted lab QEMU virtual machines" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="330" y="610" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctx_delivery" value="Live GitOps Repository&#xa;[Software System]&#xa;Owns runtime desired state and promotion" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="710" y="0" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctx_aws" value="AWS Sandbox&#xa;[Software System]&#xa;Hosts the bounded serverless command reference path" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="610" y="610" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="e0" value="Submits commands" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="ctx_tenant" target="ctx_control_plane">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="130" y="420"/><mxPoint x="130" y="470"/><mxPoint x="130" y="470"/><mxPoint x="130" y="470"/><mxPoint x="320" y="470"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e1" value="Administers" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="ctx_admin" target="ctx_control_plane">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="380" y="370"/><mxPoint x="380" y="420"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="Diagnoses" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="ctx_sre" target="ctx_control_plane">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="520" y="370"/><mxPoint x="520" y="420"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e3" value="Validates claims" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="ctx_control_plane" target="ctx_identity">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="300" y="510"/><mxPoint x="270" y="510"/><mxPoint x="270" y="510"/><mxPoint x="270" y="510"/><mxPoint x="270" y="600"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="Runs workloads" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="ctx_foundation" target="ctx_control_plane">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="780" y="390"/><mxPoint x="780" y="470"/><mxPoint x="780" y="470"/><mxPoint x="780" y="470"/><mxPoint x="590" y="470"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="Executes provider operations" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="ctx_control_plane" target="ctx_proxmox">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="450" y="550"/><mxPoint x="450" y="600"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="Declares desired state" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="ctx_delivery" target="ctx_foundation">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="830" y="120"/><mxPoint x="830" y="200"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="Compares AWS path" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="ctx_control_plane" target="ctx_aws">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="610" y="510"/><mxPoint x="640" y="510"/><mxPoint x="640" y="510"/><mxPoint x="640" y="510"/><mxPoint x="640" y="600"/></Array></mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="containers" name="Containers">
+    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="con_client" value="CLI or API Client&#xa;[Person]&#xa;Submits tenant commands and reads operations" style="shape=mxgraph.c4.person2;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#083F75;strokeColor=#06315C;" vertex="1" parent="1">
+          <mxGeometry x="1270" y="0" width="200" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_operator" value="Operator Workflow&#xa;[Person]&#xa;Performs privileged recovery and review" style="shape=mxgraph.c4.person2;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#083F75;strokeColor=#06315C;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="0" width="200" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_gateway" value="Gateway API and TLS&#xa;[Software System]&#xa;Existing cluster edge and TLS termination" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="990" y="240" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_api" value="Control API&#xa;[Container: NestJS REST and gRPC]&#xa;Catalog, desired state, operations, outbox, and read projections" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="900" y="430" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_orchestrator" value="Provisioning Orchestrator&#xa;[Container: NestJS Kafka consumer]&#xa;Inbox, checkpoints, retries, and compensation" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="340" y="1170" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_provider" value="Proxmox Provider&#xa;[Container: NestJS gRPC]&#xa;Provider translation and task polling" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="0" y="1360" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_reconciler" value="Reconciler&#xa;[Container: NestJS scheduled worker]&#xa;Observed-state comparison and late-outcome classification" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="250" y="430" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_postgres" value="PostgreSQL&#xa;[Container: Relational database]&#xa;Domain state, operations, outbox, inbox, checkpoints, leases, and projections" style="shape=cylinder3;size=15;boundedLbl=1;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="650" y="620" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_debezium" value="Kafka Connect and Debezium&#xa;[Container: Change data capture]&#xa;Publishes committed outbox records" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="620" y="800" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_kafka" value="Kafka&#xa;[Container: Event streaming]&#xa;Commands, events, audit, and dead letter topics" style="shape=cylinder3;size=15;boundedLbl=1;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="620" y="990" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_keda" value="KEDA&#xa;[Container: Kubernetes autoscaler]&#xa;Scales consumers from Kafka lag" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="340" y="990" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_otel" value="OpenTelemetry Collector&#xa;[Container: OTLP]&#xa;Receives, processes, and routes telemetry" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="310" y="1540" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_pve" value="Proxmox VE API&#xa;[Software System]&#xa;Provider management endpoint" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="0" y="1540" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_prometheus" value="Prometheus&#xa;[Software System]&#xa;Metrics storage and query" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1730" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_tempo" value="Tempo&#xa;[Software System]&#xa;Distributed trace storage" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="310" y="1730" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_loki" value="Loki&#xa;[Software System]&#xa;Application log storage" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="590" y="1730" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_grafana" value="Grafana&#xa;[Software System]&#xa;Correlated operational dashboards" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="310" y="1910" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_apigw" value="API Gateway&#xa;[Container: AWS HTTP API]&#xa;Public serverless command edge" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="240" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_command_lambda" value="Command Lambda&#xa;[Container: AWS Lambda]&#xa;Validates and accepts commands transactionally" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="1440" y="430" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_dynamodb" value="DynamoDB&#xa;[Container: DynamoDB and Streams]&#xa;Aggregate and outbox items" style="shape=cylinder3;size=15;boundedLbl=1;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="1610" y="620" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_relay_lambda" value="Streams Relay Lambda&#xa;[Container: AWS Lambda]&#xa;Relays committed outbox records" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="800" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_sqs" value="SQS FIFO and DLQ&#xa;[Container: Amazon SQS]&#xa;Ordered commands and failed deliveries" style="shape=cylinder3;size=15;boundedLbl=1;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="990" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_watchdog" value="Outbox Watchdog&#xa;[Container: EventBridge Scheduler and Lambda]&#xa;Detects stranded outbox items" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="1750" y="430" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_archive" value="S3 Audit Archive&#xa;[Container: Amazon S3]&#xa;Long-term immutable audit evidence" style="shape=cylinder3;size=15;boundedLbl=1;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#23A2D9;strokeColor=#0E7DAD;" vertex="1" parent="1">
+          <mxGeometry x="1390" y="990" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="con_cloudwatch" value="CloudWatch&#xa;[Software System]&#xa;AWS logs, metrics, alarms, and execution evidence" style="rounded=1;arcSize=10;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#8C8496;strokeColor=#736782;" vertex="1" parent="1">
+          <mxGeometry x="1670" y="990" width="240" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="e0" value="HTTPS or gRPC" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_client" target="con_gateway">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1240" y="90"/><mxPoint x="1220" y="90"/><mxPoint x="1220" y="90"/><mxPoint x="1220" y="90"/><mxPoint x="1220" y="230"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e1" value="Privileged HTTPS" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_operator" target="con_gateway">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1110" y="180"/><mxPoint x="1110" y="230"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="Authenticated request" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_gateway" target="con_api">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1070" y="370"/><mxPoint x="1070" y="420"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e3" value="Atomic intent and outbox" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_api" target="con_postgres">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="960" y="600"/><mxPoint x="960" y="680"/><mxPoint x="960" y="680"/><mxPoint x="960" y="680"/><mxPoint x="900" y="680"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="Committed WAL changes" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_postgres" target="con_debezium">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="750" y="740"/><mxPoint x="750" y="790"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="Outbox records" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_debezium" target="con_kafka">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="740" y="920"/><mxPoint x="740" y="970"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="Commands" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_kafka" target="con_orchestrator">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="720" y="1150"/><mxPoint x="720" y="1210"/><mxPoint x="720" y="1210"/><mxPoint x="720" y="1210"/><mxPoint x="590" y="1210"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="Inbox and checkpoints" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_orchestrator" target="con_postgres">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="700" y="1250"/><mxPoint x="870" y="1250"/><mxPoint x="870" y="1250"/><mxPoint x="870" y="1250"/><mxPoint x="870" y="750"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="Provider-neutral gRPC" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_orchestrator" target="con_provider">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="410" y="1340"/><mxPoint x="410" y="1420"/><mxPoint x="410" y="1420"/><mxPoint x="410" y="1420"/><mxPoint x="250" y="1420"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="Allowlisted provider calls" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_provider" target="con_pve">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="120" y="1480"/><mxPoint x="120" y="1530"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="Observe owned resources" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_reconciler" target="con_provider">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="260" y="750"/><mxPoint x="260" y="1390"/><mxPoint x="260" y="1390"/><mxPoint x="260" y="1390"/><mxPoint x="250" y="1390"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e11" value="Observed state" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_reconciler" target="con_postgres">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="420" y="600"/><mxPoint x="420" y="680"/><mxPoint x="420" y="680"/><mxPoint x="420" y="680"/><mxPoint x="640" y="680"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e12" value="Reconciliation events" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_reconciler" target="con_kafka">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="540" y="490"/><mxPoint x="580" y="490"/><mxPoint x="580" y="490"/><mxPoint x="580" y="490"/><mxPoint x="580" y="1050"/><mxPoint x="580" y="1050"/><mxPoint x="580" y="1050"/><mxPoint x="600" y="1050"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e13" value="Projection events" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_kafka" target="con_api">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="930" y="1050"/><mxPoint x="1010" y="1050"/><mxPoint x="1010" y="1050"/><mxPoint x="1010" y="1050"/><mxPoint x="1010" y="560"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e14" value="Scales from lag" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_keda" target="con_orchestrator">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="460" y="1110"/><mxPoint x="460" y="1160"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e15" value="OTLP" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_api" target="con_otel">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1060" y="780"/><mxPoint x="1060" y="1580"/><mxPoint x="1060" y="1580"/><mxPoint x="1060" y="1580"/><mxPoint x="560" y="1580"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e16" value="OTLP" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_orchestrator" target="con_otel">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="480" y="1290"/><mxPoint x="480" y="1530"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e17" value="OTLP" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_provider" target="con_otel">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="280" y="1450"/><mxPoint x="320" y="1450"/><mxPoint x="320" y="1450"/><mxPoint x="320" y="1450"/><mxPoint x="320" y="1530"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e18" value="OTLP" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_reconciler" target="con_otel">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="330" y="550"/><mxPoint x="330" y="1530"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e19" value="Metrics" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_otel" target="con_prometheus">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="290" y="1600"/><mxPoint x="270" y="1600"/><mxPoint x="270" y="1600"/><mxPoint x="270" y="1600"/><mxPoint x="270" y="1710"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e20" value="Traces" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_otel" target="con_tempo">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="430" y="1660"/><mxPoint x="430" y="1710"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e21" value="Logs" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_otel" target="con_loki">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="580" y="1620"/><mxPoint x="600" y="1620"/><mxPoint x="600" y="1620"/><mxPoint x="600" y="1620"/><mxPoint x="600" y="1710"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e22" value="Queries" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_prometheus" target="con_grafana">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="160" y="1900"/><mxPoint x="160" y="1970"/><mxPoint x="160" y="1970"/><mxPoint x="160" y="1970"/><mxPoint x="300" y="1970"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e23" value="Queries" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_tempo" target="con_grafana">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="430" y="1850"/><mxPoint x="430" y="1900"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e24" value="Queries" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_loki" target="con_grafana">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="710" y="1900"/><mxPoint x="710" y="1970"/><mxPoint x="710" y="1970"/><mxPoint x="710" y="1970"/><mxPoint x="560" y="1970"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e25" value="HTTPS reference path" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_client" target="con_apigw">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1410" y="180"/><mxPoint x="1410" y="230"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e26" value="Invoke" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_apigw" target="con_command_lambda">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1520" y="370"/><mxPoint x="1520" y="420"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e27" value="Transactional write" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_command_lambda" target="con_dynamodb">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1650" y="550"/><mxPoint x="1650" y="600"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e28" value="Stream records" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_dynamodb" target="con_relay_lambda">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1620" y="780"/><mxPoint x="1620" y="840"/><mxPoint x="1620" y="840"/><mxPoint x="1620" y="840"/><mxPoint x="1520" y="840"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e29" value="FIFO command" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_relay_lambda" target="con_sqs">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1310" y="920"/><mxPoint x="1310" y="970"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e30" value="Scan stale outbox" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_watchdog" target="con_dynamodb">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1800" y="550"/><mxPoint x="1800" y="600"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e31" value="Archive audit" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_relay_lambda" target="con_archive">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1450" y="920"/><mxPoint x="1450" y="970"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e32" value="Telemetry" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_command_lambda" target="con_cloudwatch">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1560" y="630"/><mxPoint x="1560" y="770"/><mxPoint x="1560" y="770"/><mxPoint x="1560" y="770"/><mxPoint x="1790" y="770"/><mxPoint x="1790" y="770"/><mxPoint x="1790" y="770"/><mxPoint x="1790" y="970"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e33" value="Telemetry" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_relay_lambda" target="con_cloudwatch">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1600" y="880"/><mxPoint x="1730" y="880"/><mxPoint x="1730" y="880"/><mxPoint x="1730" y="880"/><mxPoint x="1730" y="970"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e34" value="Telemetry" style="endArrow=blockThin;endFill=1;endSize=10;html=1;fontSize=11;fontColor=#404040;strokeColor=#828282;labelBackgroundColor=#ffffff;rounded=0;" edge="1" parent="1" source="con_watchdog" target="con_cloudwatch">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1880" y="550"/><mxPoint x="1880" y="970"/></Array></mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

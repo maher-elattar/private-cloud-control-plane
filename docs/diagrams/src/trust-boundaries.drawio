@@ -1,0 +1,175 @@
+<mxfile>
+  <diagram id="autolayout" name="Page-1">
+    <mxGraphModel dx="800" dy="600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="group_0" value="AWS Sandbox Account" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#6c8ebf;fontColor=#6c8ebf;verticalAlign=top;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="36" y="776" width="506" height="396" as="geometry"/>
+        </mxCell>
+        <mxCell id="group_1" value="Delivery Control Zone" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;fontColor=#666666;verticalAlign=top;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="36" y="516" width="518" height="254" as="geometry"/>
+        </mxCell>
+        <mxCell id="group_2" value="Existing Edge and Identity Zone" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#82b366;fontColor=#82b366;verticalAlign=top;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="236" y="146" width="118" height="238" as="geometry"/>
+        </mxCell>
+        <mxCell id="group_3" value="Kubernetes Application Zone" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#d79b00;fontColor=#d79b00;verticalAlign=top;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="416" y="146" width="308" height="356" as="geometry"/>
+        </mxCell>
+        <mxCell id="group_4" value="Kubernetes Data and Messaging Zone" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9673a6;fontColor=#9673a6;verticalAlign=top;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="586" y="6" width="508" height="134" as="geometry"/>
+        </mxCell>
+        <mxCell id="group_5" value="Observability Zone" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#b85450;fontColor=#b85450;verticalAlign=top;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="786" y="536" width="316" height="128" as="geometry"/>
+        </mxCell>
+        <mxCell id="group_6" value="Provider Management Zone" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#d6b656;fontColor=#d6b656;verticalAlign=top;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="786" y="366" width="126" height="126" as="geometry"/>
+        </mxCell>
+        <mxCell id="group_7" value="Untrusted Client Zone" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#6c8ebf;fontColor=#6c8ebf;verticalAlign=top;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="6" y="186" width="178" height="163" as="geometry"/>
+        </mxCell>
+        <mxCell id="tenant" value="Tenant or&#xa;Administrator" style="shape=mxgraph.c4.person2;html=1;whiteSpace=wrap;fontSize=12;fontColor=#ffffff;align=center;fillColor=#083F75;strokeColor=#06315C;" vertex="1" parent="group_7">
+          <mxGeometry x="24" y="24" width="130" height="115" as="geometry"/>
+        </mxCell>
+        <mxCell id="idp" value="Identity Provider" style="image;aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;fontColor=#4277BB;labelBackgroundColor=#ffffff;fontSize=12;spacingTop=3;image=img/lib/ibm/security/identity_provider.svg;verticalLabelPosition=bottom;verticalAlign=top;" vertex="1" parent="group_2">
+          <mxGeometry x="24" y="144" width="70" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="gateway" value="Gateway API&#xa;and TLS" style="image;sketch=0;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=img/lib/mscae/Kubernetes.svg;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=#ffffff;" vertex="1" parent="group_2">
+          <mxGeometry x="24" y="24" width="70" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="api" value="Control API" style="aspect=fixed;sketch=0;html=1;dashed=0;whitespace=wrap;verticalLabelPosition=bottom;verticalAlign=top;fillColor=#2875E2;strokeColor=#ffffff;points=[[0.005,0.63,0],[0.1,0.2,0],[0.9,0.2,0],[0.5,0,0],[0.995,0.63,0],[0.72,0.99,0],[0.5,1,0],[0.28,0.99,0]];shape=mxgraph.kubernetes.icon2;prIcon=pod;labelBackgroundColor=#ffffff;" vertex="1" parent="group_3">
+          <mxGeometry x="24" y="24" width="70" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="orch" value="Provisioning&#xa;Orchestrator" style="aspect=fixed;sketch=0;html=1;dashed=0;whitespace=wrap;verticalLabelPosition=bottom;verticalAlign=top;fillColor=#2875E2;strokeColor=#ffffff;points=[[0.005,0.63,0],[0.1,0.2,0],[0.9,0.2,0],[0.5,0,0],[0.995,0.63,0],[0.72,0.99,0],[0.5,1,0],[0.28,0.99,0]];shape=mxgraph.kubernetes.icon2;prIcon=pod;labelBackgroundColor=#ffffff;" vertex="1" parent="group_3">
+          <mxGeometry x="24" y="144" width="70" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="provider" value="Proxmox&#xa;Provider" style="aspect=fixed;sketch=0;html=1;dashed=0;whitespace=wrap;verticalLabelPosition=bottom;verticalAlign=top;fillColor=#2875E2;strokeColor=#ffffff;points=[[0.005,0.63,0],[0.1,0.2,0],[0.9,0.2,0],[0.5,0,0],[0.995,0.63,0],[0.72,0.99,0],[0.5,1,0],[0.28,0.99,0]];shape=mxgraph.kubernetes.icon2;prIcon=pod;labelBackgroundColor=#ffffff;" vertex="1" parent="group_3">
+          <mxGeometry x="214" y="244" width="70" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="recon" value="Reconciler" style="aspect=fixed;sketch=0;html=1;dashed=0;whitespace=wrap;verticalLabelPosition=bottom;verticalAlign=top;fillColor=#2875E2;strokeColor=#ffffff;points=[[0.005,0.63,0],[0.1,0.2,0],[0.9,0.2,0],[0.5,0,0],[0.995,0.63,0],[0.72,0.99,0],[0.5,1,0],[0.28,0.99,0]];shape=mxgraph.kubernetes.icon2;prIcon=cronjob;labelBackgroundColor=#ffffff;" vertex="1" parent="group_3">
+          <mxGeometry x="24" y="264" width="70" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="pg" value="PostgreSQL" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="group_4">
+          <mxGeometry x="24" y="24" width="105" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="cdc" value="Debezium&#xa;CDC" style="shape=process;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="group_4">
+          <mxGeometry x="214" y="34" width="110" height="64" as="geometry"/>
+        </mxCell>
+        <mxCell id="kafka" value="Kafka" style="points=[];aspect=fixed;html=1;align=center;shadow=0;dashed=0;fillColor=#FF6A00;strokeColor=none;shape=mxgraph.alibaba_cloud.mq_message_queue;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=#ffffff;" vertex="1" parent="group_4">
+          <mxGeometry x="414" y="34" width="70" height="76" as="geometry"/>
+        </mxCell>
+        <mxCell id="pve" value="Proxmox VE API" style="image;aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;spacingTop=3;image=img/lib/active_directory/cluster_server.svg;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=#ffffff;" vertex="1" parent="group_6">
+          <mxGeometry x="24" y="24" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="otel" value="OpenTelemetry&#xa;Collector" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.distro_for_opentelemetry;labelBackgroundColor=#ffffff;" vertex="1" parent="group_5">
+          <mxGeometry x="24" y="24" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="backends" value="Prometheus, Tempo,&#xa;Loki, and Grafana" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=img/lib/azure2/other/Grafana.svg;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=#ffffff;" vertex="1" parent="group_5">
+          <mxGeometry x="204" y="34" width="88" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ci" value="CI Identity" style="sketch=0;pointerEvents=1;shadow=0;dashed=0;html=1;strokeColor=none;fillColor=#505050;labelPosition=center;verticalLabelPosition=bottom;verticalAlign=top;outlineConnect=0;align=center;shape=mxgraph.office.security.lock_with_key_security_blue;labelBackgroundColor=#ffffff;" vertex="1" parent="group_1">
+          <mxGeometry x="24" y="84" width="70" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="registry" value="Image Registry" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="group_1">
+          <mxGeometry x="214" y="154" width="100" height="76" as="geometry"/>
+        </mxCell>
+        <mxCell id="live" value="Live GitOps&#xa;Repository" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#232F3D;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.git_repository;labelBackgroundColor=#ffffff;" vertex="1" parent="group_1">
+          <mxGeometry x="224" y="24" width="70" height="82" as="geometry"/>
+        </mxCell>
+        <mxCell id="argo" value="Argo CD" style="shape=process;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="group_1">
+          <mxGeometry x="394" y="34" width="100" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="apigw" value="API Gateway" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;labelBackgroundColor=#ffffff;" vertex="1" parent="group_0">
+          <mxGeometry x="24" y="164" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="lambda" value="Lambda Functions" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;labelBackgroundColor=#ffffff;" vertex="1" parent="group_0">
+          <mxGeometry x="224" y="164" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="ddb" value="DynamoDB&#xa;and Streams" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#C925D1;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;labelBackgroundColor=#ffffff;" vertex="1" parent="group_0">
+          <mxGeometry x="404" y="24" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="sqs" value="SQS FIFO&#xa;and DLQ" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sqs;labelBackgroundColor=#ffffff;" vertex="1" parent="group_0">
+          <mxGeometry x="404" y="294" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3" value="S3 Audit&#xa;Archive" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#7AA116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;labelBackgroundColor=#ffffff;" vertex="1" parent="group_0">
+          <mxGeometry x="404" y="164" width="78" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="e0" value="TB-01" style="html=1;rounded=0;" edge="1" parent="1" source="tenant" target="idp">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="160" y="310"/><mxPoint x="250" y="310"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e1" value="TB-02" style="html=1;rounded=0;" edge="1" parent="1" source="tenant" target="gateway">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="160" y="220"/><mxPoint x="250" y="220"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="TB-03" style="html=1;rounded=0;" edge="1" parent="1" source="gateway" target="api">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="330" y="200"/><mxPoint x="430" y="200"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e3" value="TB-04" style="html=1;rounded=0;" edge="1" parent="1" source="api" target="pg">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="550" y="180"/><mxPoint x="620" y="180"/><mxPoint x="620" y="180"/><mxPoint x="620" y="180"/><mxPoint x="620" y="120"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="TB-04" style="html=1;rounded=0;" edge="1" parent="1" source="orch" target="pg">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="560" y="310"/><mxPoint x="620" y="310"/><mxPoint x="620" y="310"/><mxPoint x="620" y="310"/><mxPoint x="620" y="120"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="TB-04" style="html=1;rounded=0;" edge="1" parent="1" source="recon" target="pg">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="560" y="430"/><mxPoint x="620" y="430"/><mxPoint x="620" y="430"/><mxPoint x="620" y="430"/><mxPoint x="620" y="120"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="TB-05" style="html=1;rounded=0;" edge="1" parent="1" source="pg" target="cdc">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="720" y="70"/><mxPoint x="790" y="70"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="TB-06" style="html=1;rounded=0;" edge="1" parent="1" source="cdc" target="kafka">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="910" y="70"/><mxPoint x="990" y="70"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="TB-07" style="html=1;rounded=0;" edge="1" parent="1" source="kafka" target="orch">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1050" y="180"/><mxPoint x="1050" y="320"/><mxPoint x="1050" y="320"/><mxPoint x="1050" y="320"/><mxPoint x="520" y="320"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="TB-07" style="html=1;rounded=0;" edge="1" parent="1" source="kafka" target="api">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1020" y="150"/><mxPoint x="1020" y="200"/><mxPoint x="1020" y="200"/><mxPoint x="1020" y="200"/><mxPoint x="520" y="200"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="TB-08" style="html=1;rounded=0;" edge="1" parent="1" source="orch" target="provider">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="480" y="380"/><mxPoint x="480" y="400"/><mxPoint x="480" y="400"/><mxPoint x="480" y="400"/><mxPoint x="620" y="400"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e11" value="TB-08" style="html=1;rounded=0;" edge="1" parent="1" source="recon" target="provider">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="510" y="440"/><mxPoint x="620" y="440"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e12" value="TB-09" style="html=1;rounded=0;" edge="1" parent="1" source="provider" target="pve">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="700" y="420"/><mxPoint x="800" y="420"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e13" value="TB-10" style="html=1;rounded=0;" edge="1" parent="1" source="api" target="otel">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="540" y="220"/><mxPoint x="580" y="220"/><mxPoint x="580" y="220"/><mxPoint x="580" y="220"/><mxPoint x="580" y="590"/><mxPoint x="580" y="590"/><mxPoint x="580" y="590"/><mxPoint x="800" y="590"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e14" value="TB-10" style="html=1;rounded=0;" edge="1" parent="1" source="orch" target="otel">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="530" y="340"/><mxPoint x="560" y="340"/><mxPoint x="560" y="340"/><mxPoint x="560" y="340"/><mxPoint x="560" y="600"/><mxPoint x="560" y="600"/><mxPoint x="560" y="600"/><mxPoint x="800" y="600"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e15" value="TB-10" style="html=1;rounded=0;" edge="1" parent="1" source="provider" target="otel">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="660" y="500"/><mxPoint x="660" y="570"/><mxPoint x="660" y="570"/><mxPoint x="660" y="570"/><mxPoint x="800" y="570"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e16" value="TB-10" style="html=1;rounded=0;" edge="1" parent="1" source="recon" target="otel">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="610" y="470"/><mxPoint x="850" y="470"/><mxPoint x="850" y="470"/><mxPoint x="850" y="470"/><mxPoint x="850" y="550"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e17" value="TB-11" style="html=1;rounded=0;" edge="1" parent="1" source="otel" target="backends">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="890" y="600"/><mxPoint x="980" y="600"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e18" value="TB-12" style="html=1;rounded=0;" edge="1" parent="1" source="ci" target="registry">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="130" y="680"/><mxPoint x="230" y="680"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e19" value="TB-13" style="html=1;rounded=0;" edge="1" parent="1" source="ci" target="live">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="130" y="610"/><mxPoint x="250" y="610"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e20" value="TB-14" style="html=1;rounded=0;" edge="1" parent="1" source="live" target="argo">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="330" y="580"/><mxPoint x="420" y="580"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e21" value="TB-15" style="html=1;rounded=0;" edge="1" parent="1" source="apigw" target="lambda">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="140" y="970"/><mxPoint x="240" y="970"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e22" value="TB-16 / TB-17" style="html=1;rounded=0;endArrow=block;endFill=1;startArrow=block;startFill=1;strokeColor=#666666;fontColor=#333333;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="lambda" target="ddb">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="300" y="900"/><mxPoint x="300" y="840"/><mxPoint x="300" y="840"/><mxPoint x="300" y="840"/><mxPoint x="430" y="840"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e23" value="TB-18" style="html=1;rounded=0;" edge="1" parent="1" source="lambda" target="sqs">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="300" y="1050"/><mxPoint x="300" y="1110"/><mxPoint x="300" y="1110"/><mxPoint x="300" y="1110"/><mxPoint x="430" y="1110"/></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="e24" value="TB-19" style="html=1;rounded=0;" edge="1" parent="1" source="lambda" target="s3">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="330" y="970"/><mxPoint x="430" y="970"/></Array></mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
