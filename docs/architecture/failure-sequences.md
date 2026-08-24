@@ -2,9 +2,9 @@
 
 ## Kafka Unavailable After Command Acceptance
 
-![Kafka unavailable after command acceptance](../diagrams/rendered/kafka-unavailable.drawio.png)
+![Kafka unavailable after command acceptance](../diagrams/rendered/kafka-unavailable.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/kafka-unavailable.drawio).
+[Open the Mermaid source](../diagrams/mermaid/kafka-unavailable.mmd).
 
 Required behavior:
 
@@ -16,9 +16,9 @@ Required behavior:
 
 ## Provider Timeout and Unknown Outcome
 
-![Provider timeout and unknown outcome](../diagrams/rendered/provider-timeout.drawio.png)
+![Provider timeout and unknown outcome](../diagrams/rendered/provider-timeout.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/provider-timeout.drawio).
+[Open the Mermaid source](../diagrams/mermaid/provider-timeout.mmd).
 
 Required behavior:
 
@@ -30,9 +30,9 @@ Required behavior:
 
 ## Duplicate Kafka Message
 
-![Duplicate Kafka message handling](../diagrams/rendered/duplicate-message.drawio.png)
+![Duplicate Kafka message handling](../diagrams/rendered/duplicate-message.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/duplicate-message.drawio).
+[Open the Mermaid source](../diagrams/mermaid/duplicate-message.mmd).
 
 Required behavior:
 
@@ -43,9 +43,9 @@ Required behavior:
 
 ## Configuration Failure and Compensation
 
-![Configuration failure and compensation](../diagrams/rendered/configuration-compensation.drawio.png)
+![Configuration failure and compensation](../diagrams/rendered/configuration-compensation.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/configuration-compensation.drawio).
+[Open the Mermaid source](../diagrams/mermaid/configuration-compensation.mmd).
 
 Required behavior:
 

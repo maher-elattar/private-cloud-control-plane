@@ -2,9 +2,9 @@
 
 ## Sequence
 
-![Create-instance success sequence](../diagrams/rendered/create-instance-success.drawio.png)
+![Create-instance success sequence](../diagrams/rendered/create-instance-success.mermaid.svg)
 
-[Open the editable Draw.io source](../diagrams/src/create-instance-success.drawio).
+[Open the Mermaid source](../diagrams/mermaid/create-instance-success.mmd).
 
 ## Success Invariants
 

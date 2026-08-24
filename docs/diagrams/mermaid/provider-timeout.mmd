@@ -1,0 +1,28 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#dbeafe","primaryBorderColor":"#1e40af","primaryTextColor":"#1e293b","lineColor":"#475569","actorBkg":"#f1f5f9","actorBorder":"#475569","actorTextColor":"#1e293b","signalColor":"#334155","signalTextColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#854d0e","noteTextColor":"#1e293b","activationBkgColor":"#dbeafe","activationBorderColor":"#1e40af","labelBoxBkgColor":"#f1f5f9","labelBoxBorderColor":"#475569","labelTextColor":"#1e293b"},"sequence":{"useMaxWidth":false,"diagramMarginX":32,"diagramMarginY":24,"actorMargin":64,"width":150,"height":60,"messageMargin":36,"noteMargin":12}}}%%
+sequenceDiagram
+    autonumber
+    participant Orch as Orchestrator
+    participant DB as PostgreSQL
+    participant Provider as Proxmox Provider
+    participant PVE as Proxmox VE
+    participant Reconciler
+    actor SRE
+
+    Orch->>DB: Persist pre-provider checkpoint
+    Orch->>Provider: Submit create request
+    Provider->>PVE: Submit full clone
+    PVE--xProvider: Response is lost after possible acceptance
+    Provider-->>Orch: Unknown outcome with available correlation facts
+    Orch->>DB: Persist unknown outcome and stop automatic create retry
+    Reconciler->>Provider: Query by allowed VMID range and ownership markers
+    Provider->>PVE: Read matching provider resources and tasks
+    alt Exactly one matching owned VM proves success
+        PVE-->>Provider: Owned VM and task state
+        Provider-->>Reconciler: Verified late success
+        Reconciler->>DB: Complete operation and update observed state
+    else No conclusive owned result before review deadline
+        PVE-->>Provider: Missing or ambiguous evidence
+        Provider-->>Reconciler: Inconclusive result
+        Reconciler->>DB: Create manual-review item
+        SRE->>DB: Record authorized investigation and resolution
+    end

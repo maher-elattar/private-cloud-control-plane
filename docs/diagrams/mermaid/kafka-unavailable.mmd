@@ -1,0 +1,25 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#dbeafe","primaryBorderColor":"#1e40af","primaryTextColor":"#1e293b","lineColor":"#475569","actorBkg":"#f1f5f9","actorBorder":"#475569","actorTextColor":"#1e293b","signalColor":"#334155","signalTextColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#854d0e","noteTextColor":"#1e293b","activationBkgColor":"#dbeafe","activationBorderColor":"#1e40af","labelBoxBkgColor":"#f1f5f9","labelBoxBorderColor":"#475569","labelTextColor":"#1e293b"},"sequence":{"useMaxWidth":false,"diagramMarginX":32,"diagramMarginY":24,"actorMargin":64,"width":150,"height":60,"messageMargin":36,"noteMargin":12}}}%%
+sequenceDiagram
+    autonumber
+    actor Client
+    participant API as Control API
+    participant DB as PostgreSQL
+    participant CDC as Debezium
+    participant Kafka
+    participant Alert as Alerting
+    participant Orch as Orchestrator
+
+    Client->>API: Submit mutation with idempotency key
+    API->>DB: Commit desired state, operation, idempotency, and outbox
+    API-->>Client: 202 Accepted with operation ID
+    CDC->>DB: Read committed outbox change
+    CDC-xKafka: Publication unavailable
+    CDC->>CDC: Retain source offset and retry
+    Alert->>DB: Observe old outbox age
+    Alert-)Client: Operator alert is active
+    Client->>API: Read operation
+    API-->>Client: Accepted and awaiting publication
+    Kafka-)CDC: Broker recovers
+    CDC-)Kafka: Publish original event ID
+    Kafka-)Orch: Deliver command
+    Orch->>DB: Claim inbox and continue workflow
