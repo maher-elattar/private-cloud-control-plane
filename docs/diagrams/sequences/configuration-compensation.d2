@@ -1,0 +1,73 @@
+vars: {
+  d2-config: {
+    theme-id: 0
+    pad: 40
+  }
+}
+
+sequence: Configuration Failure and Compensation {
+  shape: sequence_diagram
+  style.fill: "#FFFFFF"
+  style.stroke: "#667085"
+  style.stroke-width: 2
+
+  orchestrator: Orchestrator {
+    style.fill: "#DDF7F3"
+    style.stroke: "#087F6A"
+  }
+  db: PostgreSQL {
+    style.fill: "#E8F0FE"
+    style.stroke: "#3568B8"
+  }
+  provider: Proxmox Provider {
+    style.fill: "#FFE3E3"
+    style.stroke: "#B42318"
+  }
+  pve: Proxmox VE {
+    style.fill: "#FFF0E1"
+    style.stroke: "#C45B14"
+  }
+  sre: SRE {
+    style.fill: "#FFF7D6"
+    style.stroke: "#B7791F"
+  }
+
+  partial_success: Clone succeeds then configuration fails {
+    style.fill: "#FFF6F6"
+    style.stroke: "#D66A6A"
+    orchestrator -> provider: clone allowlisted template
+    provider -> pve: submit clone
+    pve -> provider: clone task succeeds
+    provider -> orchestrator: proven owned VM identity
+    orchestrator -> db: checkpoint VM + ownership evidence
+    orchestrator -> provider: apply network + cloud-init
+    provider -> pve: submit configuration
+    pve -> provider: permanent configuration failure {
+      style.stroke: "#B42318"
+    }
+    provider -> orchestrator: classified permanent failure
+    orchestrator -> db: enter COMPENSATING
+    orchestrator -> provider: destroy only VM proven created by this workflow
+  }
+
+  compensated: Alt - compensation succeeds {
+    style.fill: "#F5FBF3"
+    style.stroke: "#5A9E56"
+    provider -> pve: stop + destroy owned VM
+    pve -> provider: destroyed
+    provider -> orchestrator: verified absence
+    orchestrator -> db: release workflow IP lease + fail operation
+  }
+
+  manual_review: Else - compensation fails or remains unknown {
+    style.fill: "#FFFBEA"
+    style.stroke: "#D9B44A"
+    provider -> pve: failure or lost result {
+      style.stroke: "#B42318"
+      style.stroke-dash: 6
+    }
+    provider -> orchestrator: compensation failed or unknown
+    orchestrator -> db: quarantine IP lease + enter manual review
+    sre -> db: record investigation + final disposition
+  }
+}

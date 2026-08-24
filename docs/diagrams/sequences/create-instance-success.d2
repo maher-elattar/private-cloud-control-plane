@@ -1,0 +1,126 @@
+vars: {
+  d2-config: {
+    theme-id: 0
+    pad: 40
+  }
+}
+
+sequence: Create Instance - Success Path {
+  shape: sequence_diagram
+  style.fill: "#FFFFFF"
+  style.stroke: "#667085"
+  style.stroke-width: 2
+
+  tenant: Tenant Developer {
+    style.fill: "#FFF7D6"
+    style.stroke: "#B7791F"
+    style.stroke-width: 2
+  }
+  gateway: Gateway API {
+    style.fill: "#E8F0FE"
+    style.stroke: "#3568B8"
+    style.stroke-width: 2
+  }
+  api: Control API {
+    style.fill: "#DDF7F3"
+    style.stroke: "#087F6A"
+    style.stroke-width: 2
+  }
+  db: PostgreSQL {
+    style.fill: "#E8F0FE"
+    style.stroke: "#3568B8"
+    style.stroke-width: 2
+  }
+  cdc: Debezium {
+    style.fill: "#F3F5F7"
+    style.stroke: "#667085"
+    style.stroke-width: 2
+  }
+  kafka: Kafka {
+    style.fill: "#F3E8FF"
+    style.stroke: "#7A3E9D"
+    style.stroke-width: 2
+  }
+  orchestrator: Orchestrator {
+    style.fill: "#DDF7F3"
+    style.stroke: "#087F6A"
+    style.stroke-width: 2
+  }
+  provider: Proxmox Provider {
+    style.fill: "#FFE3E3"
+    style.stroke: "#B42318"
+    style.stroke-width: 2
+  }
+  pve: Proxmox VE {
+    style.fill: "#FFF0E1"
+    style.stroke: "#C45B14"
+    style.stroke-width: 2
+  }
+
+  acceptance: 1 - Durable command acceptance {
+    style.fill: "#F2FCFA"
+    style.stroke: "#66B7A9"
+    tenant -> gateway: POST create + idempotency key
+    gateway -> api: authenticated request + trace context
+    api -> api: authorize project + validate catalog + quota
+    api -> db: begin transaction
+    api -> db: idempotency + instance + operation + IP lease + outbox
+    db -> api: commit durable intent
+    api -> tenant: 202 + instance ID + operation ID
+  }
+
+  publication: 2 - Outbox publication and workflow claim {
+    style.fill: "#F8FAFC"
+    style.stroke: "#98A2B3"
+    cdc -> db: read committed outbox change
+    cdc -> kafka: append CreateInstance keyed by instance ID
+    kafka -> orchestrator: deliver CreateInstance
+    orchestrator -> db: claim inbox + instance workflow lease
+    orchestrator -> db: persist pre-provider checkpoint
+  }
+
+  clone: 3 - Submit and durably track provider task {
+    style.fill: "#FFF6F6"
+    style.stroke: "#D66A6A"
+    orchestrator -> provider: create VM with provider-neutral request
+    provider -> pve: full clone with allowlisted values
+    pve -> provider: provider task reference
+    provider -> orchestrator: accepted provider task reference
+    orchestrator -> db: persist task reference before polling
+  }
+
+  polling: 4 - Repeat until terminal task or deadline {
+    style.fill: "#FFFBEA"
+    style.stroke: "#D9B44A"
+    orchestrator -> provider: read provider task status
+    provider -> pve: read task + bounded progress
+    pve -> provider: running progress
+    provider -> orchestrator: normalized task state
+    orchestrator -> db: checkpoint progress
+  }
+
+  configure: 5 - Configure and prove owned state {
+    style.fill: "#FFF6F6"
+    style.stroke: "#D66A6A"
+    orchestrator -> provider: apply owned VM configuration
+    provider -> pve: CPU + memory + disk + network + cloud-init + markers
+    pve -> provider: successful task outcome
+    provider -> orchestrator: normalized success
+    orchestrator -> provider: observe VM identity + state
+    provider -> pve: read VM config + status
+    pve -> provider: matching owned VM observation
+    provider -> orchestrator: verified observed state
+  }
+
+  completion: 6 - Atomic completion and query projection {
+    style.fill: "#F5FBF3"
+    style.stroke: "#5A9E56"
+    orchestrator -> db: observed state + complete operation + inbox + event outbox
+    cdc -> db: read committed event outbox
+    cdc -> kafka: append instance + operation events
+    kafka -> api: deliver projection events
+    api -> db: update idempotent read projections
+    tenant -> api: GET operation or instance
+    api -> tenant: succeeded operation + active instance
+  }
+}

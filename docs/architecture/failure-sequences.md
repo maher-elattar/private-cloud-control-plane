@@ -2,32 +2,9 @@
 
 ## Kafka Unavailable After Command Acceptance
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client
-    participant API as Control API
-    participant DB as PostgreSQL
-    participant CDC as Debezium
-    participant Kafka
-    participant Alert as Alerting
-    participant Orch as Orchestrator
+[![Kafka unavailable after acceptance](../diagrams/sequences/kafka-unavailable.svg)](../diagrams/sequences/kafka-unavailable.svg)
 
-    Client->>API: Submit mutation with idempotency key
-    API->>DB: Commit desired state, operation, idempotency, and outbox
-    API-->>Client: 202 Accepted with operation ID
-    CDC->>DB: Read committed outbox change
-    CDC-xKafka: Publication unavailable
-    CDC->>CDC: Retain source offset and retry
-    Alert->>DB: Observe old outbox age
-    Alert-->>Client: Operator alert is active
-    Client->>API: Read operation
-    API-->>Client: Accepted and awaiting publication
-    Kafka-->>CDC: Broker recovers
-    CDC->>Kafka: Publish original event ID
-    Kafka->>Orch: Deliver command
-    Orch->>DB: Claim inbox and continue workflow
-```
+[D2 source](../diagrams/sequences/kafka-unavailable.d2)
 
 Required behavior:
 
@@ -39,35 +16,9 @@ Required behavior:
 
 ## Provider Timeout and Unknown Outcome
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Orch as Orchestrator
-    participant DB as PostgreSQL
-    participant Provider as Proxmox Provider
-    participant PVE as Proxmox VE
-    participant Reconciler
-    actor SRE
+[![Provider timeout and unknown outcome](../diagrams/sequences/provider-timeout.svg)](../diagrams/sequences/provider-timeout.svg)
 
-    Orch->>DB: Persist pre-provider checkpoint
-    Orch->>Provider: Submit create request
-    Provider->>PVE: Submit full clone
-    PVE--xProvider: Response is lost after possible acceptance
-    Provider-->>Orch: Unknown outcome with available correlation facts
-    Orch->>DB: Persist unknown outcome and stop automatic create retry
-    Reconciler->>Provider: Query by allowed VMID range and ownership markers
-    Provider->>PVE: Read matching provider resources and tasks
-    alt Exactly one matching owned VM proves success
-        PVE-->>Provider: Owned VM and task state
-        Provider-->>Reconciler: Verified late success
-        Reconciler->>DB: Complete operation and update observed state
-    else No conclusive owned result before review deadline
-        PVE-->>Provider: Missing or ambiguous evidence
-        Provider-->>Reconciler: Inconclusive result
-        Reconciler->>DB: Create manual-review item
-        SRE->>DB: Record authorized investigation and resolution
-    end
-```
+[D2 source](../diagrams/sequences/provider-timeout.d2)
 
 Required behavior:
 
@@ -79,27 +30,9 @@ Required behavior:
 
 ## Duplicate Kafka Message
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Kafka
-    participant Orch as Orchestrator
-    participant DB as PostgreSQL
-    participant Provider as Proxmox Provider
+[![Duplicate Kafka message](../diagrams/sequences/duplicate-message.svg)](../diagrams/sequences/duplicate-message.svg)
 
-    Kafka->>Orch: Deliver event E for instance I
-    Orch->>DB: Insert inbox receipt E and claim workflow lease I
-    Orch->>Provider: Execute provider step once
-    Provider-->>Orch: Provider task reference and result
-    Orch->>DB: Complete checkpoint, inbox receipt E, and result outbox
-    Orch-->>Kafka: Commit consumed offset
-
-    Kafka->>Orch: Redeliver event E
-    Orch->>DB: Read completed inbox receipt E
-    DB-->>Orch: Existing completed outcome
-    Orch->>Orch: Reuse recorded outcome and skip side effects
-    Orch-->>Kafka: Commit duplicate offset
-```
+[D2 source](../diagrams/sequences/duplicate-message.d2)
 
 Required behavior:
 
@@ -110,39 +43,9 @@ Required behavior:
 
 ## Configuration Failure and Compensation
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Orch as Orchestrator
-    participant DB as PostgreSQL
-    participant Provider as Proxmox Provider
-    participant PVE as Proxmox VE
-    actor SRE
+[![Configuration failure and compensation](../diagrams/sequences/configuration-compensation.svg)](../diagrams/sequences/configuration-compensation.svg)
 
-    Orch->>Provider: Clone allowlisted template
-    Provider->>PVE: Submit clone
-    PVE-->>Provider: Clone task succeeds
-    Provider-->>Orch: Proven owned VM identity
-    Orch->>DB: Checkpoint created VM and ownership evidence
-    Orch->>Provider: Apply network and cloud-init configuration
-    Provider->>PVE: Submit configuration
-    PVE-->>Provider: Permanent configuration failure
-    Provider-->>Orch: Classified permanent failure
-    Orch->>DB: Enter compensating state
-    Orch->>Provider: Destroy only VM proven created by this workflow
-
-    alt Compensation succeeds
-        Provider->>PVE: Stop and destroy owned VM
-        PVE-->>Provider: Destroyed
-        Provider-->>Orch: Verified absence
-        Orch->>DB: Release workflow-created IPv4 lease and mark operation failed
-    else Compensation fails or outcome is unknown
-        Provider--xPVE: Failure or lost result
-        Provider-->>Orch: Compensation unknown or failed
-        Orch->>DB: Quarantine IPv4 lease and enter manual review
-        SRE->>DB: Record investigation and final disposition
-    end
-```
+[D2 source](../diagrams/sequences/configuration-compensation.d2)
 
 Required behavior:
 
