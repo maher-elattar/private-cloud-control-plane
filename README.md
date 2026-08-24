@@ -4,6 +4,14 @@ A provider-neutral control plane for asynchronous virtual-machine lifecycle mana
 
 The primary runtime target is an existing Kubernetes cluster. Proxmox is the first provider adapter, not a domain dependency. A bounded AWS serverless path will implement the same command and event contracts with DynamoDB, Lambda, and SQS.
 
+## Request Journey
+
+![Create-instance request journey](docs/diagrams/rendered/create-instance-request-journey.drawio.png)
+
+A create request returns `202 Accepted` only after the control plane commits durable intent and its outbox record. Debezium then publishes the command to Kafka for leased, idempotent orchestration; provider results are persisted as observed state, while OpenTelemetry carries non-blocking metrics, traces, and logs to the evidence plane.
+
+[Open the editable Draw.io source](docs/diagrams/src/create-instance-request-journey.drawio).
+
 ## Repository Boundary
 
 This repository owns application source, shared contracts, database migrations, automated tests, and product and architecture documentation. Kubernetes runtime state, observability deployments, and AWS infrastructure belong in a separate GitOps repository. Cluster bootstrap and foundational services remain in the existing foundation repository.

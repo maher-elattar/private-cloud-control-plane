@@ -8,7 +8,7 @@ This directory contains the canonical architecture-diagram sources and the rende
 | --- | --- |
 | `mermaid/*.mmd` | Authoritative, diffable sequence and state-machine sources |
 | `specs/*.json` | Structured topology inputs used to establish repeatable Draw.io layouts |
-| `src/*.drawio` | Authoritative editable C4 and trust-boundary diagrams |
+| `src/*.drawio` | Authoritative editable C4, trust-boundary, and architecture-journey diagrams |
 | `rendered/*.mermaid.svg` | Scalable Mermaid exports embedded by architecture documents |
 | `rendered/*.drawio.png` | Embedded Draw.io PNGs for compact views |
 | `rendered/*.drawio.svg` | Embedded Draw.io SVGs for large views that require lossless zoom |
@@ -22,6 +22,7 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | C4 system context | `src/c4-model.drawio` page 1 | `rendered/c4-system-context.drawio.png` |
 | C4 container view | `src/c4-model.drawio` page 2 | `rendered/c4-containers.drawio.svg` |
 | Trust boundaries | `src/trust-boundaries.drawio` | `rendered/trust-boundaries.drawio.png` |
+| Create-instance request journey | `src/create-instance-request-journey.drawio` | `rendered/create-instance-request-journey.drawio.png` |
 | Create-instance success | `mermaid/create-instance-success.mmd` | `rendered/create-instance-success.mermaid.svg` |
 | Kafka unavailable | `mermaid/kafka-unavailable.mmd` | `rendered/kafka-unavailable.mermaid.svg` |
 | Provider timeout | `mermaid/provider-timeout.mmd` | `rendered/provider-timeout.mermaid.svg` |
