@@ -8,9 +8,81 @@ The diagrams describe logical trust zones. Network placement alone does not esta
 
 ## Boundary Diagram
 
-[![Trust boundaries](../diagrams/security/trust-boundaries.svg)](../diagrams/security/trust-boundaries.svg)
+```mermaid
+flowchart LR
+    subgraph U[Untrusted Client Zone]
+        Tenant[Tenant or Administrator]
+    end
 
-[D2 source](../diagrams/security/trust-boundaries.d2)
+    subgraph E[Existing Edge and Identity Zone]
+        IdP[Identity Provider]
+        Gateway[Gateway API and TLS Termination]
+    end
+
+    subgraph K[Kubernetes Application Zone]
+        API[Control API]
+        ORCH[Provisioning Orchestrator]
+        PROVIDER[Proxmox Provider]
+        RECON[Reconciler]
+    end
+
+    subgraph D[Kubernetes Data and Messaging Zone]
+        PG[(PostgreSQL)]
+        CDC[Debezium]
+        KAFKA[(Kafka)]
+    end
+
+    subgraph P[Provider Management Zone]
+        PVE[Proxmox API]
+    end
+
+    subgraph O[Observability Zone]
+        OTEL[OpenTelemetry Collector]
+        BACKENDS[Prometheus, Tempo, Loki, Grafana]
+    end
+
+    subgraph G[Delivery Control Zone]
+        CI[CI Identity]
+        REG[Image Registry]
+        LIVE[Live GitOps Repository]
+        ARGO[Argo CD]
+    end
+
+    subgraph A[AWS Sandbox Account]
+        APIGW[API Gateway]
+        LAMBDA[Lambda Functions]
+        DDB[(DynamoDB and Streams)]
+        SQS[(SQS FIFO and DLQ)]
+        S3[(S3 Audit Archive)]
+    end
+
+    Tenant -->|TB-01| IdP
+    Tenant -->|TB-02| Gateway
+    Gateway -->|TB-03| API
+    API -->|TB-04| PG
+    ORCH -->|TB-04| PG
+    RECON -->|TB-04| PG
+    PG -->|TB-05| CDC
+    CDC -->|TB-06| KAFKA
+    KAFKA -->|TB-07| ORCH
+    KAFKA -->|TB-07| API
+    ORCH -->|TB-08| PROVIDER
+    RECON -->|TB-08| PROVIDER
+    PROVIDER -->|TB-09| PVE
+    API -->|TB-10| OTEL
+    ORCH -->|TB-10| OTEL
+    PROVIDER -->|TB-10| OTEL
+    RECON -->|TB-10| OTEL
+    OTEL -->|TB-11| BACKENDS
+    CI -->|TB-12| REG
+    CI -->|TB-13| LIVE
+    LIVE -->|TB-14| ARGO
+    APIGW -->|TB-15| LAMBDA
+    LAMBDA -->|TB-16| DDB
+    DDB -->|TB-17| LAMBDA
+    LAMBDA -->|TB-18| SQS
+    LAMBDA -->|TB-19| S3
+```
 
 ## Boundary Register
 
