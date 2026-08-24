@@ -1,0 +1,28 @@
+{
+  "title": "Kafka Unavailable After Command Acceptance",
+  "participants": [
+    {"id": "client", "label": "Client", "actor": true},
+    {"id": "api", "label": "Control API"},
+    {"id": "db", "label": "PostgreSQL"},
+    {"id": "cdc", "label": "Debezium"},
+    {"id": "kafka", "label": "Kafka"},
+    {"id": "alert", "label": "Alerting"},
+    {"id": "orch", "label": "Orchestrator"}
+  ],
+  "messages": [
+    {"from": "client", "to": "api", "label": "Submit mutation [idempotency key]"},
+    {"from": "api", "to": "db", "label": "Commit desired state, operation, idempotency + outbox"},
+    {"from": "api", "to": "client", "label": "202 Accepted [operation ID]", "return": true},
+    {"from": "cdc", "to": "db", "label": "Read committed outbox change", "activate": false},
+    {"from": "cdc", "to": "kafka", "label": "Publication unavailable", "async": true, "activate": false, "failed": true},
+    {"from": "cdc", "to": "cdc", "label": "Retain source offset + retry"},
+    {"from": "alert", "to": "db", "label": "Observe old outbox age", "activate": false},
+    {"from": "alert", "to": "client", "label": "Operator alert active", "async": true, "activate": false},
+    {"from": "client", "to": "api", "label": "Read operation"},
+    {"from": "api", "to": "client", "label": "Accepted; awaiting publication", "return": true},
+    {"from": "kafka", "to": "cdc", "label": "Broker recovers", "async": true, "activate": false},
+    {"from": "cdc", "to": "kafka", "label": "Publish original event ID", "async": true, "activate": false},
+    {"from": "kafka", "to": "orch", "label": "Deliver command", "async": true, "activate": false},
+    {"from": "orch", "to": "db", "label": "Claim inbox + continue workflow", "activate": false}
+  ]
+}

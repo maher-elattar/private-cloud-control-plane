@@ -1,0 +1,33 @@
+{
+  "title": "Configuration Failure and Compensation",
+  "participants": [
+    {"id": "orch", "label": "Orchestrator"},
+    {"id": "db", "label": "PostgreSQL"},
+    {"id": "provider", "label": "Proxmox Provider"},
+    {"id": "pve", "label": "Proxmox VE"},
+    {"id": "sre", "label": "SRE", "actor": true}
+  ],
+  "messages": [
+    {"from": "orch", "to": "provider", "label": "Clone allowlisted template"},
+    {"from": "provider", "to": "pve", "label": "Submit clone"},
+    {"from": "pve", "to": "provider", "label": "Clone task succeeds", "return": true},
+    {"from": "provider", "to": "orch", "label": "Proven owned VM identity", "return": true},
+    {"from": "orch", "to": "db", "label": "Checkpoint VM + ownership evidence", "activate": false},
+    {"from": "orch", "to": "provider", "label": "Apply network + cloud-init configuration"},
+    {"from": "provider", "to": "pve", "label": "Submit configuration"},
+    {"from": "pve", "to": "provider", "label": "Permanent configuration failure", "return": true, "failed": true},
+    {"from": "provider", "to": "orch", "label": "Classified permanent failure", "return": true},
+    {"from": "orch", "to": "db", "label": "Enter compensating state", "activate": false},
+    {"from": "orch", "to": "provider", "label": "Destroy only VM proven created here"},
+    {"note": "ALT A: compensation succeeds", "over": "orch"},
+    {"from": "provider", "to": "pve", "label": "Stop + destroy owned VM"},
+    {"from": "pve", "to": "provider", "label": "Destroyed", "return": true},
+    {"from": "provider", "to": "orch", "label": "Verified absence", "return": true},
+    {"from": "orch", "to": "db", "label": "Release workflow lease + mark failed", "activate": false},
+    {"note": "ALT B: compensation fails or outcome is unknown", "over": "orch"},
+    {"from": "provider", "to": "pve", "label": "Failure or lost result", "failed": true, "activate": false},
+    {"from": "provider", "to": "orch", "label": "Compensation unknown or failed", "return": true},
+    {"from": "orch", "to": "db", "label": "Quarantine IPv4 lease + enter manual review", "activate": false},
+    {"from": "sre", "to": "db", "label": "Record investigation + final disposition", "activate": false}
+  ]
+}

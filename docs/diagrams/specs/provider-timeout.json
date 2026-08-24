@@ -1,0 +1,30 @@
+{
+  "title": "Provider Timeout and Unknown Outcome",
+  "participants": [
+    {"id": "orch", "label": "Orchestrator"},
+    {"id": "db", "label": "PostgreSQL"},
+    {"id": "provider", "label": "Proxmox Provider"},
+    {"id": "pve", "label": "Proxmox VE"},
+    {"id": "recon", "label": "Reconciler"},
+    {"id": "sre", "label": "SRE", "actor": true}
+  ],
+  "messages": [
+    {"from": "orch", "to": "db", "label": "Persist pre-provider checkpoint", "activate": false},
+    {"from": "orch", "to": "provider", "label": "Submit create request"},
+    {"from": "provider", "to": "pve", "label": "Submit full clone"},
+    {"from": "pve", "to": "provider", "label": "Response lost after possible acceptance", "return": true, "failed": true},
+    {"from": "provider", "to": "orch", "label": "Unknown outcome + correlation facts", "return": true},
+    {"from": "orch", "to": "db", "label": "Persist unknown; stop automatic create retry", "activate": false},
+    {"from": "recon", "to": "provider", "label": "Query by VMID range + ownership markers"},
+    {"from": "provider", "to": "pve", "label": "Read matching resources + tasks"},
+    {"note": "ALT A: exactly one matching owned VM proves success", "over": "recon"},
+    {"from": "pve", "to": "provider", "label": "Owned VM + task state", "return": true},
+    {"from": "provider", "to": "recon", "label": "Verified late success", "return": true},
+    {"from": "recon", "to": "db", "label": "Complete operation + observed state", "activate": false},
+    {"note": "ALT B: no conclusive owned result by review deadline", "over": "recon"},
+    {"from": "pve", "to": "provider", "label": "Missing or ambiguous evidence", "return": true},
+    {"from": "provider", "to": "recon", "label": "Inconclusive result", "return": true},
+    {"from": "recon", "to": "db", "label": "Create manual-review item", "activate": false},
+    {"from": "sre", "to": "db", "label": "Record authorized investigation + resolution", "activate": false}
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "title": "Duplicate Kafka Message",
+  "participants": [
+    {"id": "kafka", "label": "Kafka"},
+    {"id": "orch", "label": "Orchestrator"},
+    {"id": "db", "label": "PostgreSQL"},
+    {"id": "provider", "label": "Proxmox Provider"}
+  ],
+  "messages": [
+    {"from": "kafka", "to": "orch", "label": "Deliver event E [instance I]", "async": true, "activate": false},
+    {"from": "orch", "to": "db", "label": "Insert inbox E + claim workflow lease I", "activate": false},
+    {"from": "orch", "to": "provider", "label": "Execute provider step once"},
+    {"from": "provider", "to": "orch", "label": "Task reference + result", "return": true},
+    {"from": "orch", "to": "db", "label": "Complete checkpoint, inbox E + result outbox", "activate": false},
+    {"from": "orch", "to": "kafka", "label": "Commit consumed offset", "async": true, "activate": false},
+    {"from": "kafka", "to": "orch", "label": "Redeliver event E", "async": true, "activate": false},
+    {"from": "orch", "to": "db", "label": "Read completed inbox E", "activate": false},
+    {"from": "db", "to": "orch", "label": "Existing completed outcome", "return": true},
+    {"from": "orch", "to": "orch", "label": "Reuse outcome; skip side effects"},
+    {"from": "orch", "to": "kafka", "label": "Commit duplicate offset", "async": true, "activate": false}
+  ]
+}
