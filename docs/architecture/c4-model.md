@@ -18,7 +18,7 @@
 
 ## Level 2: Container View
 
-![C4 container view](../diagrams/rendered/c4-containers.drawio.png)
+![C4 container view](../diagrams/rendered/c4-containers.drawio.svg)
 
 [Open the editable Draw.io source](../diagrams/src/c4-model.drawio) (page: `Containers`).
 
