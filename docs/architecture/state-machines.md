@@ -2,27 +2,9 @@
 
 ## Instance Lifecycle
 
-```mermaid
-stateDiagram-v2
-    [*] --> PROVISIONING: create intent committed
-    PROVISIONING --> ACTIVE: owned VM observed
-    PROVISIONING --> FAILED: no VM or compensation verified
-    PROVISIONING --> MANUAL_REVIEW: outcome or ownership unknown
-    FAILED --> PROVISIONING: authorized create retry
+![Instance lifecycle](../diagrams/rendered/instance-lifecycle.drawio.png)
 
-    ACTIVE --> DELETING: soft delete accepted
-    DELETING --> RETAINED: access detached and retention recorded
-    DELETING --> MANUAL_REVIEW: detach outcome unknown
-    RETAINED --> PURGING: eligible administrative purge accepted
-    PURGING --> PURGED: provider absence verified
-    PURGING --> MANUAL_REVIEW: deletion outcome or ownership unknown
-
-    MANUAL_REVIEW --> ACTIVE: owned VM proven healthy
-    MANUAL_REVIEW --> FAILED: absence or safe compensation proven
-    MANUAL_REVIEW --> RETAINED: administrator retains owned resource
-    MANUAL_REVIEW --> PURGED: provider absence proven after authorized purge
-    PURGED --> [*]
-```
+[Open the editable Draw.io source](../diagrams/src/instance-lifecycle.drawio).
 
 | State | Meaning | Tenant mutation |
 | --- | --- | --- |
@@ -39,69 +21,33 @@ Power changes, resize, and snapshot operations do not change the instance lifecy
 
 ## Desired Power State
 
-```mermaid
-stateDiagram-v2
-    [*] --> RUNNING: create default
-    RUNNING --> STOPPED: stop or shutdown accepted
-    STOPPED --> RUNNING: start accepted
-    RUNNING --> RUNNING: reboot accepted
-```
+![Desired power state](../diagrams/rendered/desired-power-state.drawio.png)
+
+[Open the editable Draw.io source](../diagrams/src/desired-power-state.drawio).
 
 Desired power state records accepted intent. It does not prove the provider has reached that state.
 
 ## Observed Provider State
 
-```mermaid
-stateDiagram-v2
-    [*] --> UNKNOWN
-    UNKNOWN --> RUNNING: provider observation
-    UNKNOWN --> STOPPED: provider observation
-    UNKNOWN --> PAUSED: provider observation
-    UNKNOWN --> MISSING: conclusive absence
-    UNKNOWN --> AMBIGUOUS: conflicting identity evidence
+![Observed provider state](../diagrams/rendered/observed-provider-state.drawio.png)
 
-    RUNNING --> STOPPED: later observation
-    RUNNING --> PAUSED: later observation
-    RUNNING --> MISSING: conclusive absence
-    STOPPED --> RUNNING: later observation
-    STOPPED --> MISSING: conclusive absence
-    PAUSED --> RUNNING: later observation
-    PAUSED --> STOPPED: later observation
+[Open the editable Draw.io source](../diagrams/src/observed-provider-state.drawio).
 
-    MISSING --> RUNNING: late or corrected observation
-    MISSING --> STOPPED: late or corrected observation
-    AMBIGUOUS --> RUNNING: operator resolves identity
-    AMBIGUOUS --> STOPPED: operator resolves identity
-```
+| Transition family | Required evidence |
+| --- | --- |
+| `UNKNOWN` to a provider state | A current provider observation; absence must be conclusive and conflicting identity evidence yields `AMBIGUOUS` |
+| `RUNNING`, `STOPPED`, or `PAUSED` to another observed state | A later provider observation from the provider adapter |
+| `RUNNING` or `STOPPED` to `MISSING` | Conclusive provider absence |
+| `MISSING` to `RUNNING` or `STOPPED` | A late or corrected provider observation |
+| `AMBIGUOUS` to `RUNNING` or `STOPPED` | An attributable operator resolution of provider identity |
 
 Observed state is evidence with a timestamp and provenance. Staleness is a property of the observation, not another provider state.
 
 ## Operation Lifecycle
 
-```mermaid
-stateDiagram-v2
-    [*] --> ACCEPTED: intent and outbox committed
-    ACCEPTED --> QUEUED: command published
-    QUEUED --> RUNNING: inbox and workflow lease claimed
+![Operation lifecycle](../diagrams/rendered/operation-lifecycle.drawio.png)
 
-    RUNNING --> SUCCEEDED: intended result observed
-    RUNNING --> RETRY_SCHEDULED: transient failure
-    RETRY_SCHEDULED --> RUNNING: retry becomes due
-    RUNNING --> COMPENSATING: partial permanent failure
-    COMPENSATING --> FAILED: compensation verified
-    COMPENSATING --> MANUAL_REVIEW: compensation failed or unknown
-    RUNNING --> FAILED: permanent failure before side effect
-    RUNNING --> MANUAL_REVIEW: provider outcome unknown
-    RUNNING --> DEAD_LETTERED: poison or exhausted processing
-
-    DEAD_LETTERED --> QUEUED: authorized replay
-    MANUAL_REVIEW --> RUNNING: authorized safe resume
-    MANUAL_REVIEW --> SUCCEEDED: observed success recorded
-    MANUAL_REVIEW --> FAILED: observed failure or absence recorded
-
-    SUCCEEDED --> [*]
-    FAILED --> [*]
-```
+[Open the editable Draw.io source](../diagrams/src/operation-lifecycle.drawio).
 
 | State | Meaning | Terminal |
 | --- | --- | --- |

@@ -1,0 +1,37 @@
+{
+  "direction": "LR",
+  "ranksep": 1.0,
+  "nodesep": 0.7,
+  "nodes": [
+    {"id": "start", "label": "", "style": "shape=ellipse;html=1;fillColor=strokeColor;fontSize=18;fontColor=#ffffff;", "width": 30, "height": 30},
+    {"id": "provisioning", "label": "PROVISIONING", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#dae8fc;strokeColor=#6c8ebf;", "width": 150, "height": 54},
+    {"id": "create_outcome", "label": "", "style": "rhombus;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;", "width": 32, "height": 32},
+    {"id": "active", "label": "ACTIVE", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#d5e8d4;strokeColor=#82b366;", "width": 130, "height": 54},
+    {"id": "failed", "label": "FAILED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#f8cecc;strokeColor=#b85450;", "width": 130, "height": 54},
+    {"id": "deleting", "label": "DELETING", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#dae8fc;strokeColor=#6c8ebf;", "width": 130, "height": 54},
+    {"id": "retained", "label": "RETAINED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#e1d5e7;strokeColor=#9673a6;", "width": 130, "height": 54},
+    {"id": "purging", "label": "PURGING", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#e1d5e7;strokeColor=#9673a6;", "width": 130, "height": 54},
+    {"id": "purged", "label": "PURGED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#f5f5f5;strokeColor=#666666;", "width": 130, "height": 54},
+    {"id": "review", "label": "MANUAL_REVIEW", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#fff2cc;strokeColor=#d6b656;", "width": 160, "height": 54},
+    {"id": "end", "label": "", "style": "ellipse;html=1;shape=endState;fillColor=strokeColor;", "width": 30, "height": 30}
+  ],
+  "edges": [
+    {"source": "start", "target": "provisioning", "label": "commit"},
+    {"source": "provisioning", "target": "create_outcome", "label": "create outcome"},
+    {"source": "create_outcome", "target": "active", "label": "owned VM"},
+    {"source": "create_outcome", "target": "failed", "label": "absent / compensated"},
+    {"source": "create_outcome", "target": "review", "label": "unknown"},
+    {"source": "failed", "target": "provisioning", "label": "authorized retry"},
+    {"source": "active", "target": "deleting", "label": "soft delete"},
+    {"source": "deleting", "target": "retained", "label": "access detached"},
+    {"source": "deleting", "target": "review", "label": "detach unknown"},
+    {"source": "retained", "target": "purging", "label": "admin purge"},
+    {"source": "purging", "target": "purged", "label": "absence verified"},
+    {"source": "purging", "target": "review", "label": "delete unknown"},
+    {"source": "review", "target": "active", "label": "healthy proven"},
+    {"source": "review", "target": "failed", "label": "absence proven"},
+    {"source": "review", "target": "retained", "label": "retain"},
+    {"source": "review", "target": "purged", "label": "purge proven"},
+    {"source": "purged", "target": "end", "label": ""}
+  ]
+}

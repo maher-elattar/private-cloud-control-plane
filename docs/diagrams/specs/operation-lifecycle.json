@@ -1,0 +1,40 @@
+{
+  "direction": "LR",
+  "ranksep": 1.0,
+  "nodesep": 0.7,
+  "nodes": [
+    {"id": "start", "label": "", "style": "shape=ellipse;html=1;fillColor=strokeColor;fontSize=18;fontColor=#ffffff;", "width": 30, "height": 30},
+    {"id": "accepted", "label": "ACCEPTED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#dae8fc;strokeColor=#6c8ebf;", "width": 140, "height": 54},
+    {"id": "queued", "label": "QUEUED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#dae8fc;strokeColor=#6c8ebf;", "width": 140, "height": 54},
+    {"id": "running", "label": "RUNNING", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#dae8fc;strokeColor=#6c8ebf;", "width": 140, "height": 54},
+    {"id": "outcome", "label": "", "style": "rhombus;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;", "width": 32, "height": 32},
+    {"id": "retry", "label": "RETRY_SCHEDULED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#e1d5e7;strokeColor=#9673a6;", "width": 175, "height": 54},
+    {"id": "compensating", "label": "COMPENSATING", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#e1d5e7;strokeColor=#9673a6;", "width": 160, "height": 54},
+    {"id": "dead", "label": "DEAD_LETTERED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#fff2cc;strokeColor=#d6b656;", "width": 165, "height": 54},
+    {"id": "review", "label": "MANUAL_REVIEW", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#fff2cc;strokeColor=#d6b656;", "width": 165, "height": 54},
+    {"id": "succeeded", "label": "SUCCEEDED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#d5e8d4;strokeColor=#82b366;", "width": 145, "height": 54},
+    {"id": "failed", "label": "FAILED", "style": "html=1;align=center;verticalAlign=middle;rounded=1;absoluteArcSize=1;arcSize=10;whiteSpace=wrap;fontStyle=1;fillColor=#f8cecc;strokeColor=#b85450;", "width": 130, "height": 54},
+    {"id": "end", "label": "", "style": "ellipse;html=1;shape=endState;fillColor=strokeColor;", "width": 30, "height": 30}
+  ],
+  "edges": [
+    {"source": "start", "target": "accepted", "label": "commit"},
+    {"source": "accepted", "target": "queued", "label": "publish"},
+    {"source": "queued", "target": "running", "label": "claim"},
+    {"source": "running", "target": "outcome", "label": "stage outcome"},
+    {"source": "outcome", "target": "succeeded", "label": "observed"},
+    {"source": "outcome", "target": "retry", "label": "transient"},
+    {"source": "retry", "target": "running", "label": "due"},
+    {"source": "outcome", "target": "compensating", "label": "partial failure"},
+    {"source": "compensating", "target": "failed", "label": "compensated"},
+    {"source": "compensating", "target": "review", "label": "cleanup unknown"},
+    {"source": "outcome", "target": "failed", "label": "no side effect"},
+    {"source": "outcome", "target": "review", "label": "unknown"},
+    {"source": "outcome", "target": "dead", "label": "poison / exhausted"},
+    {"source": "dead", "target": "queued", "label": "replay"},
+    {"source": "review", "target": "running", "label": "safe resume"},
+    {"source": "review", "target": "succeeded", "label": "success proven"},
+    {"source": "review", "target": "failed", "label": "failure proven"},
+    {"source": "succeeded", "target": "end", "label": ""},
+    {"source": "failed", "target": "end", "label": ""}
+  ]
+}
