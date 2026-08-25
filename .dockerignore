@@ -1,0 +1,10 @@
+.git
+.github
+.nx
+coverage
+dist
+docs
+node_modules
+proxmox-
+test-results
+*.log

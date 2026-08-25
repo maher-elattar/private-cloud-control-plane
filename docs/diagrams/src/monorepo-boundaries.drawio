@@ -1,0 +1,80 @@
+<mxfile host="Electron" version="30.0.4">
+  <diagram id="monorepo-boundaries" name="Monorepo Boundaries">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="2" value="&lt;b&gt;Control-Plane Monorepo Boundaries&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#64748b&quot; style=&quot;font-size:15px&quot;&gt;Nx tags make production, contract, port, and test-only dependency direction executable&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=27;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1320" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="10" value="Production applications  |  type:app" style="rounded=1;arcSize=10;dashed=1;dashPattern=6 6;strokeWidth=1.5;strokeColor=#93c5fd;fillColor=#eff6ff;container=1;pointerEvents=0;html=1;verticalAlign=top;align=left;fontSize=17;fontStyle=1;fontColor=#1e3a8a;spacingTop=12;spacingLeft=18;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="1320" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="11" value="Control API&#xa;REST + public gRPC" style="image;aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;fontColor=#1f2937;labelBackgroundColor=#eff6ff;fontSize=13;spacingTop=3;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/ibm/applications/microservice.svg;" vertex="1" parent="10">
+          <mxGeometry x="120" y="75" width="82" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="12" value="Provisioning Orchestrator&#xa;commands + checkpoints" style="image;aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;fontColor=#1f2937;labelBackgroundColor=#eff6ff;fontSize=13;spacingTop=3;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/ibm/applications/microservice.svg;" vertex="1" parent="10">
+          <mxGeometry x="420" y="75" width="82" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="13" value="Proxmox Provider&#xa;privileged adapter" style="image;aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;fontColor=#1f2937;labelBackgroundColor=#eff6ff;fontSize=13;spacingTop=3;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/ibm/applications/microservice.svg;" vertex="1" parent="10">
+          <mxGeometry x="740" y="75" width="82" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="14" value="Reconciler&#xa;observation + drift" style="image;aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;fontColor=#1f2937;labelBackgroundColor=#eff6ff;fontSize=13;spacingTop=3;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/ibm/applications/microservice.svg;" vertex="1" parent="10">
+          <mxGeometry x="1050" y="75" width="82" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="20" value="Production libraries  |  visibility:production" style="rounded=1;arcSize=10;dashed=1;dashPattern=6 6;strokeWidth=1.5;strokeColor=#86b98a;fillColor=#f0fdf4;container=1;pointerEvents=0;html=1;verticalAlign=top;align=left;fontSize=17;fontStyle=1;fontColor=#166534;spacingTop=12;spacingLeft=18;" vertex="1" parent="1">
+          <mxGeometry x="160" y="410" width="1080" height="230" as="geometry" />
+        </mxCell>
+        <mxCell id="21" value="domain&#xa;pure types + invariants&#xa;layer:domain" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=25;tabPosition=left;html=1;boundedLbl=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1f2937;fontSize=13;spacingTop=15;" vertex="1" parent="20">
+          <mxGeometry x="110" y="75" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="22" value="contracts&#xa;OpenAPI + protobuf + events&#xa;layer:contract" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=25;tabPosition=left;html=1;boundedLbl=1;whiteSpace=wrap;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#1f2937;fontSize=13;spacingTop=15;" vertex="1" parent="20">
+          <mxGeometry x="430" y="75" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="23" value="provider-sdk&#xa;ports + conformance suite&#xa;layer:port" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=25;tabPosition=left;html=1;boundedLbl=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;fontColor=#1f2937;fontSize=13;spacingTop=15;" vertex="1" parent="20">
+          <mxGeometry x="750" y="75" width="220" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="30" value="Test-only boundary  |  visibility:test" style="rounded=1;arcSize=10;dashed=1;dashPattern=6 6;strokeWidth=1.5;strokeColor=#f59e0b;fillColor=#fffbeb;container=1;pointerEvents=0;html=1;verticalAlign=top;align=left;fontSize=17;fontStyle=1;fontColor=#92400e;spacingTop=12;spacingLeft=18;" vertex="1" parent="1">
+          <mxGeometry x="300" y="700" width="800" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="31" value="testing&#xa;fake provider + deterministic fixtures" style="image;aspect=fixed;perimeter=ellipsePerimeter;html=1;align=center;shadow=0;dashed=0;fontColor=#1f2937;labelBackgroundColor=#fffbeb;fontSize=13;spacingTop=3;verticalLabelPosition=bottom;verticalAlign=top;image=img/lib/ibm/devops/build_test.svg;" vertex="1" parent="30">
+          <mxGeometry x="355" y="48" width="60" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="40" value="imports" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#475569;endArrow=classicThin;endFill=1;fontSize=11;fontColor=#334155;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="11" target="22">
+          <mxGeometry x="0" y="-12" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="41" value="imports" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#475569;endArrow=classicThin;endFill=1;fontSize=11;fontColor=#334155;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="12" target="21">
+          <mxGeometry x="0" y="-12" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="42" value="imports" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#475569;endArrow=classicThin;endFill=1;fontSize=11;fontColor=#334155;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="12" target="23">
+          <mxGeometry x="0" y="-12" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="43" value="implements" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#475569;endArrow=classicThin;endFill=1;fontSize=11;fontColor=#334155;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="13" target="23">
+          <mxGeometry x="0" y="-12" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="44" value="imports" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#475569;endArrow=classicThin;endFill=1;fontSize=11;fontColor=#334155;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="14" target="23">
+          <mxGeometry x="0" y="-12" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="45" value="uses types" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#475569;endArrow=classicThin;endFill=1;fontSize=11;fontColor=#334155;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="23" target="22">
+          <mxGeometry x="0" y="-14" relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="46" value="uses domain" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#475569;endArrow=classicThin;endFill=1;fontSize=11;fontColor=#334155;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.5;entryY=1;" edge="1" parent="1" source="23" target="21">
+          <mxGeometry x="0" y="18" relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1020" y="630" /><mxPoint x="380" y="630" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="47" value="conformance tests only" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#b45309;dashed=1;dashPattern=6 4;endArrow=classicThin;endFill=1;fontSize=11;fontColor=#92400e;labelBackgroundColor=#ffffff;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" edge="1" parent="1" source="31" target="23">
+          <mxGeometry x="0" y="-14" relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="50" value="Production applications cannot import visibility:test. Applications do not import each other." style="rounded=1;arcSize=8;html=1;whiteSpace=wrap;fillColor=#fee2e2;strokeColor=#dc2626;fontColor=#7f1d1d;fontSize=12;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="420" y="655" width="560" height="38" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

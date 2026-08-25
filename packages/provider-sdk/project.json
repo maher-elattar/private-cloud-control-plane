@@ -1,0 +1,9 @@
+{
+  "name": "provider-sdk",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/provider-sdk/src",
+  "projectType": "library",
+  "tags": ["type:lib", "layer:port", "visibility:production"],
+  "// targets": "to see all targets run: nx show project provider-sdk --web",
+  "targets": {}
+}

@@ -4,34 +4,35 @@ This directory contains the canonical architecture-diagram sources and the rende
 
 ## Artifact Layout
 
-| Path | Purpose |
-| --- | --- |
-| `mermaid/*.mmd` | Authoritative, diffable sequence and state-machine sources |
-| `specs/*.json` | Structured topology inputs used to establish repeatable Draw.io layouts |
-| `src/*.drawio` | Authoritative editable C4, trust-boundary, and architecture-journey diagrams |
-| `rendered/*.mermaid.svg` | Scalable Mermaid exports embedded by architecture documents |
-| `rendered/*.drawio.png` | Embedded Draw.io PNGs for compact views |
-| `rendered/*.drawio.svg` | Embedded Draw.io SVGs for large views that require lossless zoom |
+| Path                     | Purpose                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `mermaid/*.mmd`          | Authoritative, diffable sequence and state-machine sources                   |
+| `specs/*.json`           | Structured topology inputs used to establish repeatable Draw.io layouts      |
+| `src/*.drawio`           | Authoritative editable C4, trust-boundary, and architecture-journey diagrams |
+| `rendered/*.mermaid.svg` | Scalable Mermaid exports embedded by architecture documents                  |
+| `rendered/*.drawio.png`  | Embedded Draw.io PNGs for compact views                                      |
+| `rendered/*.drawio.svg`  | Embedded Draw.io SVGs for large views that require lossless zoom             |
 
 Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` source first, validate it, regenerate the render, and inspect the result before committing both files.
 
 ## Diagram Inventory
 
-| Documentation view | Canonical source | Rendered artifact |
-| --- | --- | --- |
-| C4 system context | `src/c4-model.drawio` page 1 | `rendered/c4-system-context.drawio.png` |
-| C4 container view | `src/c4-model.drawio` page 2 | `rendered/c4-containers.drawio.svg` |
-| Trust boundaries | `src/trust-boundaries.drawio` | `rendered/trust-boundaries.drawio.png` |
+| Documentation view              | Canonical source                             | Rendered artifact                                     |
+| ------------------------------- | -------------------------------------------- | ----------------------------------------------------- |
+| C4 system context               | `src/c4-model.drawio` page 1                 | `rendered/c4-system-context.drawio.png`               |
+| C4 container view               | `src/c4-model.drawio` page 2                 | `rendered/c4-containers.drawio.svg`                   |
+| Trust boundaries                | `src/trust-boundaries.drawio`                | `rendered/trust-boundaries.drawio.png`                |
 | Create-instance request journey | `src/create-instance-request-journey.drawio` | `rendered/create-instance-request-journey.drawio.png` |
-| Create-instance success | `mermaid/create-instance-success.mmd` | `rendered/create-instance-success.mermaid.svg` |
-| Kafka unavailable | `mermaid/kafka-unavailable.mmd` | `rendered/kafka-unavailable.mermaid.svg` |
-| Provider timeout | `mermaid/provider-timeout.mmd` | `rendered/provider-timeout.mermaid.svg` |
-| Duplicate message | `mermaid/duplicate-message.mmd` | `rendered/duplicate-message.mermaid.svg` |
-| Configuration compensation | `mermaid/configuration-compensation.mmd` | `rendered/configuration-compensation.mermaid.svg` |
-| Instance lifecycle | `mermaid/instance-lifecycle.mmd` | `rendered/instance-lifecycle.mermaid.svg` |
-| Desired power state | `mermaid/desired-power-state.mmd` | `rendered/desired-power-state.mermaid.svg` |
-| Observed provider state | `mermaid/observed-provider-state.mmd` | `rendered/observed-provider-state.mermaid.svg` |
-| Operation lifecycle | `mermaid/operation-lifecycle.mmd` | `rendered/operation-lifecycle.mermaid.svg` |
+| Monorepo dependency boundaries  | `src/monorepo-boundaries.drawio`             | `rendered/monorepo-boundaries.drawio.svg`             |
+| Create-instance success         | `mermaid/create-instance-success.mmd`        | `rendered/create-instance-success.mermaid.svg`        |
+| Kafka unavailable               | `mermaid/kafka-unavailable.mmd`              | `rendered/kafka-unavailable.mermaid.svg`              |
+| Provider timeout                | `mermaid/provider-timeout.mmd`               | `rendered/provider-timeout.mermaid.svg`               |
+| Duplicate message               | `mermaid/duplicate-message.mmd`              | `rendered/duplicate-message.mermaid.svg`              |
+| Configuration compensation      | `mermaid/configuration-compensation.mmd`     | `rendered/configuration-compensation.mermaid.svg`     |
+| Instance lifecycle              | `mermaid/instance-lifecycle.mmd`             | `rendered/instance-lifecycle.mermaid.svg`             |
+| Desired power state             | `mermaid/desired-power-state.mmd`            | `rendered/desired-power-state.mermaid.svg`            |
+| Observed provider state         | `mermaid/observed-provider-state.mmd`        | `rendered/observed-provider-state.mermaid.svg`        |
+| Operation lifecycle             | `mermaid/operation-lifecycle.mmd`            | `rendered/operation-lifecycle.mermaid.svg`            |
 
 ## Mermaid Editing And Validation
 

@@ -24,3 +24,10 @@ playwright-report/
 .idea/
 .vscode/
 *.log
+
+
+
+.nx/cache
+.nx/workspace-data
+.nx/migrate-runs
+vitest.config.*.timestamp*
