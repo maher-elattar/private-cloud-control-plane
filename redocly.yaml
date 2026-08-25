@@ -1,0 +1,10 @@
+apis:
+  control-plane@v1:
+    root: packages/contracts/openapi/control-plane.v1.yaml
+extends:
+  - recommended-strict
+rules:
+  no-server-example.com: off
+  operation-4xx-response: off
+  operation-operationId-unique: error
+  operation-summary: error

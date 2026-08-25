@@ -27,9 +27,53 @@ The application lifecycle is one pnpm/Nx workspace. Nx tags enforce dependency d
 | `proxmox-provider`          | Privileged provider-neutral gRPC adapter                  | Process shell      |
 | `reconciler`                | Scheduled observation and drift classification            | Process shell      |
 | `domain`                    | Framework-independent types and invariants                | Contract scaffold  |
-| `contracts`                 | REST, gRPC, and event contract source and generated types | Contract scaffold  |
-| `provider-sdk`              | Provider ports and conformance suite                      | Contract scaffold  |
-| `testing`                   | Deterministic test adapters and fixtures                  | Test-only scaffold |
+| `contracts`                 | REST, gRPC, and event contract source and generated types | Contracts defined  |
+| `provider-sdk`              | Provider-neutral lifecycle port and transport semantics   | Port defined       |
+| `testing`                   | Deterministic provider adapter and conformance fixtures   | Test implementation |
+
+## Contract Surface
+
+![Control-plane contract communication](docs/diagrams/rendered/contract-communication.mermaid.svg)
+
+The source specifications are authoritative and generate the TypeScript used by services. Summary counts are checked in CI; the linked documents contain the exhaustive endpoint, method, message, error, and field tables.
+
+| Contract | Version | Surface | Authority | Exhaustive table |
+| --- | --- | ---: | --- | --- |
+| REST | OpenAPI 3.1 / API v1 | 39 operations | `packages/contracts/openapi` | [REST API](docs/contracts/rest-api.md) |
+| Public gRPC | protobuf package `v1` | 37 RPCs | `control_plane.proto` | [gRPC API](docs/contracts/grpc-api.md) |
+| Provider gRPC | protobuf package `v1` | 17 RPCs | `provider.proto` | [gRPC API](docs/contracts/grpc-api.md) |
+| Kafka | AsyncAPI 3.1 / topics `v1` | 5 topics, 18 messages | `packages/contracts/asyncapi` | [Kafka events](docs/contracts/events.md) |
+| Field catalog | Generated | 870 declared field rows | All contract sources | [Fields](docs/contracts/fields.md) |
+| Errors | RFC 9457 and canonical gRPC status | Stable automation codes | OpenAPI and RPC policy | [Errors](docs/contracts/errors.md) |
+
+REST mutation bodies are limited to 65,536 bytes and Kafka event payloads to 262,144 bytes. Mutation identities are mandatory. Contract fields explicitly identify values prohibited from telemetry.
+
+## Provider Conformance
+
+![Deterministic fake-provider outcomes](docs/diagrams/rendered/fake-provider-outcomes.mermaid.svg)
+
+The provider SDK contains no vendor type. Its deterministic test implementation covers accepted task polling, classified failure, injected latency, duplicate delivery, request-identity conflicts, timeouts before and after provider application, and applied unknown outcomes resolved through observation.
+
+[Contract and provider boundary details](docs/architecture/contracts-and-provider-port.md)
+
+## Quality Gates
+
+![Continuous-integration quality gates](docs/diagrams/rendered/ci-quality-gates.mermaid.svg)
+
+```bash
+pnpm run contracts:generate
+pnpm run contracts:validate
+pnpm run contracts:docs
+pnpm run docs:validate
+pnpm run format:check
+pnpm run lint
+pnpm run typecheck
+pnpm run test
+pnpm run build
+pnpm audit --prod --audit-level high
+```
+
+CI also builds each service as a pinned, non-root runtime image and rejects high or critical findings from Trivy. [Quality gate details](docs/architecture/quality-gates.md)
 
 Local workspace checks use the pinned Node and pnpm versions:
 
@@ -47,6 +91,8 @@ TypeScript and ESLint are pinned to the supported Nx and `typescript-eslint` pee
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm run contracts:validate
+pnpm run docs:validate
 pnpm format:check
 pnpm lint
 pnpm typecheck
@@ -78,6 +124,8 @@ The repository boundaries and promotion contract are defined in [Repository Boun
 - [Failure Sequences](docs/architecture/failure-sequences.md): broker outage, provider timeout, duplicate delivery, and compensation behavior
 - [State Machines](docs/architecture/state-machines.md): instance, desired power, observed provider, and operation lifecycles
 - [Data Ownership Map](docs/architecture/data-ownership.md): authoritative writers, schemas, topics, transactions, and AWS ownership
+- [Contracts and Provider Port](docs/architecture/contracts-and-provider-port.md): wire authorities, compatibility rules, provider outcomes, and conformance behavior
+- [Quality Gates](docs/architecture/quality-gates.md): CI stages, failure policy, dependency audit, and container scanning
 
 ### Security and Decisions
 
@@ -87,4 +135,4 @@ The repository boundaries and promotion contract are defined in [Repository Boun
 
 ## Current State
 
-Phase 2 is in progress. The four production process shells and package dependency boundaries are being established before provider-neutral wire contracts and fake-provider behavior are added.
+The repository, contract, and provider-test foundation is complete. Service shells compile, external and internal contracts validate independently of Proxmox, generated documentation is reproducible, and the failure-injectable provider passes its conformance suite. Persistence and lifecycle behavior are intentionally not implemented yet.

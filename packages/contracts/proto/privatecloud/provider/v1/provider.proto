@@ -1,0 +1,341 @@
+syntax = "proto3";
+
+package privatecloud.provider.v1;
+
+import "google/protobuf/timestamp.proto";
+import "privatecloud/common/v1/common.proto";
+
+// ProviderService is the only mutation boundary implemented by provider adapters.
+service ProviderService {
+  rpc ValidateProfile(ValidateProfileRequest) returns (ValidateProfileResponse);
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
+  rpc SubmitCreateInstance(SubmitCreateInstanceRequest) returns (SubmitCreateInstanceResponse);
+  rpc ApplyInstanceConfiguration(ApplyInstanceConfigurationRequest) returns (ApplyInstanceConfigurationResponse);
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc ObserveInstance(ObserveInstanceRequest) returns (ObserveInstanceResponse);
+  rpc StartInstance(StartInstanceRequest) returns (StartInstanceResponse);
+  rpc ShutdownInstance(ShutdownInstanceRequest) returns (ShutdownInstanceResponse);
+  rpc StopInstance(StopInstanceRequest) returns (StopInstanceResponse);
+  rpc RebootInstance(RebootInstanceRequest) returns (RebootInstanceResponse);
+  rpc ResizeInstance(ResizeInstanceRequest) returns (ResizeInstanceResponse);
+  rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+  rpc RollbackSnapshot(RollbackSnapshotRequest) returns (RollbackSnapshotResponse);
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+  rpc MarkInstanceRetained(MarkInstanceRetainedRequest) returns (MarkInstanceRetainedResponse);
+  rpc PurgeInstance(PurgeInstanceRequest) returns (PurgeInstanceResponse);
+}
+
+message ProviderCallContext {
+  string request_id = 1;
+  string operation_id = 2;
+  string correlation_id = 3;
+  string project_id = 4;
+  string instance_id = 5;
+  string provider_profile_id = 6;
+  uint32 attempt = 7;
+}
+
+message ProviderProfileConfiguration {
+  string provider_profile_id = 1;
+  string endpoint = 2;
+  string cluster_alias = 3;
+  string compute_target = 4;
+  string image_source_reference = 5;
+  string storage_target = 6;
+  string network_attachment = 7;
+  uint64 resource_id_minimum = 8;
+  uint64 resource_id_maximum = 9;
+  string ipv4_cidr = 10;
+  string ipv4_gateway = 11;
+  string credential_reference = 12;
+}
+
+enum ValidationCheckState {
+  VALIDATION_CHECK_STATE_UNSPECIFIED = 0;
+  VALIDATION_CHECK_STATE_PASSED = 1;
+  VALIDATION_CHECK_STATE_FAILED = 2;
+  VALIDATION_CHECK_STATE_NOT_APPLICABLE = 3;
+}
+
+message ValidationCheck {
+  string name = 1;
+  ValidationCheckState state = 2;
+  string safe_summary = 3;
+}
+
+message ValidateProfileRequest {
+  string request_id = 1;
+  string correlation_id = 2;
+  ProviderProfileConfiguration profile = 3;
+}
+
+message ValidateProfileResponse {
+  bool valid = 1;
+  repeated ValidationCheck checks = 2;
+  google.protobuf.Timestamp validated_at = 3;
+  string validation_evidence_id = 4;
+}
+
+message GetCapabilitiesRequest {
+  string request_id = 1;
+  string correlation_id = 2;
+  string provider_profile_id = 3;
+}
+
+message ProviderCapabilities {
+  bool create_instance = 1;
+  bool configure_instance = 2;
+  bool power = 3;
+  bool resize_compute = 4;
+  bool grow_disk = 5;
+  bool snapshots = 6;
+  bool retention_marker = 7;
+  bool purge = 8;
+  uint32 maximum_cpu_count = 9;
+  uint64 maximum_memory_mib = 10;
+  uint64 maximum_disk_gib = 11;
+  uint32 maximum_snapshots = 12;
+}
+
+message GetCapabilitiesResponse {
+  ProviderCapabilities capabilities = 1;
+  google.protobuf.Timestamp observed_at = 2;
+}
+
+message OwnershipMarkers {
+  string managed_by = 1;
+  string environment = 2;
+  string project_id = 3;
+  string instance_id = 4;
+  string create_operation_id = 5;
+}
+
+message InstanceResources {
+  uint32 cpu_count = 1;
+  uint64 memory_mib = 2;
+  uint64 disk_gib = 3;
+}
+
+message NetworkConfiguration {
+  string network_id = 1;
+  string ipv4_address = 2;
+  uint32 ipv4_prefix_length = 3;
+  string ipv4_gateway = 4;
+  repeated string dns_servers = 5;
+}
+
+enum ProviderResultState {
+  PROVIDER_RESULT_STATE_UNSPECIFIED = 0;
+  PROVIDER_RESULT_STATE_ACCEPTED = 1;
+  PROVIDER_RESULT_STATE_SUCCEEDED = 2;
+  PROVIDER_RESULT_STATE_REJECTED = 3;
+  PROVIDER_RESULT_STATE_UNKNOWN = 4;
+}
+
+message ProviderFailure {
+  privatecloud.common.v1.FailureCategory category = 1;
+  string code = 2;
+  string safe_message = 3;
+  optional uint64 retry_after_milliseconds = 4;
+}
+
+message ProviderMutationResult {
+  ProviderResultState state = 1;
+  optional string provider_task_reference = 2;
+  optional string provider_resource_id = 3;
+  optional string evidence_id = 4;
+  optional ProviderFailure failure = 5;
+}
+
+message SubmitCreateInstanceRequest {
+  ProviderCallContext context = 1;
+  string image_id = 2;
+  string flavor_id = 3;
+  string hostname = 4;
+  InstanceResources resources = 5;
+  NetworkConfiguration network = 6;
+  repeated string ssh_public_keys = 7;
+  OwnershipMarkers ownership_markers = 8;
+}
+
+message SubmitCreateInstanceResponse {
+  ProviderMutationResult result = 1;
+}
+
+message ApplyInstanceConfigurationRequest {
+  ProviderCallContext context = 1;
+  string provider_resource_id = 2;
+  string hostname = 3;
+  InstanceResources resources = 4;
+  NetworkConfiguration network = 5;
+  repeated string ssh_public_keys = 6;
+  OwnershipMarkers ownership_markers = 7;
+}
+
+message ApplyInstanceConfigurationResponse {
+  ProviderMutationResult result = 1;
+}
+
+enum ProviderTaskState {
+  PROVIDER_TASK_STATE_UNSPECIFIED = 0;
+  PROVIDER_TASK_STATE_QUEUED = 1;
+  PROVIDER_TASK_STATE_RUNNING = 2;
+  PROVIDER_TASK_STATE_SUCCEEDED = 3;
+  PROVIDER_TASK_STATE_FAILED = 4;
+  PROVIDER_TASK_STATE_UNKNOWN = 5;
+}
+
+message GetTaskRequest {
+  ProviderCallContext context = 1;
+  string provider_task_reference = 2;
+}
+
+message GetTaskResponse {
+  ProviderTaskState state = 1;
+  optional ProviderFailure failure = 2;
+  google.protobuf.Timestamp observed_at = 3;
+}
+
+message ObservedOwnershipMarkers {
+  bool complete = 1;
+  bool match = 2;
+  optional OwnershipMarkers values = 3;
+}
+
+message InstanceObservation {
+  bool exists = 1;
+  optional string provider_resource_id = 2;
+  privatecloud.common.v1.ObservedPowerState power_state = 3;
+  optional InstanceResources resources = 4;
+  optional NetworkConfiguration network = 5;
+  ObservedOwnershipMarkers ownership = 6;
+  google.protobuf.Timestamp observed_at = 7;
+}
+
+message ObserveInstanceRequest {
+  ProviderCallContext context = 1;
+  optional string provider_resource_id = 2;
+  OwnershipMarkers expected_ownership_markers = 3;
+}
+
+message ObserveInstanceResponse {
+  InstanceObservation observation = 1;
+}
+
+message InstanceMutationRequest {
+  ProviderCallContext context = 1;
+  string provider_resource_id = 2;
+  OwnershipMarkers expected_ownership_markers = 3;
+}
+
+message StartInstanceRequest {
+  InstanceMutationRequest request = 1;
+}
+
+message StartInstanceResponse {
+  ProviderMutationResult result = 1;
+}
+
+message ShutdownInstanceRequest {
+  InstanceMutationRequest request = 1;
+}
+
+message ShutdownInstanceResponse {
+  ProviderMutationResult result = 1;
+}
+
+message StopInstanceRequest {
+  InstanceMutationRequest request = 1;
+}
+
+message StopInstanceResponse {
+  ProviderMutationResult result = 1;
+}
+
+message RebootInstanceRequest {
+  InstanceMutationRequest request = 1;
+}
+
+message RebootInstanceResponse {
+  ProviderMutationResult result = 1;
+}
+
+message ResizeInstanceRequest {
+  InstanceMutationRequest request = 1;
+  InstanceResources target_resources = 2;
+}
+
+message ResizeInstanceResponse {
+  ProviderMutationResult result = 1;
+}
+
+message ListSnapshotsRequest {
+  ProviderCallContext context = 1;
+  string provider_resource_id = 2;
+  OwnershipMarkers expected_ownership_markers = 3;
+}
+
+message ProviderSnapshot {
+  string provider_snapshot_reference = 1;
+  string name = 2;
+  optional string description = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message ListSnapshotsResponse {
+  repeated ProviderSnapshot snapshots = 1;
+  google.protobuf.Timestamp observed_at = 2;
+}
+
+message CreateSnapshotRequest {
+  InstanceMutationRequest request = 1;
+  string snapshot_id = 2;
+  string name = 3;
+  optional string description = 4;
+}
+
+message CreateSnapshotResponse {
+  ProviderMutationResult result = 1;
+}
+
+message SnapshotMutationRequest {
+  InstanceMutationRequest request = 1;
+  string snapshot_id = 2;
+  string provider_snapshot_reference = 3;
+}
+
+message RollbackSnapshotRequest {
+  SnapshotMutationRequest request = 1;
+}
+
+message RollbackSnapshotResponse {
+  ProviderMutationResult result = 1;
+}
+
+message DeleteSnapshotRequest {
+  SnapshotMutationRequest request = 1;
+}
+
+message DeleteSnapshotResponse {
+  ProviderMutationResult result = 1;
+}
+
+message MarkInstanceRetainedRequest {
+  InstanceMutationRequest request = 1;
+  google.protobuf.Timestamp retention_deadline = 2;
+}
+
+message MarkInstanceRetainedResponse {
+  ProviderMutationResult result = 1;
+}
+
+message PurgeInstanceRequest {
+  InstanceMutationRequest request = 1;
+  string purge_authorization_id = 2;
+  google.protobuf.Timestamp retention_deadline = 3;
+}
+
+message PurgeInstanceResponse {
+  ProviderMutationResult result = 1;
+}

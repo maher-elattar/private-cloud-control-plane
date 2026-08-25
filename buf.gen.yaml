@@ -1,0 +1,19 @@
+version: v2
+clean: true
+plugins:
+  - local: protoc-gen-ts_proto
+    out: packages/contracts/src/generated/proto
+    strategy: all
+    opt:
+      - onlyTypes=true
+      - useJsonWireFormat=true
+      - useOptionals=all
+      - forceLong=string
+      - useReadonlyTypes=true
+        - outputServices=none
+      - esModuleInterop=true
+      - importSuffix=.js
+      - fileSuffix=.pb
+      - exportCommonSymbols=false
+inputs:
+  - directory: packages/contracts/proto

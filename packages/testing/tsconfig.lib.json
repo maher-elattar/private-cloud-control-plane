@@ -9,7 +9,10 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "references": [],
+  "references": [
+    { "path": "../contracts/tsconfig.lib.json" },
+    { "path": "../provider-sdk/tsconfig.lib.json" }
+  ],
   "exclude": [
     "vite.config.ts",
     "vite.config.mts",

@@ -1,0 +1,928 @@
+components:
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      description: Provider-neutral project UUID.
+      schema: { type: string, format: uuid }
+    InstanceId:
+      name: instanceId
+      in: path
+      required: true
+      description: Provider-neutral instance UUID.
+      schema: { type: string, format: uuid }
+    OperationId:
+      name: operationId
+      in: path
+      required: true
+      description: Durable operation UUID.
+      schema: { type: string, format: uuid }
+    SnapshotId:
+      name: snapshotId
+      in: path
+      required: true
+      description: Provider-neutral snapshot UUID.
+      schema: { type: string, format: uuid }
+    ImageId:
+      name: imageId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+    FlavorId:
+      name: flavorId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+    NetworkId:
+      name: networkId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+    ProfileId:
+      name: profileId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+    EventId:
+      name: eventId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ReviewId:
+      name: reviewId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque continuation cursor; callers must not parse it.
+      schema: { type: string, minLength: 1, maxLength: 512 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      description: Optional caller correlation UUID; the service creates one when absent.
+      schema: { type: string, format: uuid }
+    Traceparent:
+      name: traceparent
+      in: header
+      description: W3C Trace Context header. Invalid values are ignored and replaced, not echoed.
+      schema:
+        type: string
+        maxLength: 55
+        pattern: '^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'
+  responses:
+    MutationAccepted:
+      description: Durable intent and operation record committed
+      headers:
+        Location:
+          required: true
+          description: Operation-status resource.
+          schema: { type: string, format: uri-reference }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MutationAccepted'
+    BadRequest:
+      description: Malformed or invalid request
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Unauthorized:
+      description: Authentication is absent or invalid
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Forbidden:
+      description: The actor lacks project or administrator permission
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    NotFound:
+      description: The authorized resource does not exist
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Conflict:
+      description: Idempotency, concurrency, ownership, or state conflict
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    PayloadTooLarge:
+      description: Request body exceeds 65,536 bytes
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    Unprocessable:
+      description: Syntactically valid input violates a domain or safety invariant
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+    ServiceUnavailable:
+      description: A dependency required for this operation is unavailable
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetails' }
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [service, status, checkedAt]
+      properties:
+        service: { type: string, minLength: 1, maxLength: 64 }
+        status: { type: string, enum: [ok, unavailable] }
+        checkedAt: { type: string, format: date-time }
+        dependencies:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ready, degraded, unavailable, not_applicable]
+    PageMetadata:
+      type: object
+      additionalProperties: false
+      required: [limit]
+      properties:
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        nextCursor: { type: [string, 'null'], maxLength: 512 }
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, name, enabled, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 80 }
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    QuotaValues:
+      type: object
+      additionalProperties: false
+      required: [instances, cpuCount, memoryMiB, diskGiB, ipv4Addresses, snapshots]
+      properties:
+        instances: { type: integer, minimum: 0 }
+        cpuCount: { type: integer, minimum: 0 }
+        memoryMiB: { type: integer, minimum: 0 }
+        diskGiB: { type: integer, minimum: 0 }
+        ipv4Addresses: { type: integer, minimum: 0 }
+        snapshots: { type: integer, minimum: 0 }
+    QuotaSet:
+      type: object
+      additionalProperties: false
+      required: [projectId, limits, usage, measuredAt]
+      properties:
+        projectId: { type: string, format: uuid }
+        limits: { $ref: '#/components/schemas/QuotaValues' }
+        usage: { $ref: '#/components/schemas/QuotaValues' }
+        measuredAt: { type: string, format: date-time }
+    ImageInput:
+      type: object
+      additionalProperties: false
+      required: [name, providerProfileId, enabled]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        providerProfileId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        enabled: { type: boolean }
+        architecture: { type: string, enum: [x86_64, arm64], default: x86_64 }
+    Image:
+      allOf:
+        - $ref: '#/components/schemas/ImageInput'
+        - type: object
+          required: [id, createdAt, updatedAt]
+          properties:
+            id: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    FlavorInput:
+      type: object
+      additionalProperties: false
+      required: [name, cpuCount, memoryMiB, minimumDiskGiB, enabled]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        cpuCount: { type: integer, minimum: 1, maximum: 64 }
+        memoryMiB: { type: integer, minimum: 512, maximum: 262144, multipleOf: 128 }
+        minimumDiskGiB: { type: integer, minimum: 8, maximum: 2048 }
+        enabled: { type: boolean }
+    Flavor:
+      allOf:
+        - $ref: '#/components/schemas/FlavorInput'
+        - type: object
+          required: [id, createdAt, updatedAt]
+          properties:
+            id: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    NetworkInput:
+      type: object
+      additionalProperties: false
+      required: [name, ipv4Cidr, gateway, dnsServers, exclusions, enabled]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        ipv4Cidr: { type: string, format: ipv4-cidr }
+        gateway: { type: string, format: ipv4 }
+        dnsServers:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, format: ipv4 }
+        exclusions:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: { type: string, format: ipv4 }
+        enabled: { type: boolean }
+    Network:
+      allOf:
+        - $ref: '#/components/schemas/NetworkInput'
+        - type: object
+          required: [id, createdAt, updatedAt]
+          properties:
+            id: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    ImagePage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Image' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    FlavorPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Flavor' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    NetworkPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Network' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    CreateInstanceRequest:
+      type: object
+      additionalProperties: false
+      required: [imageId, flavorId, networkId, hostname]
+      properties:
+        imageId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        flavorId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        networkId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        hostname:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$'
+          x-classification: tenant-configuration
+          x-telemetry: bounded
+        sshPublicKeys:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items: { type: string, minLength: 32, maxLength: 8192 }
+          x-classification: tenant-configuration
+          x-telemetry: prohibited
+    MutationAccepted:
+      type: object
+      additionalProperties: false
+      required: [operationId, targetId, acceptedAt, statusUrl, replayed]
+      properties:
+        operationId: { type: string, format: uuid }
+        targetId: { type: string, format: uuid }
+        acceptedAt: { type: string, format: date-time }
+        statusUrl: { type: string, format: uri-reference }
+        replayed:
+          type: boolean
+          description: True when the idempotency key returned the original operation.
+    PowerAction:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, enum: [start, shutdown, stop, reboot] }
+    ResizeAction:
+      type: object
+      additionalProperties: false
+      required: [action, flavorId]
+      properties:
+        action: { type: string, const: resize }
+        flavorId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        diskGiB: { type: integer, minimum: 8, maximum: 2048 }
+    InstanceAction:
+      oneOf:
+        - $ref: '#/components/schemas/PowerAction'
+        - $ref: '#/components/schemas/ResizeAction'
+      discriminator:
+        propertyName: action
+    DesiredPowerState:
+      type: string
+      enum: [running, stopped, unchanged]
+    ObservedPowerState:
+      type: string
+      enum: [running, stopped, suspended, unknown]
+    InstanceLifecycleState:
+      type: string
+      enum:
+        [
+          pending,
+          provisioning,
+          active,
+          updating,
+          failed,
+          unknown_outcome,
+          retained,
+          purge_pending,
+          purged,
+          manual_review,
+        ]
+    DriftClassification:
+      type: string
+      enum:
+        [
+          none,
+          missing_resource,
+          identity_mismatch,
+          stale_task,
+          late_success,
+          power_drift,
+          network_drift,
+          ambiguous,
+        ]
+    DesiredInstanceState:
+      type: object
+      additionalProperties: false
+      required: [imageId, flavorId, networkId, hostname, powerState, retentionRequested]
+      properties:
+        imageId: { type: string }
+        flavorId: { type: string }
+        networkId: { type: string }
+        hostname: { type: string }
+        powerState: { $ref: '#/components/schemas/DesiredPowerState' }
+        retentionRequested: { type: boolean }
+    ObservedInstanceState:
+      type: object
+      additionalProperties: false
+      required: [exists, powerState, markerMatch, observedAt]
+      properties:
+        exists: { type: boolean }
+        powerState: { $ref: '#/components/schemas/ObservedPowerState' }
+        cpuCount: { type: [integer, 'null'], minimum: 0 }
+        memoryMiB: { type: [integer, 'null'], minimum: 0 }
+        diskGiB: { type: [integer, 'null'], minimum: 0 }
+        markerMatch: { type: boolean }
+        observedAt: { type: string, format: date-time }
+    IPv4Lease:
+      type: object
+      additionalProperties: false
+      required: [address, prefixLength, gateway, state]
+      properties:
+        address:
+          {
+            type: string,
+            format: ipv4,
+            x-classification: tenant-configuration,
+            x-telemetry: prohibited,
+          }
+        prefixLength: { type: integer, minimum: 1, maximum: 32 }
+        gateway: { type: string, format: ipv4, x-telemetry: prohibited }
+        state: { type: string, enum: [active, quarantined, released] }
+    Instance:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, lifecycleState, desired, drift, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        lifecycleState: { $ref: '#/components/schemas/InstanceLifecycleState' }
+        desired: { $ref: '#/components/schemas/DesiredInstanceState' }
+        observed:
+          anyOf: [{ $ref: '#/components/schemas/ObservedInstanceState' }, { type: 'null' }]
+        ipv4Lease:
+          anyOf: [{ $ref: '#/components/schemas/IPv4Lease' }, { type: 'null' }]
+        activeOperationId: { type: [string, 'null'], format: uuid }
+        drift: { $ref: '#/components/schemas/DriftClassification' }
+        lastReconciledAt: { type: [string, 'null'], format: date-time }
+        retentionDeadline: { type: [string, 'null'], format: date-time }
+        purgeEligible: { type: boolean, default: false }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    InstancePage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Instance' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    CreateSnapshotRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        description:
+          {
+            type: string,
+            maxLength: 256,
+            x-classification: tenant-configuration,
+            x-telemetry: prohibited,
+          }
+    SnapshotRollbackRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, const: rollback }
+    Snapshot:
+      type: object
+      additionalProperties: false
+      required: [id, instanceId, name, state, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        instanceId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        description: { type: [string, 'null'], maxLength: 256 }
+        state: { type: string, enum: [creating, available, rolling_back, deleting, failed] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    SnapshotPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Snapshot' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    OperationState:
+      type: string
+      enum:
+        [
+          accepted,
+          queued,
+          running,
+          retry_wait,
+          compensating,
+          unknown_outcome,
+          manual_review,
+          succeeded,
+          failed,
+          cancelled,
+        ]
+    ErrorCategory:
+      type: string
+      enum:
+        [
+          validation,
+          authentication,
+          authorization,
+          not_found,
+          conflict,
+          quota,
+          transient,
+          permanent,
+          unknown_outcome,
+          compensation_failure,
+          manual_review,
+          internal,
+        ]
+    Operation:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          projectId,
+          action,
+          targetType,
+          targetId,
+          state,
+          stage,
+          progressPercent,
+          acceptedAt,
+          updatedAt,
+          manualReviewRequired,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        action: { type: string, minLength: 1, maxLength: 64 }
+        targetType:
+          {
+            type: string,
+            enum:
+              [instance, snapshot, provider_profile, retention_policy, dead_letter, manual_review],
+          }
+        targetId: { type: string, minLength: 1, maxLength: 128 }
+        state: { $ref: '#/components/schemas/OperationState' }
+        stage: { type: string, minLength: 1, maxLength: 80 }
+        progressPercent: { type: integer, minimum: 0, maximum: 100 }
+        acceptedAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        errorCategory:
+          anyOf: [{ $ref: '#/components/schemas/ErrorCategory' }, { type: 'null' }]
+        errorCode: { type: [string, 'null'], maxLength: 80 }
+        errorMessage: { type: [string, 'null'], maxLength: 512, x-classification: tenant-safe }
+        manualReviewRequired: { type: boolean }
+    AdministrativeOperation:
+      allOf:
+        - $ref: '#/components/schemas/Operation'
+        - type: object
+          properties:
+            correlationId: { type: string, format: uuid }
+            causationId: { type: [string, 'null'], format: uuid }
+            traceId: { type: [string, 'null'], pattern: '^[0-9a-f]{32}$' }
+            retryCount: { type: integer, minimum: 0 }
+            checkpoint: { type: [string, 'null'], maxLength: 80 }
+            deadLetterEventId: { type: [string, 'null'], format: uuid }
+            providerTaskReference:
+              type: [string, 'null']
+              maxLength: 256
+              x-classification: restricted-operational
+              x-telemetry: bounded
+    OperationPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Operation' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    ProviderProfileState:
+      type: string
+      enum: [disabled, validation_pending, validated, active, validation_failed]
+    ProviderProfileInput:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          providerType,
+          endpoint,
+          clusterAlias,
+          computeTarget,
+          imageSourceReference,
+          storageTarget,
+          networkAttachment,
+          resourceIdMinimum,
+          resourceIdMaximum,
+          networkId,
+          credentialReference,
+        ]
+      properties:
+        id: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        providerType: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        endpoint:
+          {
+            type: string,
+            format: uri,
+            maxLength: 256,
+            x-classification: restricted-operational,
+            x-telemetry: prohibited,
+          }
+        clusterAlias: { type: string, minLength: 1, maxLength: 80 }
+        computeTarget:
+          { type: string, minLength: 1, maxLength: 80, x-classification: restricted-operational }
+        imageSourceReference:
+          { type: string, minLength: 1, maxLength: 128, x-classification: restricted-operational }
+        storageTarget:
+          { type: string, minLength: 1, maxLength: 80, x-classification: restricted-operational }
+        networkAttachment:
+          { type: string, minLength: 1, maxLength: 80, x-classification: restricted-operational }
+        resourceIdMinimum: { type: integer, minimum: 1, maximum: 999999999 }
+        resourceIdMaximum: { type: integer, minimum: 1, maximum: 999999999 }
+        networkId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        credentialReference:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 256,
+            x-classification: secret-reference,
+            x-telemetry: prohibited,
+          }
+    ProviderProfilePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        endpoint:
+          {
+            type: string,
+            format: uri,
+            maxLength: 256,
+            x-classification: restricted-operational,
+            x-telemetry: prohibited,
+          }
+        clusterAlias: { type: string, minLength: 1, maxLength: 80 }
+        computeTarget: { type: string, minLength: 1, maxLength: 80 }
+        imageSourceReference: { type: string, minLength: 1, maxLength: 128 }
+        storageTarget: { type: string, minLength: 1, maxLength: 80 }
+        networkAttachment: { type: string, minLength: 1, maxLength: 80 }
+        resourceIdMinimum: { type: integer, minimum: 1, maximum: 999999999 }
+        resourceIdMaximum: { type: integer, minimum: 1, maximum: 999999999 }
+        networkId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+        credentialReference:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 256,
+            x-classification: secret-reference,
+            x-telemetry: prohibited,
+          }
+    ProviderProfile:
+      allOf:
+        - $ref: '#/components/schemas/ProviderProfileInput'
+        - type: object
+          required: [state, version, createdAt, updatedAt]
+          properties:
+            state: { $ref: '#/components/schemas/ProviderProfileState' }
+            version: { type: integer, minimum: 1 }
+            lastValidatedAt: { type: [string, 'null'], format: date-time }
+            lastValidationOperationId: { type: [string, 'null'], format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    ProviderProfilePage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ProviderProfile' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    DeadLetter:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          eventId,
+          schemaName,
+          schemaVersion,
+          aggregateId,
+          projectId,
+          operationId,
+          category,
+          attempts,
+          deadLetteredAt,
+          replayAllowed,
+        ]
+      properties:
+        eventId: { type: string, format: uuid }
+        schemaName: { type: string, minLength: 1, maxLength: 120 }
+        schemaVersion: { type: integer, minimum: 1 }
+        aggregateId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        category: { $ref: '#/components/schemas/ErrorCategory' }
+        safeMessage: { type: [string, 'null'], maxLength: 512 }
+        attempts: { type: integer, minimum: 1 }
+        deadLetteredAt: { type: string, format: date-time }
+        replayAllowed: { type: boolean }
+        lastReplayAt: { type: [string, 'null'], format: date-time }
+    DeadLetterPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DeadLetter' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    ReplayRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          {
+            type: string,
+            minLength: 10,
+            maxLength: 512,
+            x-classification: audit,
+            x-telemetry: prohibited,
+          }
+    PurgeRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, confirmInstanceId]
+      properties:
+        reason:
+          {
+            type: string,
+            minLength: 10,
+            maxLength: 512,
+            x-classification: audit,
+            x-telemetry: prohibited,
+          }
+        confirmInstanceId: { type: string, format: uuid }
+    ReconciliationRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          {
+            type: string,
+            minLength: 10,
+            maxLength: 512,
+            x-classification: audit,
+            x-telemetry: prohibited,
+          }
+    ManualReviewState:
+      type: string
+      enum: [open, resolved]
+    ManualReview:
+      type: object
+      additionalProperties: false
+      required: [id, instanceId, operationId, category, summary, state, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        instanceId: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        category:
+          {
+            type: string,
+            enum:
+              [
+                unknown_outcome,
+                identity_mismatch,
+                ambiguous_drift,
+                purge_guard,
+                compensation_failure,
+              ],
+          }
+        summary:
+          { type: string, minLength: 1, maxLength: 512, x-classification: restricted-operational }
+        state: { $ref: '#/components/schemas/ManualReviewState' }
+        evidenceReference:
+          {
+            type: [string, 'null'],
+            maxLength: 256,
+            x-classification: restricted-operational,
+            x-telemetry: prohibited,
+          }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: [string, 'null'], format: date-time }
+        resolution:
+          {
+            type: [string, 'null'],
+            maxLength: 512,
+            x-classification: audit,
+            x-telemetry: prohibited,
+          }
+    ManualReviewPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ManualReview' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    ManualReviewResolution:
+      type: object
+      additionalProperties: false
+      required: [disposition, reason]
+      properties:
+        disposition:
+          {
+            type: string,
+            enum: [acknowledged, retry_authorized, no_action, external_remediation_completed],
+          }
+        reason:
+          {
+            type: string,
+            minLength: 10,
+            maxLength: 512,
+            x-classification: audit,
+            x-telemetry: prohibited,
+          }
+    RetentionPolicyInput:
+      type: object
+      additionalProperties: false
+      required: [retentionHours, leaseReleaseMode]
+      properties:
+        retentionHours: { type: integer, minimum: 1, maximum: 8760 }
+        leaseReleaseMode: { type: string, enum: [quarantine_until_purge, release_on_retain] }
+    RetentionPolicy:
+      allOf:
+        - $ref: '#/components/schemas/RetentionPolicyInput'
+        - type: object
+          required: [version, updatedAt, updatedBy]
+          properties:
+            version: { type: integer, minimum: 1 }
+            updatedAt: { type: string, format: date-time }
+            updatedBy:
+              {
+                type: string,
+                minLength: 1,
+                maxLength: 256,
+                x-classification: audit,
+                x-telemetry: prohibited,
+              }
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required:
+        [id, actorId, actorRole, projectId, action, targetType, targetId, outcome, occurredAt]
+      properties:
+        id: { type: string, format: uuid }
+        actorId:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 256,
+            x-classification: audit,
+            x-telemetry: prohibited,
+          }
+        actorRole:
+          {
+            type: string,
+            enum: [tenant_developer, platform_operator, platform_administrator, service],
+          }
+        projectId: { type: [string, 'null'], format: uuid }
+        action: { type: string, minLength: 1, maxLength: 80 }
+        targetType: { type: string, minLength: 1, maxLength: 80 }
+        targetId: { type: string, minLength: 1, maxLength: 128 }
+        operationId: { type: [string, 'null'], format: uuid }
+        outcome: { type: string, enum: [accepted, succeeded, rejected, failed] }
+        reason:
+          {
+            type: [string, 'null'],
+            maxLength: 512,
+            x-classification: audit,
+            x-telemetry: prohibited,
+          }
+        occurredAt: { type: string, format: date-time }
+    AuditEventPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuditEvent' } }
+        page: { $ref: '#/components/schemas/PageMetadata' }
+    ProblemDetails:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, traceId]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string, maxLength: 512, x-classification: tenant-safe }
+        instance: { type: string, format: uri-reference }
+        code:
+          type: string
+          enum:
+            - AUTHENTICATION_REQUIRED
+            - ADMIN_REQUIRED
+            - PROJECT_ACCESS_DENIED
+            - PROJECT_NOT_FOUND
+            - INSTANCE_NOT_FOUND
+            - SNAPSHOT_NOT_FOUND
+            - OPERATION_NOT_FOUND
+            - PROFILE_NOT_FOUND
+            - DEAD_LETTER_NOT_FOUND
+            - MANUAL_REVIEW_NOT_FOUND
+            - VALIDATION_FAILED
+            - QUOTA_EXCEEDED
+            - IDEMPOTENCY_CONFLICT
+            - INSTANCE_BUSY
+            - SNAPSHOT_OWNERSHIP_MISMATCH
+            - DISK_SHRINK_FORBIDDEN
+            - PROFILE_DISABLED
+            - PROFILE_VALIDATION_REQUIRED
+            - LAB_GATE_FAILED
+            - REPLAY_NOT_ALLOWED
+            - RETENTION_NOT_EXPIRED
+            - OWNERSHIP_NOT_PROVEN
+            - MANUAL_REVIEW_ALREADY_RESOLVED
+            - PAYLOAD_TOO_LARGE
+            - RATE_LIMITED
+            - DEPENDENCY_UNAVAILABLE
+            - INTERNAL_ERROR
+        traceId: { type: string, pattern: '^[0-9a-f]{32}$' }
+        operationId: { type: string, format: uuid }
+        invalidParams:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/InvalidParameter' }
+    InvalidParameter:
+      type: object
+      additionalProperties: false
+      required: [name, reason]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        reason: { type: string, minLength: 1, maxLength: 256 }

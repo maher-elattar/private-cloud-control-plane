@@ -76,4 +76,15 @@ This matrix connects the product use cases to the normative requirements, source
 - Architecture constraints traced: SRS-ARC-001 through SRS-ARC-009
 - Safety invariants referenced: SAFE-001 through SAFE-036
 
-Detailed test case identifiers will be added when contracts and test suites are created. Until then, the planned-evidence column defines the acceptance obligation rather than claiming completed verification.
+## Implemented Contract Evidence
+
+| Evidence ID | Scope | Artifact or command | Requirements advanced |
+| --- | --- | --- | --- |
+| CT-REST-001 | REST syntax, auth, error, idempotency, size, and provider-neutrality invariants | `pnpm run contracts:validate`; `docs/contracts/rest-api.md` | SRS-FR-001 through 005, 007 through 025, 037 through 056, 066, 067, 073, 074, 079; SRS-NFR-011, 017, 018, 027 through 031 |
+| CT-GRPC-001 | Complete public and provider method classification, deadlines, errors, and identities | `packages/contracts/proto`; `docs/contracts/grpc-api.md` | SRS-FR-001 through 005, 007 through 056, 066 through 074; SRS-NFR-027 through 031 |
+| CT-EVENT-001 | Versioned topics, envelopes, partition identity, payload validation, and compatibility | `packages/contracts/asyncapi`; `packages/contracts/fixtures/events` | SRS-FR-057 through 068, 075; SRS-NFR-003, 008, 011, 017, 018, 027 through 031 |
+| CT-FIELD-001 | Exhaustive declared field, constraint, classification, and telemetry catalog | `docs/contracts/fields.md` | SRS-FR-023, 075 through 078; SRS-NFR-011, 017, 018, 022, 023, 029, 031 |
+| CT-PROVIDER-001 | Provider success, duplicate, latency, rejection, timeout, and unknown-outcome semantics | `packages/testing/src/fake-provider.spec.ts` | SRS-FR-032 through 036, 069 through 072; SRS-NFR-003 through 007, 027, 030, 038 |
+| CT-CI-001 | Generated drift, code, documentation, dependency, build, and image gates | `.github/workflows/ci.yml` | SRS-NFR-030 through 034 |
+
+Later work must add integration, failure-drill, load, GitOps, live-provider, and AWS evidence. The entries above claim only repository and contract-foundation coverage.

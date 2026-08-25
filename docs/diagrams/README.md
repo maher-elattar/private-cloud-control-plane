@@ -24,6 +24,9 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | Trust boundaries                | `src/trust-boundaries.drawio`                | `rendered/trust-boundaries.drawio.png`                |
 | Create-instance request journey | `src/create-instance-request-journey.drawio` | `rendered/create-instance-request-journey.drawio.png` |
 | Monorepo dependency boundaries  | `src/monorepo-boundaries.drawio`             | `rendered/monorepo-boundaries.drawio.svg`             |
+| Contract communication          | `mermaid/contract-communication.mmd`          | `rendered/contract-communication.mermaid.svg`          |
+| Fake-provider outcomes          | `mermaid/fake-provider-outcomes.mmd`          | `rendered/fake-provider-outcomes.mermaid.svg`          |
+| Continuous-integration gates    | `mermaid/ci-quality-gates.mmd`                | `rendered/ci-quality-gates.mermaid.svg`                |
 | Create-instance success         | `mermaid/create-instance-success.mmd`        | `rendered/create-instance-success.mermaid.svg`        |
 | Kafka unavailable               | `mermaid/kafka-unavailable.mmd`              | `rendered/kafka-unavailable.mermaid.svg`              |
 | Provider timeout                | `mermaid/provider-timeout.mmd`               | `rendered/provider-timeout.mermaid.svg`               |

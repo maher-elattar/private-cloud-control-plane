@@ -1,0 +1,95 @@
+name: Continuous integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Contracts, code, tests, and documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+
+      - name: Activate pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify generated contracts and tables
+        run: |
+          pnpm run contracts:generate
+          pnpm run contracts:docs
+          git diff --exit-code -- packages/contracts/src/generated docs/contracts
+
+      - name: Validate wire contracts
+        run: pnpm run contracts:validate
+
+      - name: Validate documentation and diagrams
+        run: pnpm run docs:validate
+
+      - name: Check formatting
+        run: pnpm run format:check
+
+      - name: Run lint, type, test, and build gates
+        run: |
+          pnpm run lint
+          pnpm run typecheck
+          pnpm run test
+          pnpm run build
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
+  containers:
+    name: Build and scan ${{ matrix.service }}
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - control-api
+          - provisioning-orchestrator
+          - proxmox-provider
+          - reconciler
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Build non-root runtime image
+        run: >-
+          docker build
+          --build-arg APP=${{ matrix.service }}
+          --tag private-cloud/${{ matrix.service }}:ci
+          --file tools/docker/service.Dockerfile
+          .
+
+      - name: Scan image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: private-cloud/${{ matrix.service }}:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL

@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "Operational policy for every public and provider gRPC method. Authentication is carried in metadata; correlation and request identity remain in the messages.",
+  "errorSets": {
+    "query": [
+      "INVALID_ARGUMENT",
+      "UNAUTHENTICATED",
+      "PERMISSION_DENIED",
+      "NOT_FOUND",
+      "RESOURCE_EXHAUSTED",
+      "INTERNAL",
+      "UNAVAILABLE",
+      "DEADLINE_EXCEEDED"
+    ],
+    "mutation": [
+      "INVALID_ARGUMENT",
+      "UNAUTHENTICATED",
+      "PERMISSION_DENIED",
+      "NOT_FOUND",
+      "ALREADY_EXISTS",
+      "FAILED_PRECONDITION",
+      "ABORTED",
+      "RESOURCE_EXHAUSTED",
+      "INTERNAL",
+      "UNAVAILABLE",
+      "DEADLINE_EXCEEDED"
+    ],
+    "providerQuery": [
+      "INVALID_ARGUMENT",
+      "UNAUTHENTICATED",
+      "PERMISSION_DENIED",
+      "NOT_FOUND",
+      "FAILED_PRECONDITION",
+      "INTERNAL",
+      "UNAVAILABLE",
+      "DEADLINE_EXCEEDED"
+    ],
+    "providerMutation": [
+      "INVALID_ARGUMENT",
+      "UNAUTHENTICATED",
+      "PERMISSION_DENIED",
+      "NOT_FOUND",
+      "ALREADY_EXISTS",
+      "FAILED_PRECONDITION",
+      "ABORTED",
+      "RESOURCE_EXHAUSTED",
+      "INTERNAL",
+      "UNAVAILABLE",
+      "DEADLINE_EXCEEDED"
+    ]
+  },
+  "rules": [
+    {
+      "service": "privatecloud.controlplane.v1.CatalogService",
+      "methods": ["GetProject", "GetProjectQuota", "ListImages", "ListFlavors", "ListNetworks"],
+      "audience": "tenant",
+      "authentication": "Bearer token in authorization metadata; project scope must match the caller grant.",
+      "kind": "query",
+      "deadlineMs": 2000,
+      "idempotency": "Read-only; request retries are safe.",
+      "requirements": ["SRS-FR-001", "SRS-FR-010", "SRS-FR-013", "SRS-FR-014", "SRS-FR-015"]
+    },
+    {
+      "service": "privatecloud.controlplane.v1.InstanceService",
+      "methods": ["ListInstances", "GetInstance", "ListSnapshots"],
+      "audience": "tenant",
+      "authentication": "Bearer token in authorization metadata; project scope must match the caller grant.",
+      "kind": "query",
+      "deadlineMs": 2000,
+      "idempotency": "Read-only; request retries are safe.",
+      "requirements": ["SRS-FR-026", "SRS-FR-028", "SRS-FR-046"]
+    },
+    {
+      "service": "privatecloud.controlplane.v1.InstanceService",
+      "methods": [
+        "CreateInstance",
+        "MutateInstance",
+        "RetainInstance",
+        "CreateSnapshot",
+        "RollbackSnapshot",
+        "DeleteSnapshot"
+      ],
+      "audience": "tenant",
+      "authentication": "Bearer token in authorization metadata; project scope must match the caller grant.",
+      "kind": "mutation",
+      "deadlineMs": 3000,
+      "idempotency": "MutationContext.idempotency_key is required and bound to the canonical request for at least 24 hours.",
+      "requirements": [
+        "SRS-FR-024",
+        "SRS-FR-025",
+        "SRS-FR-039",
+        "SRS-FR-041",
+        "SRS-FR-047",
+        "SRS-FR-048",
+        "SRS-FR-049",
+        "SRS-FR-051",
+        "SRS-FR-057"
+      ]
+    },
+    {
+      "service": "privatecloud.controlplane.v1.OperationService",
+      "methods": ["ListOperations", "GetOperation"],
+      "audience": "tenant",
+      "authentication": "Bearer token in authorization metadata; project scope must match the caller grant.",
+      "kind": "query",
+      "deadlineMs": 2000,
+      "idempotency": "Read-only; request retries are safe.",
+      "requirements": ["SRS-FR-029", "SRS-FR-030"]
+    },
+    {
+      "service": "privatecloud.controlplane.v1.AdministrationService",
+      "methods": [
+        "ListProviderProfiles",
+        "GetProviderProfile",
+        "GetAdministrativeOperation",
+        "ListDeadLetters",
+        "ListManualReviews",
+        "GetManualReview",
+        "GetRetentionPolicy",
+        "ListAuditEvents"
+      ],
+      "audience": "platform-admin-or-sre",
+      "authentication": "Bearer token in authorization metadata with an explicit administrative role.",
+      "kind": "query",
+      "deadlineMs": 3000,
+      "idempotency": "Read-only; request retries are safe.",
+      "requirements": ["SRS-FR-005", "SRS-FR-016", "SRS-FR-067", "SRS-FR-074", "SRS-FR-089"]
+    },
+    {
+      "service": "privatecloud.controlplane.v1.AdministrationService",
+      "methods": [
+        "UpsertImage",
+        "UpsertFlavor",
+        "UpsertNetwork",
+        "CreateProviderProfile",
+        "UpdateProviderProfile",
+        "ValidateProviderProfile",
+        "ActivateProviderProfile",
+        "DisableProviderProfile",
+        "ReplayDeadLetter",
+        "PurgeInstance",
+        "RequestReconciliation",
+        "ResolveManualReview",
+        "UpdateRetentionPolicy"
+      ],
+      "audience": "platform-admin-or-sre",
+      "authentication": "Bearer token in authorization metadata with an explicit administrative role.",
+      "kind": "mutation",
+      "deadlineMs": 3000,
+      "idempotency": "MutationContext.idempotency_key is required and bound to the canonical request for at least 24 hours.",
+      "requirements": [
+        "SRS-FR-005",
+        "SRS-FR-016",
+        "SRS-FR-017",
+        "SRS-FR-018",
+        "SRS-FR-054",
+        "SRS-FR-055",
+        "SRS-FR-056",
+        "SRS-FR-067",
+        "SRS-FR-073",
+        "SRS-FR-074",
+        "SRS-FR-089"
+      ]
+    },
+    {
+      "service": "privatecloud.provider.v1.ProviderService",
+      "methods": [
+        "ValidateProfile",
+        "GetCapabilities",
+        "GetTask",
+        "ObserveInstance",
+        "ListSnapshots"
+      ],
+      "audience": "internal-service",
+      "authentication": "Workload identity in transport metadata; network reachability alone is not authorization.",
+      "kind": "providerQuery",
+      "deadlineMs": 5000,
+      "idempotency": "Read-only observation; request retries are safe with the same request_id.",
+      "requirements": ["SRS-FR-032", "SRS-FR-036", "SRS-FR-046", "SRS-FR-069", "SRS-FR-071"]
+    },
+    {
+      "service": "privatecloud.provider.v1.ProviderService",
+      "methods": [
+        "SubmitCreateInstance",
+        "ApplyInstanceConfiguration",
+        "StartInstance",
+        "ShutdownInstance",
+        "StopInstance",
+        "RebootInstance",
+        "ResizeInstance",
+        "CreateSnapshot",
+        "RollbackSnapshot",
+        "DeleteSnapshot",
+        "MarkInstanceRetained",
+        "PurgeInstance"
+      ],
+      "audience": "internal-service",
+      "authentication": "Workload identity in transport metadata; network reachability alone is not authorization.",
+      "kind": "providerMutation",
+      "deadlineMs": 10000,
+      "idempotency": "ProviderCallContext.request_id is the stable deduplication identity. A transport deadline never proves failure; observe before retrying an unknown outcome.",
+      "requirements": [
+        "SRS-FR-032",
+        "SRS-FR-033",
+        "SRS-FR-034",
+        "SRS-FR-035",
+        "SRS-FR-036",
+        "SRS-FR-039",
+        "SRS-FR-041",
+        "SRS-FR-047",
+        "SRS-FR-048",
+        "SRS-FR-049",
+        "SRS-FR-052",
+        "SRS-FR-055"
+      ]
+    }
+  ]
+}

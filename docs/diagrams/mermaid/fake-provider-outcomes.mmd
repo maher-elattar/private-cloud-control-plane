@@ -1,0 +1,35 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":36,"rankSpacing":52,"htmlLabels":true}}}%%
+flowchart LR
+    Request["Provider RPC<br/>stable requestId"] --> Cache{"Known requestId?"}
+    Cache -- "yes, same input" --> Cached["Return cached result<br/>no second mutation"]
+    Cache -- "yes, changed input" --> Conflict["Protocol error<br/>non-retryable"]
+    Cache -- no --> Step["Consume next deterministic<br/>scenario step"]
+
+    Step --> Latency["Apply configured latency<br/>with abort support"]
+    Latency --> Mode{"Scenario mode"}
+    Mode -- success --> Apply["Apply one logical mutation<br/>and create task evidence"]
+    Apply --> Accepted["ACCEPTED<br/>cache result"]
+
+    Mode -- failure --> Rejected["REJECTED<br/>classified safe failure"]
+    Rejected --> CacheFailure["Cache rejection"]
+
+    Mode -- timeout --> Before{"Apply before<br/>response loss?"}
+    Before -- no --> Deadline["Transport deadline<br/>no outcome claim"]
+    Before -- yes --> AppliedTimeout["Apply once and cache success"]
+    AppliedTimeout --> Deadline
+
+    Mode -- unknown-outcome --> UnknownApply{"Apply before<br/>unknown result?"}
+    UnknownApply -- optional --> AppliedUnknown["Apply once for later<br/>observation"]
+    UnknownApply -- no --> Unknown["UNKNOWN outcome<br/>cache evidence"]
+    AppliedUnknown --> Unknown
+
+    Accepted --> Observe["Task polling and observation"]
+    Deadline --> Observe
+    Unknown --> Observe
+
+    classDef safe fill:#dcfce7,stroke:#15803d,color:#14532d;
+    classDef caution fill:#fef3c7,stroke:#b45309,color:#78350f;
+    classDef failure fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d;
+    class Accepted,Cached,Apply,Observe safe;
+    class Deadline,Unknown,AppliedTimeout,AppliedUnknown caution;
+    class Conflict,Rejected,CacheFailure failure;

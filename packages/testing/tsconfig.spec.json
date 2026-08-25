@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist/out-tsc/spec",
+    "tsBuildInfoFile": "dist/out-tsc/spec/tsconfig.spec.tsbuildinfo",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["vite.config.ts", "src/**/*.spec.ts"],
+  "references": [
+    { "path": "./tsconfig.lib.json" },
+    { "path": "../contracts/tsconfig.lib.json" },
+    { "path": "../provider-sdk/tsconfig.lib.json" }
+  ]
+}

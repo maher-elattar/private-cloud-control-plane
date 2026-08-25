@@ -1,0 +1,474 @@
+syntax = "proto3";
+
+package privatecloud.controlplane.v1;
+
+import "google/protobuf/field_mask.proto";
+import "privatecloud/common/v1/common.proto";
+
+service CatalogService {
+  rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
+  rpc GetProjectQuota(GetProjectQuotaRequest) returns (GetProjectQuotaResponse);
+  rpc ListImages(ListImagesRequest) returns (ListImagesResponse);
+  rpc ListFlavors(ListFlavorsRequest) returns (ListFlavorsResponse);
+  rpc ListNetworks(ListNetworksRequest) returns (ListNetworksResponse);
+}
+
+service InstanceService {
+  rpc CreateInstance(CreateInstanceRequest) returns (CreateInstanceResponse);
+  rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+  rpc GetInstance(GetInstanceRequest) returns (GetInstanceResponse);
+  rpc MutateInstance(MutateInstanceRequest) returns (MutateInstanceResponse);
+  rpc RetainInstance(RetainInstanceRequest) returns (RetainInstanceResponse);
+  rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+  rpc RollbackSnapshot(RollbackSnapshotRequest) returns (RollbackSnapshotResponse);
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+}
+
+service OperationService {
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse);
+  rpc GetOperation(GetOperationRequest) returns (GetOperationResponse);
+}
+
+service AdministrationService {
+  rpc UpsertImage(UpsertImageRequest) returns (UpsertImageResponse);
+  rpc UpsertFlavor(UpsertFlavorRequest) returns (UpsertFlavorResponse);
+  rpc UpsertNetwork(UpsertNetworkRequest) returns (UpsertNetworkResponse);
+  rpc ListProviderProfiles(ListProviderProfilesRequest) returns (ListProviderProfilesResponse);
+  rpc CreateProviderProfile(CreateProviderProfileRequest) returns (CreateProviderProfileResponse);
+  rpc GetProviderProfile(GetProviderProfileRequest) returns (GetProviderProfileResponse);
+  rpc UpdateProviderProfile(UpdateProviderProfileRequest) returns (UpdateProviderProfileResponse);
+  rpc ValidateProviderProfile(ValidateProviderProfileRequest) returns (ValidateProviderProfileResponse);
+  rpc ActivateProviderProfile(ActivateProviderProfileRequest) returns (ActivateProviderProfileResponse);
+  rpc DisableProviderProfile(DisableProviderProfileRequest) returns (DisableProviderProfileResponse);
+  rpc GetAdministrativeOperation(GetAdministrativeOperationRequest) returns (GetAdministrativeOperationResponse);
+  rpc ListDeadLetters(ListDeadLettersRequest) returns (ListDeadLettersResponse);
+  rpc ReplayDeadLetter(ReplayDeadLetterRequest) returns (ReplayDeadLetterResponse);
+  rpc PurgeInstance(PurgeInstanceRequest) returns (PurgeInstanceResponse);
+  rpc RequestReconciliation(RequestReconciliationRequest) returns (RequestReconciliationResponse);
+  rpc ListManualReviews(ListManualReviewsRequest) returns (ListManualReviewsResponse);
+  rpc GetManualReview(GetManualReviewRequest) returns (GetManualReviewResponse);
+  rpc ResolveManualReview(ResolveManualReviewRequest) returns (ResolveManualReviewResponse);
+  rpc GetRetentionPolicy(GetRetentionPolicyRequest) returns (GetRetentionPolicyResponse);
+  rpc UpdateRetentionPolicy(UpdateRetentionPolicyRequest) returns (UpdateRetentionPolicyResponse);
+  rpc ListAuditEvents(ListAuditEventsRequest) returns (ListAuditEventsResponse);
+}
+
+message GetProjectRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+}
+
+message GetProjectResponse {
+  privatecloud.common.v1.Project project = 1;
+}
+
+message GetProjectQuotaRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+}
+
+message GetProjectQuotaResponse {
+  privatecloud.common.v1.QuotaSet quota = 1;
+}
+
+message ListImagesRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+  privatecloud.common.v1.PageRequest page = 2;
+}
+
+message ListImagesResponse {
+  repeated privatecloud.common.v1.Image items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message ListFlavorsRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+  privatecloud.common.v1.PageRequest page = 2;
+}
+
+message ListFlavorsResponse {
+  repeated privatecloud.common.v1.Flavor items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message ListNetworksRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+  privatecloud.common.v1.PageRequest page = 2;
+}
+
+message ListNetworksResponse {
+  repeated privatecloud.common.v1.Network items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message CreateInstanceRequest {
+  privatecloud.common.v1.MutationContext context = 1;
+  string image_id = 2;
+  string flavor_id = 3;
+  string network_id = 4;
+  string hostname = 5;
+  repeated string ssh_public_keys = 6;
+}
+
+message CreateInstanceResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message ListInstancesRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+  privatecloud.common.v1.PageRequest page = 2;
+  optional privatecloud.common.v1.InstanceLifecycleState lifecycle_state = 3;
+}
+
+message ListInstancesResponse {
+  repeated privatecloud.common.v1.Instance items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message GetInstanceRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+  string instance_id = 2;
+}
+
+message GetInstanceResponse {
+  privatecloud.common.v1.Instance instance = 1;
+}
+
+enum PowerAction {
+  POWER_ACTION_UNSPECIFIED = 0;
+  POWER_ACTION_START = 1;
+  POWER_ACTION_SHUTDOWN = 2;
+  POWER_ACTION_STOP = 3;
+  POWER_ACTION_REBOOT = 4;
+}
+
+message ResizeAction {
+  string flavor_id = 1;
+  optional uint64 disk_gib = 2;
+}
+
+message MutateInstanceRequest {
+  privatecloud.common.v1.MutationContext context = 1;
+  string instance_id = 2;
+  oneof action {
+    PowerAction power = 3;
+    ResizeAction resize = 4;
+  }
+}
+
+message MutateInstanceResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message RetainInstanceRequest {
+  privatecloud.common.v1.MutationContext context = 1;
+  string instance_id = 2;
+}
+
+message RetainInstanceResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message ListSnapshotsRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+  string instance_id = 2;
+  privatecloud.common.v1.PageRequest page = 3;
+}
+
+message ListSnapshotsResponse {
+  repeated privatecloud.common.v1.Snapshot items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message CreateSnapshotRequest {
+  privatecloud.common.v1.MutationContext context = 1;
+  string instance_id = 2;
+  string name = 3;
+  optional string description = 4;
+}
+
+message CreateSnapshotResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message RollbackSnapshotRequest {
+  privatecloud.common.v1.MutationContext context = 1;
+  string instance_id = 2;
+  string snapshot_id = 3;
+}
+
+message RollbackSnapshotResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message DeleteSnapshotRequest {
+  privatecloud.common.v1.MutationContext context = 1;
+  string instance_id = 2;
+  string snapshot_id = 3;
+}
+
+message DeleteSnapshotResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message ListOperationsRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+  privatecloud.common.v1.PageRequest page = 2;
+  optional string instance_id = 3;
+  optional privatecloud.common.v1.OperationState state = 4;
+}
+
+message ListOperationsResponse {
+  repeated privatecloud.common.v1.Operation items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message GetOperationRequest {
+  privatecloud.common.v1.QueryContext context = 1;
+  string operation_id = 2;
+}
+
+message GetOperationResponse {
+  privatecloud.common.v1.Operation operation = 1;
+}
+
+message AdministrativeMutationContext {
+  string idempotency_key = 1;
+  optional string correlation_id = 2;
+}
+
+message ImageInput {
+  string name = 1;
+  string provider_profile_id = 2;
+  bool enabled = 3;
+  string architecture = 4;
+}
+
+message UpsertImageRequest {
+  AdministrativeMutationContext context = 1;
+  string image_id = 2;
+  ImageInput image = 3;
+}
+
+message UpsertImageResponse {
+  privatecloud.common.v1.Image image = 1;
+}
+
+message FlavorInput {
+  string name = 1;
+  uint32 cpu_count = 2;
+  uint64 memory_mib = 3;
+  uint64 minimum_disk_gib = 4;
+  bool enabled = 5;
+}
+
+message UpsertFlavorRequest {
+  AdministrativeMutationContext context = 1;
+  string flavor_id = 2;
+  FlavorInput flavor = 3;
+}
+
+message UpsertFlavorResponse {
+  privatecloud.common.v1.Flavor flavor = 1;
+}
+
+message NetworkInput {
+  string name = 1;
+  string ipv4_cidr = 2;
+  string gateway = 3;
+  repeated string dns_servers = 4;
+  repeated string exclusions = 5;
+  bool enabled = 6;
+}
+
+message UpsertNetworkRequest {
+  AdministrativeMutationContext context = 1;
+  string network_id = 2;
+  NetworkInput network = 3;
+}
+
+message UpsertNetworkResponse {
+  privatecloud.common.v1.Network network = 1;
+}
+
+message ProviderProfileInput {
+  string id = 1;
+  string provider_type = 2;
+  string endpoint = 3;
+  string cluster_alias = 4;
+  string compute_target = 5;
+  string image_source_reference = 6;
+  string storage_target = 7;
+  string network_attachment = 8;
+  uint64 resource_id_minimum = 9;
+  uint64 resource_id_maximum = 10;
+  string network_id = 11;
+  string credential_reference = 12;
+}
+
+message ListProviderProfilesRequest {
+  privatecloud.common.v1.PageRequest page = 1;
+}
+
+message ListProviderProfilesResponse {
+  repeated privatecloud.common.v1.ProviderProfile items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message CreateProviderProfileRequest {
+  AdministrativeMutationContext context = 1;
+  ProviderProfileInput profile = 2;
+}
+
+message CreateProviderProfileResponse {
+  privatecloud.common.v1.ProviderProfile profile = 1;
+}
+
+message GetProviderProfileRequest {
+  string profile_id = 1;
+}
+
+message GetProviderProfileResponse {
+  privatecloud.common.v1.ProviderProfile profile = 1;
+}
+
+message UpdateProviderProfileRequest {
+  AdministrativeMutationContext context = 1;
+  string profile_id = 2;
+  ProviderProfileInput profile = 3;
+  google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdateProviderProfileResponse {
+  privatecloud.common.v1.ProviderProfile profile = 1;
+}
+
+message ValidateProviderProfileRequest {
+  AdministrativeMutationContext context = 1;
+  string profile_id = 2;
+}
+
+message ValidateProviderProfileResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message ActivateProviderProfileRequest {
+  AdministrativeMutationContext context = 1;
+  string profile_id = 2;
+}
+
+message ActivateProviderProfileResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message DisableProviderProfileRequest {
+  AdministrativeMutationContext context = 1;
+  string profile_id = 2;
+}
+
+message DisableProviderProfileResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message GetAdministrativeOperationRequest {
+  string operation_id = 1;
+}
+
+message GetAdministrativeOperationResponse {
+  privatecloud.common.v1.AdministrativeOperation operation = 1;
+}
+
+message ListDeadLettersRequest {
+  privatecloud.common.v1.PageRequest page = 1;
+}
+
+message ListDeadLettersResponse {
+  repeated privatecloud.common.v1.DeadLetter items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message ReplayDeadLetterRequest {
+  AdministrativeMutationContext context = 1;
+  string event_id = 2;
+  string reason = 3;
+}
+
+message ReplayDeadLetterResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message PurgeInstanceRequest {
+  AdministrativeMutationContext context = 1;
+  string instance_id = 2;
+  string confirm_instance_id = 3;
+  string reason = 4;
+}
+
+message PurgeInstanceResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message RequestReconciliationRequest {
+  AdministrativeMutationContext context = 1;
+  string instance_id = 2;
+  string reason = 3;
+}
+
+message RequestReconciliationResponse {
+  privatecloud.common.v1.MutationAccepted accepted = 1;
+}
+
+message ListManualReviewsRequest {
+  privatecloud.common.v1.PageRequest page = 1;
+  optional privatecloud.common.v1.ManualReviewState state = 2;
+}
+
+message ListManualReviewsResponse {
+  repeated privatecloud.common.v1.ManualReview items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}
+
+message GetManualReviewRequest {
+  string review_id = 1;
+}
+
+message GetManualReviewResponse {
+  privatecloud.common.v1.ManualReview review = 1;
+}
+
+message ResolveManualReviewRequest {
+  AdministrativeMutationContext context = 1;
+  string review_id = 2;
+  string disposition = 3;
+  string reason = 4;
+}
+
+message ResolveManualReviewResponse {
+  privatecloud.common.v1.ManualReview review = 1;
+}
+
+message GetRetentionPolicyRequest {}
+
+message GetRetentionPolicyResponse {
+  privatecloud.common.v1.RetentionPolicy policy = 1;
+}
+
+message UpdateRetentionPolicyRequest {
+  AdministrativeMutationContext context = 1;
+  uint32 retention_hours = 2;
+  string lease_release_mode = 3;
+}
+
+message UpdateRetentionPolicyResponse {
+  privatecloud.common.v1.RetentionPolicy policy = 1;
+}
+
+message ListAuditEventsRequest {
+  privatecloud.common.v1.PageRequest page = 1;
+  optional string project_id = 2;
+  optional string operation_id = 3;
+}
+
+message ListAuditEventsResponse {
+  repeated privatecloud.common.v1.AuditEvent items = 1;
+  privatecloud.common.v1.PageResponse page = 2;
+}

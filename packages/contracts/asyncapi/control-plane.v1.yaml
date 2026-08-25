@@ -1,0 +1,298 @@
+asyncapi: 3.1.0
+info:
+  title: Private Cloud Control Plane Events
+  version: 1.0.0
+  description: Versioned at-least-once Kafka commands and facts. Event identity is stable across replay.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+defaultContentType: application/json
+servers:
+  kubernetesKafka:
+    host: kafka.private-cloud-control-plane.svc:9092
+    protocol: kafka
+    description: Environment-specific Kafka bootstrap service.
+channels:
+  provisioningCommands:
+    address: provisioning.commands.v1
+    description: Durable accepted provisioning intent, partitioned by instance ID.
+    x-partition-key: partitionKey
+    x-delivery: at-least-once
+    messages:
+      instanceCreateRequested: { $ref: '#/components/messages/InstanceCreateRequested' }
+      instancePowerRequested: { $ref: '#/components/messages/InstancePowerRequested' }
+      instanceResizeRequested: { $ref: '#/components/messages/InstanceResizeRequested' }
+      snapshotCreateRequested: { $ref: '#/components/messages/SnapshotCreateRequested' }
+      snapshotRollbackRequested: { $ref: '#/components/messages/SnapshotRollbackRequested' }
+      snapshotDeleteRequested: { $ref: '#/components/messages/SnapshotDeleteRequested' }
+      instanceRetentionRequested: { $ref: '#/components/messages/InstanceRetentionRequested' }
+      instancePurgeRequested: { $ref: '#/components/messages/InstancePurgeRequested' }
+      reconciliationRequested: { $ref: '#/components/messages/ReconciliationRequested' }
+  provisioningEvents:
+    address: provisioning.events.v1
+    description: Workflow progress and terminal provisioning facts, partitioned by instance ID.
+    x-partition-key: partitionKey
+    x-delivery: at-least-once
+    messages:
+      workflowProgressed: { $ref: '#/components/messages/WorkflowProgressed' }
+      instanceMutationCompleted: { $ref: '#/components/messages/InstanceMutationCompleted' }
+      instanceMutationFailed: { $ref: '#/components/messages/InstanceMutationFailed' }
+  reconciliationEvents:
+    address: reconciliation.events.v1
+    description: Provider observations, drift, and unknown-outcome resolution facts.
+    x-partition-key: partitionKey
+    x-delivery: at-least-once
+    messages:
+      instanceObserved: { $ref: '#/components/messages/InstanceObserved' }
+      driftDetected: { $ref: '#/components/messages/DriftDetected' }
+      unknownOutcomeResolved: { $ref: '#/components/messages/UnknownOutcomeResolved' }
+      manualReviewCreated: { $ref: '#/components/messages/ManualReviewCreated' }
+  provisioningDeadLetters:
+    address: provisioning.dlq.v1
+    description: Exhausted or poison provisioning evidence; never implicit replay authority.
+    x-partition-key: partitionKey
+    x-delivery: at-least-once
+    messages:
+      provisioningDeadLettered: { $ref: '#/components/messages/ProvisioningDeadLettered' }
+  auditEvents:
+    address: audit.events.v1
+    description: Attributed audit facts, partitioned by project ID.
+    x-partition-key: partitionKey
+    x-delivery: at-least-once
+    messages:
+      auditRecorded: { $ref: '#/components/messages/AuditRecorded' }
+operations:
+  controlApiSendsProvisioningCommands:
+    action: send
+    summary: Control API outbox records become provisioning commands through Debezium.
+    channel: { $ref: '#/channels/provisioningCommands' }
+    messages:
+      - { $ref: '#/channels/provisioningCommands/messages/instanceCreateRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/instancePowerRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/instanceResizeRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/snapshotCreateRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/snapshotRollbackRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/snapshotDeleteRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/instanceRetentionRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/instancePurgeRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/reconciliationRequested' }
+    x-service: control-api
+  orchestratorReceivesProvisioningCommands:
+    action: receive
+    summary: Orchestrator handles commands through a durable inbox and workflow lease.
+    channel: { $ref: '#/channels/provisioningCommands' }
+    messages:
+      - { $ref: '#/channels/provisioningCommands/messages/instanceCreateRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/instancePowerRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/instanceResizeRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/snapshotCreateRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/snapshotRollbackRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/snapshotDeleteRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/instanceRetentionRequested' }
+      - { $ref: '#/channels/provisioningCommands/messages/instancePurgeRequested' }
+    x-service: provisioning-orchestrator
+  reconcilerReceivesReconciliationRequests:
+    action: receive
+    summary: Reconciler handles requested non-destructive observations.
+    channel: { $ref: '#/channels/provisioningCommands' }
+    messages:
+      - { $ref: '#/channels/provisioningCommands/messages/reconciliationRequested' }
+    x-service: reconciler
+  orchestratorSendsProvisioningEvents:
+    action: send
+    summary: Orchestrator outbox records become workflow facts through Debezium.
+    channel: { $ref: '#/channels/provisioningEvents' }
+    messages:
+      - { $ref: '#/channels/provisioningEvents/messages/workflowProgressed' }
+      - { $ref: '#/channels/provisioningEvents/messages/instanceMutationCompleted' }
+      - { $ref: '#/channels/provisioningEvents/messages/instanceMutationFailed' }
+    x-service: provisioning-orchestrator
+  controlApiReceivesProvisioningEvents:
+    action: receive
+    summary: Control API applies provisioning facts to project-readable projections idempotently.
+    channel: { $ref: '#/channels/provisioningEvents' }
+    messages:
+      - { $ref: '#/channels/provisioningEvents/messages/workflowProgressed' }
+      - { $ref: '#/channels/provisioningEvents/messages/instanceMutationCompleted' }
+      - { $ref: '#/channels/provisioningEvents/messages/instanceMutationFailed' }
+    x-service: control-api
+  reconcilerSendsReconciliationEvents:
+    action: send
+    summary: Reconciler outbox records become observation and drift facts through Debezium.
+    channel: { $ref: '#/channels/reconciliationEvents' }
+    messages:
+      - { $ref: '#/channels/reconciliationEvents/messages/instanceObserved' }
+      - { $ref: '#/channels/reconciliationEvents/messages/driftDetected' }
+      - { $ref: '#/channels/reconciliationEvents/messages/unknownOutcomeResolved' }
+      - { $ref: '#/channels/reconciliationEvents/messages/manualReviewCreated' }
+    x-service: reconciler
+  controlApiReceivesReconciliationEvents:
+    action: receive
+    summary: Control API applies observation and drift facts to projections idempotently.
+    channel: { $ref: '#/channels/reconciliationEvents' }
+    messages:
+      - { $ref: '#/channels/reconciliationEvents/messages/instanceObserved' }
+      - { $ref: '#/channels/reconciliationEvents/messages/driftDetected' }
+      - { $ref: '#/channels/reconciliationEvents/messages/unknownOutcomeResolved' }
+      - { $ref: '#/channels/reconciliationEvents/messages/manualReviewCreated' }
+    x-service: control-api
+  orchestratorReceivesResolvedUnknownOutcomes:
+    action: receive
+    summary: Orchestrator closes a checkpoint only after reconciliation proves an outcome.
+    channel: { $ref: '#/channels/reconciliationEvents' }
+    messages:
+      - { $ref: '#/channels/reconciliationEvents/messages/unknownOutcomeResolved' }
+    x-service: provisioning-orchestrator
+  orchestratorSendsDeadLetters:
+    action: send
+    summary: Orchestrator emits bounded evidence after retry policy exhaustion.
+    channel: { $ref: '#/channels/provisioningDeadLetters' }
+    messages:
+      - { $ref: '#/channels/provisioningDeadLetters/messages/provisioningDeadLettered' }
+    x-service: provisioning-orchestrator
+  controlApiReceivesDeadLetters:
+    action: receive
+    summary: Control API projects dead-letter evidence for the authorized recovery path.
+    channel: { $ref: '#/channels/provisioningDeadLetters' }
+    messages:
+      - { $ref: '#/channels/provisioningDeadLetters/messages/provisioningDeadLettered' }
+    x-service: control-api
+  servicesSendAuditEvents:
+    action: send
+    summary: State-owning services publish append-only audit facts through their local outboxes.
+    channel: { $ref: '#/channels/auditEvents' }
+    messages:
+      - { $ref: '#/channels/auditEvents/messages/auditRecorded' }
+    x-service: control-api,provisioning-orchestrator,reconciler
+  auditArchiveReceivesAuditEvents:
+    action: receive
+    summary: The audit projection and archive path consume attributed facts idempotently.
+    channel: { $ref: '#/channels/auditEvents' }
+    messages:
+      - { $ref: '#/channels/auditEvents/messages/auditRecorded' }
+    x-service: audit-archive
+components:
+  messages:
+    InstanceCreateRequested:
+      name: InstanceCreateRequested
+      title: Instance create requested
+      summary: Durable accepted create intent.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstanceCreateRequested' }
+      x-requirements: [SRS-FR-024, SRS-FR-025, SRS-FR-057, SRS-FR-058, SRS-FR-059]
+    InstancePowerRequested:
+      name: InstancePowerRequested
+      title: Instance power requested
+      summary: Durable accepted start, shutdown, stop, or reboot intent.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstancePowerRequested' }
+      x-requirements: [SRS-FR-039, SRS-FR-057, SRS-FR-058, SRS-FR-059]
+    InstanceResizeRequested:
+      name: InstanceResizeRequested
+      title: Instance resize requested
+      summary: Durable accepted compute or disk-growth intent.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstanceResizeRequested' }
+      x-requirements: [SRS-FR-041, SRS-FR-042, SRS-FR-043, SRS-FR-057, SRS-FR-058]
+    SnapshotCreateRequested:
+      name: SnapshotCreateRequested
+      title: Snapshot create requested
+      summary: Durable accepted instance-owned snapshot-create intent.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/SnapshotCreateRequested' }
+      x-requirements: [SRS-FR-047, SRS-FR-050, SRS-FR-057, SRS-FR-058]
+    SnapshotRollbackRequested:
+      name: SnapshotRollbackRequested
+      title: Snapshot rollback requested
+      summary: Durable accepted instance-owned snapshot rollback intent.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/SnapshotRollbackRequested' }
+      x-requirements: [SRS-FR-048, SRS-FR-050, SRS-FR-057, SRS-FR-058]
+    SnapshotDeleteRequested:
+      name: SnapshotDeleteRequested
+      title: Snapshot delete requested
+      summary: Durable accepted instance-owned snapshot deletion intent.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/SnapshotDeleteRequested' }
+      x-requirements: [SRS-FR-049, SRS-FR-050, SRS-FR-057, SRS-FR-058]
+    InstanceRetentionRequested:
+      name: InstanceRetentionRequested
+      title: Instance retention requested
+      summary: Durable normal soft-delete intent; no provider destruction authority.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstanceRetentionRequested' }
+      x-requirements: [SRS-FR-051, SRS-FR-052, SRS-FR-057, SRS-FR-058]
+    InstancePurgeRequested:
+      name: InstancePurgeRequested
+      title: Instance purge requested
+      summary: Explicit attributed purge intent subject to immediate ownership guards.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstancePurgeRequested' }
+      x-requirements: [SRS-FR-054, SRS-FR-055, SRS-FR-056, SRS-FR-057, SRS-FR-058]
+    ReconciliationRequested:
+      name: ReconciliationRequested
+      title: Reconciliation requested
+      summary: Requested non-destructive provider observation.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/ReconciliationRequested' }
+      x-requirements: [SRS-FR-069, SRS-FR-071, SRS-FR-073]
+    WorkflowProgressed:
+      name: WorkflowProgressed
+      title: Workflow progressed
+      summary: Durable checkpoint and retry fact.
+      payload: { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/WorkflowProgressed' }
+      x-requirements: [SRS-FR-062, SRS-FR-063, SRS-FR-068]
+    InstanceMutationCompleted:
+      name: InstanceMutationCompleted
+      title: Instance mutation completed
+      summary: Provider mutation and ownership evidence reached a conclusive success.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstanceMutationCompleted' }
+      x-requirements: [SRS-FR-033, SRS-FR-068]
+    InstanceMutationFailed:
+      name: InstanceMutationFailed
+      title: Instance mutation failed
+      summary: Provider mutation reached a conclusive classified failure or compensation outcome.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstanceMutationFailed' }
+      x-requirements: [SRS-FR-034, SRS-FR-035, SRS-FR-036, SRS-FR-064, SRS-FR-068]
+    InstanceObserved:
+      name: InstanceObserved
+      title: Instance observed
+      summary: Immutable provider observation separate from desired state.
+      payload: { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstanceObserved' }
+      x-requirements: [SRS-FR-069, SRS-FR-071]
+    DriftDetected:
+      name: DriftDetected
+      title: Drift detected
+      summary: Classified provider drift without implicit corrective authority.
+      payload: { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/DriftDetected' }
+      x-requirements: [SRS-FR-070, SRS-FR-071, SRS-FR-073, SRS-FR-074]
+    UnknownOutcomeResolved:
+      name: UnknownOutcomeResolved
+      title: Unknown outcome resolved
+      summary: Observation proved success, failure, or the need for manual review.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/UnknownOutcomeResolved' }
+      x-requirements: [SRS-FR-036, SRS-FR-072]
+    ManualReviewCreated:
+      name: ManualReviewCreated
+      title: Manual review created
+      summary: Ambiguous or dangerous state requires an attributed operator decision.
+      payload: { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/ManualReviewCreated' }
+      x-requirements: [SRS-FR-056, SRS-FR-074]
+    ProvisioningDeadLettered:
+      name: ProvisioningDeadLettered
+      title: Provisioning dead lettered
+      summary: Retry-exhausted work with original identity and bounded failure context.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/ProvisioningDeadLettered' }
+      x-requirements: [SRS-FR-066, SRS-FR-067]
+    AuditRecorded:
+      name: AuditRecorded
+      title: Audit recorded
+      summary: Attributed mutation or recovery fact.
+      payload: { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/AuditRecorded' }
+      x-requirements: [SRS-FR-005, SRS-FR-067, SRS-FR-089, SRS-NFR-019]
+x-max-payload-bytes: 262144
+x-compatibility: Consumers reject unsupported major versions and tolerate additive optional fields within v1.

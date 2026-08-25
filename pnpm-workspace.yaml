@@ -3,7 +3,9 @@ packages:
   - 'packages/*'
 
 allowBuilds:
+  '@bufbuild/buf': true
   '@parcel/watcher': true
+  '@scarf/scarf': false
   '@swc/core': true
   esbuild: true
   less: true

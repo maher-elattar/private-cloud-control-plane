@@ -1,2 +1,3 @@
-/** Provider ports and the reusable conformance suite are exported from this package. */
-export {};
+export { ProviderTransportError } from './provider-errors.js';
+export type { ProviderTransportErrorCode } from './provider-errors.js';
+export type { ProviderCallOptions, ProviderMethod, ProviderPort } from './provider-port.js';

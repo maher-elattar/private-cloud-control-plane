@@ -1,0 +1,37 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#dbeafe","primaryBorderColor":"#1e40af","primaryTextColor":"#1e293b","lineColor":"#475569","actorBkg":"#f1f5f9","actorBorder":"#475569","actorTextColor":"#1e293b","signalColor":"#334155","signalTextColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#854d0e","noteTextColor":"#1e293b","activationBkgColor":"#dbeafe","activationBorderColor":"#1e40af","labelBoxBkgColor":"#f1f5f9","labelBoxBorderColor":"#475569","labelTextColor":"#1e293b"},"sequence":{"useMaxWidth":false,"diagramMarginX":32,"diagramMarginY":24,"actorMargin":56,"width":150,"height":60,"messageMargin":32,"noteMargin":12}}}%%
+sequenceDiagram
+    autonumber
+    actor Client as Tenant or Operator
+    participant API as Control API
+    participant DB as State and Outbox
+    participant Kafka as Versioned Kafka Topics
+    participant Orch as Orchestrator
+    participant Port as Provider gRPC Port
+    participant Adapter as Provider Adapter
+    participant Reconciler
+
+    Client->>API: REST or gRPC command with auth, idempotency, trace context
+    API->>DB: Atomically commit desired state, operation, and outbox event
+    API-->>Client: 202 Accepted and operation identity
+    DB-)Kafka: Debezium publishes command envelope v1
+    Kafka-)Orch: At-least-once command keyed by aggregateId
+    Orch->>Orch: Deduplicate eventId and claim workflow checkpoint
+    Orch->>Port: Provider-neutral RPC with requestId and deadline
+    Port->>Adapter: Translate domain values into provider API calls
+    Adapter-->>Port: Accepted, rejected, succeeded, or unknown outcome
+    Port-->>Orch: Normalized result, task reference, and safe evidence ID
+    Orch->>DB: Commit checkpoint, inbox receipt, and event outbox
+    DB-)Kafka: Publish workflow fact with propagated trace context
+    Kafka-)API: Apply idempotent read projection update
+
+    alt Provider result is conclusive
+        Client->>API: Read operation or instance
+        API-->>Client: Current desired and observed state
+    else Provider result is ambiguous
+        Orch->>DB: Persist UNKNOWN_OUTCOME and stop blind retries
+        Reconciler->>Port: Observe resource using ownership markers
+        Port-->>Reconciler: Verified observation or inconclusive evidence
+        Reconciler->>DB: Resolve outcome or create manual review
+    end
+
+    Note over Client,Reconciler: W3C trace context crosses every boundary.<br/>Fields marked prohibited never enter telemetry.

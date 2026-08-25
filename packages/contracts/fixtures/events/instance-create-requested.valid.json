@@ -1,0 +1,37 @@
+{
+  "eventId": "10000000-0000-4000-8000-000000000001",
+  "schemaName": "instance.create.requested",
+  "schemaVersion": 1,
+  "aggregateType": "instance",
+  "aggregateId": "20000000-0000-4000-8000-000000000001",
+  "projectId": "30000000-0000-4000-8000-000000000001",
+  "operationId": "40000000-0000-4000-8000-000000000001",
+  "correlationId": "50000000-0000-4000-8000-000000000001",
+  "causationId": "60000000-0000-4000-8000-000000000001",
+  "occurredAt": "2026-08-25T00:00:00.000Z",
+  "traceContext": {
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  },
+  "partitionKey": "20000000-0000-4000-8000-000000000001",
+  "data": {
+    "imageId": "ubuntu-2404",
+    "flavorId": "standard-2",
+    "networkId": "tenant-primary",
+    "providerProfileId": "lab-primary",
+    "hostname": "web-01",
+    "resources": {
+      "cpuCount": 2,
+      "memoryMiB": 4096,
+      "diskGiB": 40
+    },
+    "ipv4": {
+      "address": "192.0.2.10",
+      "prefixLength": 24,
+      "gateway": "192.0.2.1",
+      "dnsServers": ["192.0.2.53"]
+    },
+    "sshPublicKeys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGeneratedContractFixtureOnly user@example.invalid"
+    ]
+  }
+}

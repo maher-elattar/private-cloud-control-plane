@@ -1,0 +1,29 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":42,"rankSpacing":54,"htmlLabels":true}}}%%
+flowchart LR
+    Change["Pull request or<br/>main branch push"] --> Install["Locked install<br/>Node 24 + pnpm 11"]
+    Install --> Generate["Regenerate OpenAPI,<br/>protobuf, events, and tables"]
+    Generate --> Drift{"Git diff clean?"}
+    Drift -- no --> Reject["Reject stale generated artifacts"]
+    Drift -- yes --> Contract["Lint and validate<br/>39 REST + 54 RPC + 18 events"]
+
+    Contract --> Static["Format, ESLint,<br/>strict typecheck"]
+    Contract --> Tests["Unit and provider<br/>conformance tests"]
+    Contract --> Docs["Links, generated notices,<br/>and diagram artifacts"]
+    Contract --> Audit["Production dependency<br/>audit"]
+
+    Static --> Build["Build all libraries<br/>and four services"]
+    Tests --> Build
+    Docs --> Build
+    Audit --> Build
+
+    Build --> Matrix["Four-service container matrix"]
+    Matrix --> Runtime["Pinned non-root<br/>runtime images"]
+    Runtime --> Scan["Trivy HIGH and CRITICAL<br/>image vulnerability gate"]
+    Scan --> Ready["Merge evidence complete"]
+
+    classDef pass fill:#dcfce7,stroke:#15803d,color:#14532d;
+    classDef fail fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d;
+    classDef gate fill:#fef3c7,stroke:#b45309,color:#78350f;
+    class Ready pass;
+    class Reject fail;
+    class Drift,Audit,Scan gate;

@@ -1,0 +1,323 @@
+syntax = "proto3";
+
+package privatecloud.common.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// QueryContext carries caller-selected scope. Authentication remains in gRPC metadata.
+message QueryContext {
+  string project_id = 1;
+  optional string correlation_id = 2;
+}
+
+// MutationContext is bound to the canonical request and authenticated actor by the accepting service.
+message MutationContext {
+  string project_id = 1;
+  string idempotency_key = 2;
+  optional string correlation_id = 3;
+}
+
+message PageRequest {
+  optional string cursor = 1;
+  uint32 limit = 2;
+}
+
+message PageResponse {
+  optional string next_cursor = 1;
+  uint32 limit = 2;
+}
+
+enum OperationState {
+  OPERATION_STATE_UNSPECIFIED = 0;
+  OPERATION_STATE_ACCEPTED = 1;
+  OPERATION_STATE_QUEUED = 2;
+  OPERATION_STATE_RUNNING = 3;
+  OPERATION_STATE_RETRY_WAIT = 4;
+  OPERATION_STATE_COMPENSATING = 5;
+  OPERATION_STATE_UNKNOWN_OUTCOME = 6;
+  OPERATION_STATE_MANUAL_REVIEW = 7;
+  OPERATION_STATE_SUCCEEDED = 8;
+  OPERATION_STATE_FAILED = 9;
+  OPERATION_STATE_CANCELLED = 10;
+}
+
+enum FailureCategory {
+  FAILURE_CATEGORY_UNSPECIFIED = 0;
+  FAILURE_CATEGORY_VALIDATION = 1;
+  FAILURE_CATEGORY_AUTHENTICATION = 2;
+  FAILURE_CATEGORY_AUTHORIZATION = 3;
+  FAILURE_CATEGORY_NOT_FOUND = 4;
+  FAILURE_CATEGORY_CONFLICT = 5;
+  FAILURE_CATEGORY_QUOTA = 6;
+  FAILURE_CATEGORY_TRANSIENT = 7;
+  FAILURE_CATEGORY_PERMANENT = 8;
+  FAILURE_CATEGORY_UNKNOWN_OUTCOME = 9;
+  FAILURE_CATEGORY_COMPENSATION_FAILURE = 10;
+  FAILURE_CATEGORY_MANUAL_REVIEW = 11;
+  FAILURE_CATEGORY_INTERNAL = 12;
+}
+
+enum InstanceLifecycleState {
+  INSTANCE_LIFECYCLE_STATE_UNSPECIFIED = 0;
+  INSTANCE_LIFECYCLE_STATE_PENDING = 1;
+  INSTANCE_LIFECYCLE_STATE_PROVISIONING = 2;
+  INSTANCE_LIFECYCLE_STATE_ACTIVE = 3;
+  INSTANCE_LIFECYCLE_STATE_UPDATING = 4;
+  INSTANCE_LIFECYCLE_STATE_FAILED = 5;
+  INSTANCE_LIFECYCLE_STATE_UNKNOWN_OUTCOME = 6;
+  INSTANCE_LIFECYCLE_STATE_RETAINED = 7;
+  INSTANCE_LIFECYCLE_STATE_PURGE_PENDING = 8;
+  INSTANCE_LIFECYCLE_STATE_PURGED = 9;
+  INSTANCE_LIFECYCLE_STATE_MANUAL_REVIEW = 10;
+}
+
+enum DesiredPowerState {
+  DESIRED_POWER_STATE_UNSPECIFIED = 0;
+  DESIRED_POWER_STATE_RUNNING = 1;
+  DESIRED_POWER_STATE_STOPPED = 2;
+  DESIRED_POWER_STATE_UNCHANGED = 3;
+}
+
+enum ObservedPowerState {
+  OBSERVED_POWER_STATE_UNSPECIFIED = 0;
+  OBSERVED_POWER_STATE_RUNNING = 1;
+  OBSERVED_POWER_STATE_STOPPED = 2;
+  OBSERVED_POWER_STATE_SUSPENDED = 3;
+  OBSERVED_POWER_STATE_UNKNOWN = 4;
+}
+
+enum DriftClassification {
+  DRIFT_CLASSIFICATION_UNSPECIFIED = 0;
+  DRIFT_CLASSIFICATION_NONE = 1;
+  DRIFT_CLASSIFICATION_MISSING_RESOURCE = 2;
+  DRIFT_CLASSIFICATION_IDENTITY_MISMATCH = 3;
+  DRIFT_CLASSIFICATION_STALE_TASK = 4;
+  DRIFT_CLASSIFICATION_LATE_SUCCESS = 5;
+  DRIFT_CLASSIFICATION_POWER = 6;
+  DRIFT_CLASSIFICATION_NETWORK = 7;
+  DRIFT_CLASSIFICATION_AMBIGUOUS = 8;
+}
+
+message Project {
+  string id = 1;
+  string name = 2;
+  bool enabled = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+message QuotaValues {
+  uint32 instances = 1;
+  uint32 cpu_count = 2;
+  uint64 memory_mib = 3;
+  uint64 disk_gib = 4;
+  uint32 ipv4_addresses = 5;
+  uint32 snapshots = 6;
+}
+
+message QuotaSet {
+  string project_id = 1;
+  QuotaValues limits = 2;
+  QuotaValues usage = 3;
+  google.protobuf.Timestamp measured_at = 4;
+}
+
+message Image {
+  string id = 1;
+  string name = 2;
+  string provider_profile_id = 3;
+  bool enabled = 4;
+  string architecture = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message Flavor {
+  string id = 1;
+  string name = 2;
+  uint32 cpu_count = 3;
+  uint64 memory_mib = 4;
+  uint64 minimum_disk_gib = 5;
+  bool enabled = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message Network {
+  string id = 1;
+  string name = 2;
+  string ipv4_cidr = 3;
+  string gateway = 4;
+  repeated string dns_servers = 5;
+  repeated string exclusions = 6;
+  bool enabled = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+message DesiredInstanceState {
+  string image_id = 1;
+  string flavor_id = 2;
+  string network_id = 3;
+  string hostname = 4;
+  DesiredPowerState power_state = 5;
+  bool retention_requested = 6;
+}
+
+message ObservedInstanceState {
+  bool exists = 1;
+  ObservedPowerState power_state = 2;
+  optional uint32 cpu_count = 3;
+  optional uint64 memory_mib = 4;
+  optional uint64 disk_gib = 5;
+  bool marker_match = 6;
+  google.protobuf.Timestamp observed_at = 7;
+}
+
+message Ipv4Lease {
+  string address = 1;
+  uint32 prefix_length = 2;
+  string gateway = 3;
+  string state = 4;
+}
+
+message Instance {
+  string id = 1;
+  string project_id = 2;
+  InstanceLifecycleState lifecycle_state = 3;
+  DesiredInstanceState desired = 4;
+  optional ObservedInstanceState observed = 5;
+  optional Ipv4Lease ipv4_lease = 6;
+  optional string active_operation_id = 7;
+  DriftClassification drift = 8;
+  optional google.protobuf.Timestamp last_reconciled_at = 9;
+  optional google.protobuf.Timestamp retention_deadline = 10;
+  bool purge_eligible = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message Snapshot {
+  string id = 1;
+  string instance_id = 2;
+  string name = 3;
+  optional string description = 4;
+  string state = 5;
+  google.protobuf.Timestamp created_at = 6;
+  optional google.protobuf.Timestamp updated_at = 7;
+}
+
+message Operation {
+  string id = 1;
+  string project_id = 2;
+  string action = 3;
+  string target_type = 4;
+  string target_id = 5;
+  OperationState state = 6;
+  string stage = 7;
+  uint32 progress_percent = 8;
+  google.protobuf.Timestamp accepted_at = 9;
+  optional google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+  optional google.protobuf.Timestamp completed_at = 12;
+  optional FailureCategory error_category = 13;
+  optional string error_code = 14;
+  optional string error_message = 15;
+  bool manual_review_required = 16;
+}
+
+message AdministrativeOperation {
+  Operation operation = 1;
+  string correlation_id = 2;
+  optional string causation_id = 3;
+  optional string trace_id = 4;
+  uint32 retry_count = 5;
+  optional string checkpoint = 6;
+  optional string dead_letter_event_id = 7;
+  optional string provider_task_reference = 8;
+}
+
+message MutationAccepted {
+  string operation_id = 1;
+  string target_id = 2;
+  google.protobuf.Timestamp accepted_at = 3;
+  string status_uri = 4;
+  bool replayed = 5;
+}
+
+message ProviderProfile {
+  string id = 1;
+  string provider_type = 2;
+  string endpoint = 3;
+  string cluster_alias = 4;
+  string compute_target = 5;
+  string image_source_reference = 6;
+  string storage_target = 7;
+  string network_attachment = 8;
+  uint64 resource_id_minimum = 9;
+  uint64 resource_id_maximum = 10;
+  string network_id = 11;
+  string credential_reference = 12;
+  string state = 13;
+  uint64 version = 14;
+  optional google.protobuf.Timestamp last_validated_at = 15;
+  optional string last_validation_operation_id = 16;
+  google.protobuf.Timestamp created_at = 17;
+  google.protobuf.Timestamp updated_at = 18;
+}
+
+message DeadLetter {
+  string event_id = 1;
+  string schema_name = 2;
+  uint32 schema_version = 3;
+  string aggregate_id = 4;
+  string project_id = 5;
+  string operation_id = 6;
+  FailureCategory category = 7;
+  optional string safe_message = 8;
+  uint32 attempts = 9;
+  google.protobuf.Timestamp dead_lettered_at = 10;
+  bool replay_allowed = 11;
+  optional google.protobuf.Timestamp last_replay_at = 12;
+}
+
+enum ManualReviewState {
+  MANUAL_REVIEW_STATE_UNSPECIFIED = 0;
+  MANUAL_REVIEW_STATE_OPEN = 1;
+  MANUAL_REVIEW_STATE_RESOLVED = 2;
+}
+
+message ManualReview {
+  string id = 1;
+  string instance_id = 2;
+  string operation_id = 3;
+  string category = 4;
+  string summary = 5;
+  ManualReviewState state = 6;
+  optional string evidence_reference = 7;
+  google.protobuf.Timestamp created_at = 8;
+  optional google.protobuf.Timestamp resolved_at = 9;
+  optional string resolution = 10;
+}
+
+message RetentionPolicy {
+  uint32 retention_hours = 1;
+  string lease_release_mode = 2;
+  uint64 version = 3;
+  google.protobuf.Timestamp updated_at = 4;
+  string updated_by = 5;
+}
+
+message AuditEvent {
+  string id = 1;
+  string actor_id = 2;
+  string actor_role = 3;
+  optional string project_id = 4;
+  string action = 5;
+  string target_type = 6;
+  string target_id = 7;
+  optional string operation_id = 8;
+  string outcome = 9;
+  optional string reason = 10;
+  google.protobuf.Timestamp occurred_at = 11;
+}

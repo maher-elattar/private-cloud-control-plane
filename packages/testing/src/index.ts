@@ -1,2 +1,7 @@
-/** Deterministic test fixtures remain isolated from production applications. */
-export {};
+export { FakeProvider } from './fake-provider.js';
+export type {
+  FakeProviderCall,
+  FakeProviderConfiguration,
+  FakeProviderMode,
+  FakeProviderStep,
+} from './fake-provider.js';

@@ -1,0 +1,1043 @@
+openapi: 3.1.0
+info:
+  title: Private Cloud Control Plane API
+  version: 1.0.0
+  summary: Provider-neutral virtual-machine lifecycle control plane
+  description: |
+    Accepts durable asynchronous lifecycle commands and exposes project-scoped read models.
+    A `202` response means intent and its operation record committed; it does not mean provider work completed.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://cloud.example.invalid
+    description: Environment-specific Gateway API endpoint
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+    description: Kubernetes process and dependency health probes.
+  - name: Projects
+    description: Authorized project identity and quota views.
+  - name: Catalog
+    description: Project-visible provider-neutral image, flavor, and network choices.
+  - name: Instances
+    description: Asynchronous instance lifecycle commands and read models.
+  - name: Snapshots
+    description: Instance-owned snapshot commands and read models.
+  - name: Operations
+    description: Durable asynchronous operation status.
+  - name: Administration
+    description: Attributed platform administration and recovery operations.
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      tags: [Health]
+      summary: Report process liveness
+      security: []
+      x-audience: platform
+      x-idempotency: read-only
+      x-requirements: [SRS-FR-079]
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/HealthResponse'
+  /health/ready:
+    get:
+      operationId: getReadiness
+      tags: [Health]
+      summary: Report dependency readiness
+      security: []
+      x-audience: platform
+      x-idempotency: read-only
+      x-requirements: [SRS-FR-079]
+      responses:
+        '200':
+          description: Required dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/HealthResponse'
+        '503':
+          $ref: './components.v1.yaml#/components/responses/ServiceUnavailable'
+  /v1/projects/{projectId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+    get:
+      operationId: getProject
+      tags: [Projects]
+      summary: Read an authorized project
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [AUTHENTICATION_REQUIRED, PROJECT_ACCESS_DENIED, PROJECT_NOT_FOUND]
+      x-requirements: [SRS-FR-001, SRS-FR-002, SRS-FR-003, SRS-FR-006]
+      responses:
+        '200':
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/Project'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+  /v1/projects/{projectId}/quota:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+    get:
+      operationId: getProjectQuota
+      tags: [Projects]
+      summary: Read project quota limits and usage
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED, PROJECT_NOT_FOUND]
+      x-requirements: [SRS-FR-002, SRS-FR-012]
+      responses:
+        '200':
+          description: Project quota
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/QuotaSet'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+  /v1/projects/{projectId}/catalog/images:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/Cursor'
+      - $ref: './components.v1.yaml#/components/parameters/Limit'
+    get:
+      operationId: listImages
+      tags: [Catalog]
+      summary: List enabled provider-neutral images
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED]
+      x-requirements: [SRS-FR-002, SRS-FR-007, SRS-FR-008]
+      responses:
+        '200':
+          description: Image page
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/ImagePage'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+  /v1/projects/{projectId}/catalog/flavors:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/Cursor'
+      - $ref: './components.v1.yaml#/components/parameters/Limit'
+    get:
+      operationId: listFlavors
+      tags: [Catalog]
+      summary: List enabled provider-neutral flavors
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED]
+      x-requirements: [SRS-FR-002, SRS-FR-007, SRS-FR-009]
+      responses:
+        '200':
+          description: Flavor page
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/FlavorPage'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+  /v1/projects/{projectId}/catalog/networks:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/Cursor'
+      - $ref: './components.v1.yaml#/components/parameters/Limit'
+    get:
+      operationId: listNetworks
+      tags: [Catalog]
+      summary: List enabled provider-neutral networks
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED]
+      x-requirements: [SRS-FR-002, SRS-FR-007, SRS-FR-010]
+      responses:
+        '200':
+          description: Network page
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/NetworkPage'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+  /v1/projects/{projectId}/instances:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+    post:
+      operationId: createInstance
+      tags: [Instances]
+      summary: Accept an instance-create command
+      x-audience: tenant
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes:
+        [
+          VALIDATION_FAILED,
+          PROJECT_ACCESS_DENIED,
+          QUOTA_EXCEEDED,
+          IDEMPOTENCY_CONFLICT,
+          PROFILE_DISABLED,
+        ]
+      x-requirements:
+        [
+          SRS-FR-012,
+          SRS-FR-014,
+          SRS-FR-015,
+          SRS-FR-016,
+          SRS-FR-017,
+          SRS-FR-018,
+          SRS-FR-019,
+          SRS-FR-020,
+          SRS-FR-024,
+          SRS-FR-025,
+        ]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+        - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
+        - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components.v1.yaml#/components/schemas/CreateInstanceRequest'
+      responses:
+        '202':
+          $ref: './components.v1.yaml#/components/responses/MutationAccepted'
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+        '413': { $ref: './components.v1.yaml#/components/responses/PayloadTooLarge' }
+        '422': { $ref: './components.v1.yaml#/components/responses/Unprocessable' }
+    get:
+      operationId: listInstances
+      tags: [Instances]
+      summary: List project instances
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED]
+      x-requirements: [SRS-FR-002, SRS-FR-037, SRS-FR-038]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/Cursor'
+        - $ref: './components.v1.yaml#/components/parameters/Limit'
+        - name: lifecycleState
+          in: query
+          schema:
+            $ref: './components.v1.yaml#/components/schemas/InstanceLifecycleState'
+      responses:
+        '200':
+          description: Instance page
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/InstancePage'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+  /v1/projects/{projectId}/instances/{instanceId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/InstanceId'
+    get:
+      operationId: getInstance
+      tags: [Instances]
+      summary: Read one project instance
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED, INSTANCE_NOT_FOUND]
+      x-requirements: [SRS-FR-002, SRS-FR-037, SRS-FR-038]
+      responses:
+        '200':
+          description: Instance detail
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/Instance'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+    delete:
+      operationId: retainInstance
+      tags: [Instances]
+      summary: Accept a soft-delete retention command
+      description: Normal deletion retains the provider resource; only an administrative purge destroys it.
+      x-audience: tenant
+      x-idempotency: required
+      x-error-codes:
+        [PROJECT_ACCESS_DENIED, INSTANCE_NOT_FOUND, INSTANCE_BUSY, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-014, SRS-FR-044, SRS-FR-045, SRS-FR-051, SRS-FR-052]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+        - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
+        - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/projects/{projectId}/instances/{instanceId}/actions:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/InstanceId'
+    post:
+      operationId: mutateInstance
+      tags: [Instances]
+      summary: Accept a power or resize command
+      x-audience: tenant
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes:
+        [
+          VALIDATION_FAILED,
+          PROJECT_ACCESS_DENIED,
+          INSTANCE_NOT_FOUND,
+          INSTANCE_BUSY,
+          QUOTA_EXCEEDED,
+          DISK_SHRINK_FORBIDDEN,
+          IDEMPOTENCY_CONFLICT,
+        ]
+      x-requirements:
+        [
+          SRS-FR-014,
+          SRS-FR-039,
+          SRS-FR-040,
+          SRS-FR-041,
+          SRS-FR-042,
+          SRS-FR-043,
+          SRS-FR-044,
+          SRS-FR-045,
+        ]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+        - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
+        - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components.v1.yaml#/components/schemas/InstanceAction'
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+        '413': { $ref: './components.v1.yaml#/components/responses/PayloadTooLarge' }
+        '422': { $ref: './components.v1.yaml#/components/responses/Unprocessable' }
+  /v1/projects/{projectId}/instances/{instanceId}/snapshots:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/InstanceId'
+    get:
+      operationId: listSnapshots
+      tags: [Snapshots]
+      summary: List instance-owned snapshots
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED, INSTANCE_NOT_FOUND]
+      x-requirements: [SRS-FR-046, SRS-FR-050]
+      responses:
+        '200':
+          description: Snapshot page
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/SnapshotPage'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+    post:
+      operationId: createSnapshot
+      tags: [Snapshots]
+      summary: Accept a snapshot-create command
+      x-audience: tenant
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes:
+        [
+          PROJECT_ACCESS_DENIED,
+          INSTANCE_NOT_FOUND,
+          INSTANCE_BUSY,
+          QUOTA_EXCEEDED,
+          IDEMPOTENCY_CONFLICT,
+        ]
+      x-requirements: [SRS-FR-014, SRS-FR-044, SRS-FR-047, SRS-FR-050]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+        - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
+        - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components.v1.yaml#/components/schemas/CreateSnapshotRequest'
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+        '422': { $ref: './components.v1.yaml#/components/responses/Unprocessable' }
+  /v1/projects/{projectId}/instances/{instanceId}/snapshots/{snapshotId}/actions:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/InstanceId'
+      - $ref: './components.v1.yaml#/components/parameters/SnapshotId'
+    post:
+      operationId: rollbackSnapshot
+      tags: [Snapshots]
+      summary: Accept a snapshot rollback command
+      x-audience: tenant
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes:
+        [
+          PROJECT_ACCESS_DENIED,
+          INSTANCE_NOT_FOUND,
+          SNAPSHOT_NOT_FOUND,
+          SNAPSHOT_OWNERSHIP_MISMATCH,
+          INSTANCE_BUSY,
+          IDEMPOTENCY_CONFLICT,
+        ]
+      x-requirements: [SRS-FR-014, SRS-FR-044, SRS-FR-048, SRS-FR-050]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+        - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
+        - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './components.v1.yaml#/components/schemas/SnapshotRollbackRequest'
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/projects/{projectId}/instances/{instanceId}/snapshots/{snapshotId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/InstanceId'
+      - $ref: './components.v1.yaml#/components/parameters/SnapshotId'
+    delete:
+      operationId: deleteSnapshot
+      tags: [Snapshots]
+      summary: Accept a snapshot-delete command
+      x-audience: tenant
+      x-idempotency: required
+      x-error-codes:
+        [
+          PROJECT_ACCESS_DENIED,
+          INSTANCE_NOT_FOUND,
+          SNAPSHOT_NOT_FOUND,
+          SNAPSHOT_OWNERSHIP_MISMATCH,
+          INSTANCE_BUSY,
+          IDEMPOTENCY_CONFLICT,
+        ]
+      x-requirements: [SRS-FR-014, SRS-FR-044, SRS-FR-049, SRS-FR-050]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+        - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
+        - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/projects/{projectId}/operations:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/Cursor'
+      - $ref: './components.v1.yaml#/components/parameters/Limit'
+    get:
+      operationId: listOperations
+      tags: [Operations]
+      summary: List project operations
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED]
+      x-requirements: [SRS-FR-002, SRS-FR-021, SRS-FR-022]
+      parameters:
+        - name: instanceId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: state
+          in: query
+          schema:
+            $ref: './components.v1.yaml#/components/schemas/OperationState'
+      responses:
+        '200':
+          description: Operation page
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/OperationPage'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+  /v1/projects/{projectId}/operations/{operationId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProjectId'
+      - $ref: './components.v1.yaml#/components/parameters/OperationId'
+    get:
+      operationId: getOperation
+      tags: [Operations]
+      summary: Read one project operation
+      x-audience: tenant
+      x-idempotency: read-only
+      x-error-codes: [PROJECT_ACCESS_DENIED, OPERATION_NOT_FOUND]
+      x-requirements: [SRS-FR-002, SRS-FR-021, SRS-FR-022]
+      responses:
+        '200':
+          description: Operation detail
+          content:
+            application/json:
+              schema:
+                $ref: './components.v1.yaml#/components/schemas/Operation'
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+  /v1/admin/catalog/images/{imageId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ImageId'
+    put:
+      operationId: upsertImage
+      tags: [Administration]
+      summary: Create or replace an image mapping
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes: [ADMIN_REQUIRED, VALIDATION_FAILED, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-008, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/ImageInput' }
+      responses:
+        '200':
+          description: Upserted image
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/Image' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/catalog/flavors/{flavorId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/FlavorId'
+    put:
+      operationId: upsertFlavor
+      tags: [Administration]
+      summary: Create or replace a flavor
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes: [ADMIN_REQUIRED, VALIDATION_FAILED, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-009, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/FlavorInput' }
+      responses:
+        '200':
+          description: Upserted flavor
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/Flavor' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/catalog/networks/{networkId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/NetworkId'
+    put:
+      operationId: upsertNetwork
+      tags: [Administration]
+      summary: Create or replace a network
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes: [ADMIN_REQUIRED, VALIDATION_FAILED, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-010, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/NetworkInput' }
+      responses:
+        '200':
+          description: Upserted network
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/Network' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/provider-profiles:
+    get:
+      operationId: listProviderProfiles
+      tags: [Administration]
+      summary: List provider profiles
+      x-audience: administrator
+      x-idempotency: read-only
+      x-error-codes: [ADMIN_REQUIRED]
+      x-requirements: [SRS-FR-004, SRS-FR-011]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/Cursor'
+        - $ref: './components.v1.yaml#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Provider-profile page
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/ProviderProfilePage' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+    post:
+      operationId: createProviderProfile
+      tags: [Administration]
+      summary: Create a disabled provider profile
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes: [ADMIN_REQUIRED, VALIDATION_FAILED, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-011, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/ProviderProfileInput' }
+      responses:
+        '201':
+          description: Disabled provider profile
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/ProviderProfile' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/provider-profiles/{profileId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProfileId'
+    get:
+      operationId: getProviderProfile
+      tags: [Administration]
+      summary: Read one provider profile
+      x-audience: administrator
+      x-idempotency: read-only
+      x-error-codes: [ADMIN_REQUIRED, PROFILE_NOT_FOUND]
+      x-requirements: [SRS-FR-004, SRS-FR-011]
+      responses:
+        '200':
+          description: Provider profile
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/ProviderProfile' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+    patch:
+      operationId: updateProviderProfile
+      tags: [Administration]
+      summary: Update and disable a provider profile pending validation
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes: [ADMIN_REQUIRED, PROFILE_NOT_FOUND, VALIDATION_FAILED, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-011, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/ProviderProfilePatch' }
+      responses:
+        '200':
+          description: Updated disabled provider profile
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/ProviderProfile' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/provider-profiles/{profileId}/actions/validate:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProfileId'
+    post:
+      operationId: validateProviderProfile
+      tags: [Administration]
+      summary: Accept a provider-profile validation command
+      x-audience: administrator
+      x-idempotency: required
+      x-error-codes: [ADMIN_REQUIRED, PROFILE_NOT_FOUND, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-011, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/provider-profiles/{profileId}/actions/activate:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProfileId'
+    post:
+      operationId: activateProviderProfile
+      tags: [Administration]
+      summary: Activate a validated provider profile
+      x-audience: administrator
+      x-idempotency: required
+      x-error-codes:
+        [
+          ADMIN_REQUIRED,
+          PROFILE_NOT_FOUND,
+          PROFILE_VALIDATION_REQUIRED,
+          LAB_GATE_FAILED,
+          IDEMPOTENCY_CONFLICT,
+        ]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-011, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+        '422': { $ref: './components.v1.yaml#/components/responses/Unprocessable' }
+  /v1/admin/provider-profiles/{profileId}/actions/disable:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ProfileId'
+    post:
+      operationId: disableProviderProfile
+      tags: [Administration]
+      summary: Disable a provider profile
+      x-audience: administrator
+      x-idempotency: required
+      x-error-codes: [ADMIN_REQUIRED, PROFILE_NOT_FOUND, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-011, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/operations/{operationId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/OperationId'
+    get:
+      operationId: getAdministrativeOperation
+      tags: [Administration]
+      summary: Read one operation with recovery metadata
+      x-audience: administrator
+      x-idempotency: read-only
+      x-error-codes: [ADMIN_REQUIRED, OPERATION_NOT_FOUND]
+      x-requirements: [SRS-FR-004, SRS-FR-023]
+      responses:
+        '200':
+          description: Administrative operation detail
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/AdministrativeOperation' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+  /v1/admin/dead-letters:
+    get:
+      operationId: listDeadLetters
+      tags: [Administration]
+      summary: List dead-letter evidence
+      x-audience: administrator
+      x-idempotency: read-only
+      x-error-codes: [ADMIN_REQUIRED]
+      x-requirements: [SRS-FR-004, SRS-FR-066]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/Cursor'
+        - $ref: './components.v1.yaml#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Dead-letter page
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/DeadLetterPage' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+  /v1/admin/dead-letters/{eventId}/replays:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/EventId'
+    post:
+      operationId: replayDeadLetter
+      tags: [Administration]
+      summary: Accept an attributed dead-letter replay
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes:
+        [ADMIN_REQUIRED, DEAD_LETTER_NOT_FOUND, REPLAY_NOT_ALLOWED, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-067, SRS-NFR-019]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/ReplayRequest' }
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/instances/{instanceId}/purges:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/InstanceId'
+    post:
+      operationId: purgeInstance
+      tags: [Administration]
+      summary: Accept an explicit guarded purge command
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes:
+        [
+          ADMIN_REQUIRED,
+          INSTANCE_NOT_FOUND,
+          RETENTION_NOT_EXPIRED,
+          INSTANCE_BUSY,
+          OWNERSHIP_NOT_PROVEN,
+          IDEMPOTENCY_CONFLICT,
+        ]
+      x-requirements:
+        [SRS-FR-004, SRS-FR-005, SRS-FR-053, SRS-FR-054, SRS-FR-055, SRS-FR-056, SRS-NFR-019]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/PurgeRequest' }
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+        '422': { $ref: './components.v1.yaml#/components/responses/Unprocessable' }
+  /v1/admin/instances/{instanceId}/reconciliations:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/InstanceId'
+    post:
+      operationId: requestReconciliation
+      tags: [Administration]
+      summary: Request a non-destructive provider observation
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes: [ADMIN_REQUIRED, INSTANCE_NOT_FOUND, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-005, SRS-FR-069, SRS-FR-071, SRS-FR-073]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/ReconciliationRequest' }
+      responses:
+        '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/manual-reviews:
+    get:
+      operationId: listManualReviews
+      tags: [Administration]
+      summary: List open or resolved manual-review items
+      x-audience: administrator
+      x-idempotency: read-only
+      x-error-codes: [ADMIN_REQUIRED]
+      x-requirements: [SRS-FR-004, SRS-FR-074]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/Cursor'
+        - $ref: './components.v1.yaml#/components/parameters/Limit'
+        - name: state
+          in: query
+          schema: { $ref: './components.v1.yaml#/components/schemas/ManualReviewState' }
+      responses:
+        '200':
+          description: Manual-review page
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/ManualReviewPage' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+  /v1/admin/manual-reviews/{reviewId}:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ReviewId'
+    get:
+      operationId: getManualReview
+      tags: [Administration]
+      summary: Read one manual-review item
+      x-audience: administrator
+      x-idempotency: read-only
+      x-error-codes: [ADMIN_REQUIRED, MANUAL_REVIEW_NOT_FOUND]
+      x-requirements: [SRS-FR-004, SRS-FR-074]
+      responses:
+        '200':
+          description: Manual-review detail
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/ManualReview' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+  /v1/admin/manual-reviews/{reviewId}/resolutions:
+    parameters:
+      - $ref: './components.v1.yaml#/components/parameters/ReviewId'
+    post:
+      operationId: resolveManualReview
+      tags: [Administration]
+      summary: Append an attributed manual-review disposition
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes:
+        [
+          ADMIN_REQUIRED,
+          MANUAL_REVIEW_NOT_FOUND,
+          MANUAL_REVIEW_ALREADY_RESOLVED,
+          IDEMPOTENCY_CONFLICT,
+        ]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-074, SRS-NFR-019]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/ManualReviewResolution' }
+      responses:
+        '200':
+          description: Resolved manual-review item
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/ManualReview' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '404': { $ref: './components.v1.yaml#/components/responses/NotFound' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/retention-policy:
+    get:
+      operationId: getRetentionPolicy
+      tags: [Administration]
+      summary: Read the active retention policy
+      x-audience: administrator
+      x-idempotency: read-only
+      x-error-codes: [ADMIN_REQUIRED]
+      x-requirements: [SRS-FR-004, SRS-FR-053]
+      responses:
+        '200':
+          description: Retention policy
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/RetentionPolicy' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+    put:
+      operationId: updateRetentionPolicy
+      tags: [Administration]
+      summary: Replace the retention policy
+      x-audience: administrator
+      x-idempotency: required
+      x-max-body-bytes: 65536
+      x-error-codes: [ADMIN_REQUIRED, VALIDATION_FAILED, IDEMPOTENCY_CONFLICT]
+      x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-053, SRS-FR-014]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: './components.v1.yaml#/components/schemas/RetentionPolicyInput' }
+      responses:
+        '200':
+          description: Updated retention policy
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/RetentionPolicy' }
+        '400': { $ref: './components.v1.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+        '409': { $ref: './components.v1.yaml#/components/responses/Conflict' }
+  /v1/admin/audit-events:
+    get:
+      operationId: listAuditEvents
+      tags: [Administration]
+      summary: List attributed audit events
+      x-audience: administrator
+      x-idempotency: read-only
+      x-error-codes: [ADMIN_REQUIRED]
+      x-requirements: [SRS-FR-005, SRS-FR-089, SRS-NFR-019]
+      parameters:
+        - $ref: './components.v1.yaml#/components/parameters/Cursor'
+        - $ref: './components.v1.yaml#/components/parameters/Limit'
+        - name: projectId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: operationId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Audit-event page
+          content:
+            application/json:
+              schema: { $ref: './components.v1.yaml#/components/schemas/AuditEventPage' }
+        '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: './components.v1.yaml#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
