@@ -14,6 +14,7 @@ function readPort(defaultPort: number): number {
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
+  app.enableShutdownHooks();
   const port = readPort(3001);
   await app.listen(port, '0.0.0.0');
   Logger.log(`provisioning-orchestrator listening on port ${port}`);
@@ -24,5 +25,5 @@ void bootstrap().catch((error: unknown) => {
     'provisioning-orchestrator failed to start',
     error instanceof Error ? error.stack : String(error),
   );
-  process.exitCode = 1;
+  process.exit(1);
 });

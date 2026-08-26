@@ -64,6 +64,7 @@ export default [
                 'layer:domain',
                 'layer:contract',
                 'layer:port',
+                'layer:adapter',
                 'layer:testing',
               ],
             },

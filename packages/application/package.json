@@ -18,6 +18,7 @@
   "dependencies": {
     "@private-cloud/contracts": "workspace:*",
     "@private-cloud/domain": "workspace:*",
+    "@private-cloud/provider-sdk": "workspace:*",
     "tslib": "2.8.1"
   },
   "devDependencies": {

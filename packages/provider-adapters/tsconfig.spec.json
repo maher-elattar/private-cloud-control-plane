@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./out-tsc/vitest",
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../application/tsconfig.lib.json" },
+    { "path": "../contracts/tsconfig.lib.json" },
+    { "path": "../provider-sdk/tsconfig.lib.json" }
+  ]
+}

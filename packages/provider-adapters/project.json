@@ -1,0 +1,8 @@
+{
+  "name": "provider-adapters",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/provider-adapters/src",
+  "projectType": "library",
+  "tags": ["type:lib", "layer:adapter", "visibility:production"],
+  "targets": {}
+}

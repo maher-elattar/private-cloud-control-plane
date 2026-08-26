@@ -3,6 +3,7 @@ import { ControlPlaneApplication } from '@private-cloud/application';
 import {
   createPostgresDatabase,
   PostgresControlPlaneStore,
+  PostgresProjectionStore,
   type PostgresClient,
 } from '@private-cloud/postgres-adapter';
 import { AppController } from './app.controller';
@@ -12,7 +13,8 @@ import { CatalogController } from './catalog/catalog.controller';
 import { ControlPlaneGrpcController } from './grpc/control-plane-grpc.controller';
 import { InstancesController } from './instances/instances.controller';
 import { OperationsController } from './operations/operations.controller';
-import { CONTROL_PLANE_APPLICATION, POSTGRES_DATABASE } from './tokens';
+import { ProjectionWorker } from './projections/projection-worker';
+import { CONTROL_PLANE_APPLICATION, POSTGRES_DATABASE, PROJECTION_STORE } from './tokens';
 
 @Injectable()
 class DatabaseLifecycle implements OnApplicationShutdown {
@@ -47,6 +49,12 @@ function requiredDatabaseUrl(): string {
       useFactory: (database: PostgresClient) =>
         new ControlPlaneApplication(new PostgresControlPlaneStore(database)),
     },
+    {
+      provide: PROJECTION_STORE,
+      inject: [POSTGRES_DATABASE],
+      useFactory: (database: PostgresClient) => new PostgresProjectionStore(database),
+    },
+    ProjectionWorker,
     DatabaseLifecycle,
   ],
 })

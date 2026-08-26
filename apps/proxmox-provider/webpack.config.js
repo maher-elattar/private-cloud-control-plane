@@ -16,7 +16,14 @@ module.exports = {
       compiler: 'tsc',
       main: './src/main.ts',
       tsConfig: './tsconfig.app.json',
-      assets: ['./src/assets'],
+      assets: [
+        './src/assets',
+        {
+          input: '../../packages/contracts/proto',
+          glob: '**/*.proto',
+          output: 'assets/proto',
+        },
+      ],
       // pnpm keeps app dependencies isolated; the manifest is the deployment dependency boundary.
       externalDependencies: Object.keys(dependencies),
       optimization: false,

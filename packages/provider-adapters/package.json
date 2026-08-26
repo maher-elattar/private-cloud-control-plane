@@ -1,5 +1,5 @@
 {
-  "name": "@private-cloud/testing",
+  "name": "@private-cloud/provider-adapters",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -16,11 +16,13 @@
     }
   },
   "dependencies": {
-    "@private-cloud/provider-adapters": "workspace:*",
-    "tslib": "^2.3.0"
+    "@private-cloud/contracts": "workspace:*",
+    "@private-cloud/provider-sdk": "workspace:*",
+    "ipaddr.js": "2.2.0",
+    "tslib": "2.8.1"
   },
   "devDependencies": {
-    "@private-cloud/contracts": "workspace:*",
+    "@private-cloud/application": "workspace:*",
     "vitest": "4.1.11"
   }
 }

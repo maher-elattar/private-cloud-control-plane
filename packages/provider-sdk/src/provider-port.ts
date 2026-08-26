@@ -130,3 +130,15 @@ export interface ProviderPort {
     options?: ProviderCallOptions,
   ): Promise<PurgeInstanceResponse>;
 }
+
+/** The provider surface exercised by the Phase 3 create-instance vertical slice. */
+export type CreateInstanceProviderPort = Pick<
+  ProviderPort,
+  | 'validateProfile'
+  | 'getCapabilities'
+  | 'submitCreateInstance'
+  | 'applyInstanceConfiguration'
+  | 'getTask'
+  | 'observeInstance'
+  | 'startInstance'
+>;

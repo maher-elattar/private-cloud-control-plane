@@ -186,6 +186,51 @@ interface ProjectionReceiptTable {
   received_at: Timestamp;
 }
 
+interface CommandReceiptTable {
+  event_id: string;
+  consumer_name: string;
+  payload_hash: string;
+  received_at: Timestamp;
+  completed_at: Timestamp | null;
+}
+
+interface InstanceLeaseTable {
+  instance_id: string;
+  owner_id: string;
+  fencing_token: string;
+  leased_until: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface WorkflowTable {
+  operation_id: string;
+  event_id: string;
+  project_id: string;
+  instance_id: string;
+  command: Json<unknown>;
+  status: string;
+  stage: string;
+  attempt: number;
+  fencing_token: string;
+  provider_resource_id: string | null;
+  provider_task_reference: string | null;
+  next_attempt_at: Timestamp;
+  failure_category: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  completed_at: Timestamp | null;
+}
+
+interface WorkflowOutboxTable {
+  event_id: string;
+  aggregate_id: string;
+  schema_name: string;
+  payload: Json<unknown>;
+  occurred_at: Timestamp;
+}
+
 export interface PostgresDatabase {
   'control.projects': ProjectTable;
   'control.quotas': QuotaTable;
@@ -199,6 +244,10 @@ export interface PostgresDatabase {
   'control.idempotency_records': IdempotencyTable;
   'control.outbox': OutboxTable;
   'audit.entries': AuditTable;
+  'workflow.command_receipts': CommandReceiptTable;
+  'workflow.instance_leases': InstanceLeaseTable;
+  'workflow.workflows': WorkflowTable;
+  'workflow.outbox': WorkflowOutboxTable;
   'projection.instances': ProjectionInstanceTable;
   'projection.operations': ProjectionOperationTable;
   'projection.event_receipts': ProjectionReceiptTable;

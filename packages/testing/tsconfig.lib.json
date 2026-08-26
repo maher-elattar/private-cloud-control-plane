@@ -11,7 +11,7 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../contracts/tsconfig.lib.json" },
-    { "path": "../provider-sdk/tsconfig.lib.json" }
+    { "path": "../provider-adapters/tsconfig.lib.json" }
   ],
   "exclude": [
     "vite.config.ts",

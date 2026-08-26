@@ -74,7 +74,7 @@ export interface WorkflowStore {
     readonly fencingToken: bigint;
     readonly stage: string;
     readonly providerResourceId?: string;
-    readonly providerTaskReference?: string;
+    readonly providerTaskReference?: string | null;
     readonly nextAttemptAt?: Date;
     readonly event: WorkflowEvent;
   }): Promise<void>;

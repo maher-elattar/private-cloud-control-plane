@@ -1,0 +1,3 @@
+export const POSTGRES_DATABASE = Symbol('POSTGRES_DATABASE');
+export const WORKFLOW_STORE = Symbol('WORKFLOW_STORE');
+export const PROVIDER_CLIENT = Symbol('PROVIDER_CLIENT');
