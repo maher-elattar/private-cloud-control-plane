@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./out-tsc/vitest",
+    "types": ["vitest/globals", "node"]
+  },
+  "include": [
+    "src/**/*.spec.ts",
+    "src/app/common/request-context.ts",
+    "src/app/grpc/grpc-mappers.ts"
+  ],
+  "references": [
+    { "path": "../../packages/application/tsconfig.lib.json" },
+    { "path": "../../packages/contracts/tsconfig.lib.json" }
+  ]
+}

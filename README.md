@@ -22,11 +22,11 @@ The application lifecycle is one pnpm/Nx workspace. Nx tags enforce dependency d
 
 | Project                     | Boundary                                                  | Runtime status     |
 | --------------------------- | --------------------------------------------------------- | ------------------ |
-| `control-api`               | Synchronous command acceptance and project queries        | Process shell      |
+| `control-api`               | Synchronous command acceptance and project queries        | REST + gRPC active |
 | `provisioning-orchestrator` | Asynchronous workflow coordination                        | Process shell      |
 | `proxmox-provider`          | Privileged provider-neutral gRPC adapter                  | Process shell      |
 | `reconciler`                | Scheduled observation and drift classification            | Process shell      |
-| `domain`                    | Framework-independent types and invariants                | Contract scaffold  |
+| `domain`                    | Framework-independent types and invariants                | Create slice active |
 | `contracts`                 | REST, gRPC, and event contract source and generated types | Contracts defined  |
 | `provider-sdk`              | Provider-neutral lifecycle port and transport semantics   | Port defined       |
 | `testing`                   | Deterministic provider adapter and conformance fixtures   | Test implementation |
@@ -126,6 +126,7 @@ The repository boundaries and promotion contract are defined in [Repository Boun
 - [State Machines](docs/architecture/state-machines.md): instance, desired power, observed provider, and operation lifecycles
 - [Data Ownership Map](docs/architecture/data-ownership.md): authoritative writers, schemas, topics, transactions, and AWS ownership
 - [Phase 3 Persistence](docs/architecture/phase-3-persistence.md): implemented schemas, records, locks, and acceptance transaction
+- [Phase 3 API Implementation](docs/contracts/phase-3-api.md): active REST/gRPC subset, authentication, fields, and error behavior
 - [Contracts and Provider Port](docs/architecture/contracts-and-provider-port.md): wire authorities, compatibility rules, provider outcomes, and conformance behavior
 - [Quality Gates](docs/architecture/quality-gates.md): CI stages, failure policy, dependency audit, and container scanning
 
@@ -137,4 +138,4 @@ The repository boundaries and promotion contract are defined in [Repository Boun
 
 ## Current State
 
-The repository, contract, and provider-test foundation is complete. Service shells compile, external and internal contracts validate independently of Proxmox, generated documentation is reproducible, and the failure-injectable provider passes its conformance suite. Persistence and lifecycle behavior are intentionally not implemented yet.
+The contract and provider-test foundation is complete. The Phase 3 control API now authenticates OIDC callers, accepts create intent idempotently over REST and gRPC, commits desired state and an operation atomically in PostgreSQL, reserves an IPv4 address under lock, and exposes project, catalog, instance, quota, and operation readback. Workflow execution and provider task polling are the remaining parts of the synchronous vertical slice.

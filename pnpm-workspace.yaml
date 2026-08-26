@@ -10,5 +10,6 @@ allowBuilds:
   esbuild: true
   less: true
   nx: true
+  protobufjs: false
   unrs-resolver: true
   '@nestjs/core': false
