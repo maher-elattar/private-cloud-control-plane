@@ -1,7 +1,9 @@
 import baseConfig from '../../eslint.config.mjs';
+import jsdocConfig from '../../eslint.jsdoc.mjs';
 
 export default [
   ...baseConfig,
+  ...jsdocConfig,
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
     languageOptions: {

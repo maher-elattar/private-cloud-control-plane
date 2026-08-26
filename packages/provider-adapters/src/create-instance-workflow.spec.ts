@@ -2,6 +2,7 @@ import {
   CreateInstanceWorkflow,
   type ClaimedCreateWorkflow,
   type WorkflowEvent,
+  type WorkflowStage,
   type WorkflowStore,
 } from '@private-cloud/application';
 import type { InstanceCreateRequestedV1 } from '@private-cloud/contracts';
@@ -40,7 +41,7 @@ const command: InstanceCreateRequestedV1 = {
 };
 
 class MemoryWorkflowStore implements WorkflowStore {
-  public stage = 'accepted';
+  public stage: WorkflowStage = 'accepted';
   public attempt = 0;
   public fencingToken = 0n;
   public providerResourceId: string | undefined;
@@ -48,7 +49,7 @@ class MemoryWorkflowStore implements WorkflowStore {
   public terminal: 'failed' | 'manual_review' | 'succeeded' | undefined;
   public readonly events: WorkflowEvent[] = [];
 
-  public constructor(private readonly failCheckpointStage?: string) {}
+  public constructor(private readonly failCheckpointStage?: WorkflowStage) {}
 
   private checkpointFailed = false;
 

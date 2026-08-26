@@ -46,6 +46,7 @@
     "ajv-formats": "3.0.1",
     "eslint": "9.39.5",
     "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-jsdoc": "64.2.1",
     "json-schema-to-typescript": "15.0.4",
     "jsonc-eslint-parser": "2.4.2",
     "nx": "23.1.1",

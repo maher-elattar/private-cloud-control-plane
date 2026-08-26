@@ -1,3 +1,24 @@
+/**
+ * Deterministic in-memory provider used by tests and local runs.
+ *
+ * Not a toy. This is the only way to reproduce the failure modes the workflow's safety rules
+ * exist for: a timeout *after* the provider committed, a duplicate delivery, an ambiguous task
+ * result. None of those can be produced reliably against real hardware, and each is exactly
+ * the case where a naive retry would build a second VM.
+ *
+ * Two behaviours make that possible:
+ *
+ * - **Scripted steps.** `configuration.script` supplies a per-method sequence of outcomes, so
+ *   a test can say "the third call to `submitCreateInstance` times out after applying".
+ * - **Request deduplication.** A repeated `requestId` replays the cached result instead of
+ *   consuming another scripted step or creating another resource — modelling a provider that
+ *   honours idempotency, which is what makes a replay after a crash safe.
+ *
+ * Deliberately in-memory: it models provider *behaviour*, not provider durability.
+ *
+ * @see docs/adr/0011-provider-port-and-deterministic-fake.md
+ * @see docs/architecture/contracts-and-provider-port.md
+ */
 import { FailureCategory, ObservedPowerState } from '@private-cloud/contracts';
 import {
   ProviderResultState,
@@ -53,8 +74,16 @@ import {
   type ProviderPort,
 } from '@private-cloud/provider-sdk';
 
+/**
+ * The outcome a scripted step produces.
+ *
+ * `timeout` and `unknown-outcome` are the interesting ones: both leave the caller unable to
+ * tell whether the mutation took effect, which is precisely the situation the workflow must
+ * escalate rather than retry.
+ */
 export type FakeProviderMode = 'failure' | 'success' | 'timeout' | 'unknown-outcome';
 
+/** One scripted outcome for one call to one method. */
 export interface FakeProviderStep {
   readonly mode: FakeProviderMode;
   readonly latencyMs?: number;
@@ -64,6 +93,7 @@ export interface FakeProviderStep {
   readonly taskPollsBeforeSuccess?: number;
 }
 
+/** How the fake should behave across a test. */
 export interface FakeProviderConfiguration {
   readonly defaultLatencyMs?: number;
   readonly defaultTaskPollsBeforeSuccess?: number;
@@ -72,6 +102,7 @@ export interface FakeProviderConfiguration {
   readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
 }
 
+/** A recorded call, for asserting what the caller actually did. */
 export interface FakeProviderCall {
   readonly sequence: number;
   readonly method: ProviderMethod;
@@ -80,6 +111,7 @@ export interface FakeProviderCall {
   readonly duplicate: boolean;
 }
 
+/** A VM the fake believes it has created. */
 interface FakeResource {
   readonly id: string;
   readonly instanceId: string;
@@ -90,16 +122,24 @@ interface FakeResource {
   retained: boolean;
 }
 
+/** An asynchronous task that reports success only after N polls. */
 interface FakeTask {
   remainingPolls: number;
   readonly terminalState: ProviderTaskState;
 }
 
+/**
+ * A previous mutation result, keyed by request ID.
+ *
+ * `canonicalRequest` is retained so a request ID reused with *different* content is reported
+ * as a conflict rather than silently replaying an unrelated result.
+ */
 interface CachedMutation {
   readonly canonicalRequest: string;
   readonly result: ProviderMutationResult;
 }
 
+/** A call context after every required identifier has been checked present. */
 interface ValidatedProviderCallContext {
   readonly requestId: string;
   readonly operationId: string;
@@ -110,12 +150,15 @@ interface ValidatedProviderCallContext {
   readonly attempt: number;
 }
 
+/** Used once a method's script is exhausted, so tests only script what they care about. */
 const DEFAULT_STEP: FakeProviderStep = { mode: 'success' };
 
+/** Serialises a request for the duplicate-content comparison. */
 function requestJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Injectable delay that honours cancellation, so latency can be simulated without real waits. */
 function defaultSleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
     return Promise.reject(new ProviderTransportError('aborted', 'Provider call was aborted.'));
@@ -139,6 +182,9 @@ function defaultSleep(milliseconds: number, signal?: AbortSignal): Promise<void>
 /**
  * Stateful provider test double. A stable request ID is deduplicated before another scripted step
  * is consumed, which lets contract tests reproduce Kafka redelivery without duplicating resources.
+ *
+ * Implements the full `ProviderPort`, not just the Phase 3 subset, so later phases can be
+ * developed against it before any adapter supports them.
  */
 export class FakeProvider implements ProviderPort {
   readonly #configuration: FakeProviderConfiguration;
@@ -156,18 +202,27 @@ export class FakeProvider implements ProviderPort {
     this.#configuration = configuration;
   }
 
+  /** Every call made so far, in order. Assert against this to prove a retry was deduplicated. */
   public get calls(): readonly FakeProviderCall[] {
     return [...this.#calls];
   }
 
+  /**
+   * Counts *distinct* mutations for a method, ignoring deduplicated repeats.
+   *
+   * The key assertion for idempotency tests: a workflow that replays a create must leave this
+   * at 1, however many times the call was made.
+   */
   public logicalMutationCount(method: ProviderMethod): number {
     return this.#logicalMutationCounts.get(method) ?? 0;
   }
 
+  /** Number of VMs in existence. The blunt check that no duplicate was created. */
   public resourceCount(): number {
     return this.#resources.size;
   }
 
+  /** Reports the profile as usable. Read-only. */
   public async validateProfile(
     request: ValidateProfileRequest,
     options?: ProviderCallOptions,
@@ -198,6 +253,7 @@ export class FakeProvider implements ProviderPort {
     });
   }
 
+  /** Reports a fixed capability set. Read-only. */
   public async getCapabilities(
     request: GetCapabilitiesRequest,
     options?: ProviderCallOptions,
@@ -226,6 +282,7 @@ export class FakeProvider implements ProviderPort {
     );
   }
 
+  /** Creates a resource, honouring the script and deduplicating repeated request IDs. */
   public async submitCreateInstance(
     request: SubmitCreateInstanceRequest,
     options?: ProviderCallOptions,
@@ -258,6 +315,7 @@ export class FakeProvider implements ProviderPort {
     };
   }
 
+  /** Applies configuration to an owned resource. */
   public async applyInstanceConfiguration(
     request: ApplyInstanceConfigurationRequest,
     options?: ProviderCallOptions,
@@ -283,6 +341,7 @@ export class FakeProvider implements ProviderPort {
     };
   }
 
+  /** Reports a task as running until its scripted poll count is exhausted. */
   public async getTask(
     request: GetTaskRequest,
     options?: ProviderCallOptions,
@@ -308,6 +367,7 @@ export class FakeProvider implements ProviderPort {
     });
   }
 
+  /** Reports real state and ownership match, or absence. The workflow's completion proof. */
   public async observeInstance(
     request: ObserveInstanceRequest,
     options?: ProviderCallOptions,
@@ -341,6 +401,7 @@ export class FakeProvider implements ProviderPort {
     });
   }
 
+  /** Powers the resource on. */
   public startInstance(
     request: StartInstanceRequest,
     options?: ProviderCallOptions,
@@ -353,6 +414,7 @@ export class FakeProvider implements ProviderPort {
     );
   }
 
+  /** Requests a graceful shutdown. */
   public shutdownInstance(
     request: ShutdownInstanceRequest,
     options?: ProviderCallOptions,
@@ -365,6 +427,7 @@ export class FakeProvider implements ProviderPort {
     );
   }
 
+  /** Stops the resource. */
   public stopInstance(
     request: StopInstanceRequest,
     options?: ProviderCallOptions,
@@ -377,6 +440,7 @@ export class FakeProvider implements ProviderPort {
     );
   }
 
+  /** Reboots the resource. */
   public rebootInstance(
     request: RebootInstanceRequest,
     options?: ProviderCallOptions,
@@ -389,6 +453,7 @@ export class FakeProvider implements ProviderPort {
     );
   }
 
+  /** Changes the resource's sizing. */
   public async resizeInstance(
     request: ResizeInstanceRequest,
     options?: ProviderCallOptions,
@@ -420,6 +485,7 @@ export class FakeProvider implements ProviderPort {
     };
   }
 
+  /** Lists snapshots for an owned resource. */
   public async listSnapshots(
     request: ListSnapshotsRequest,
     options?: ProviderCallOptions,
@@ -442,6 +508,7 @@ export class FakeProvider implements ProviderPort {
     });
   }
 
+  /** Creates a snapshot. */
   public async createSnapshot(
     request: CreateSnapshotRequest,
     options?: ProviderCallOptions,
@@ -474,6 +541,7 @@ export class FakeProvider implements ProviderPort {
     };
   }
 
+  /** Rolls the resource back to a snapshot. */
   public async rollbackSnapshot(
     request: RollbackSnapshotRequest,
     options?: ProviderCallOptions,
@@ -481,6 +549,7 @@ export class FakeProvider implements ProviderPort {
     return { result: await this.#snapshotMutation('rollbackSnapshot', request, options, false) };
   }
 
+  /** Deletes a snapshot. */
   public async deleteSnapshot(
     request: DeleteSnapshotRequest,
     options?: ProviderCallOptions,
@@ -488,6 +557,7 @@ export class FakeProvider implements ProviderPort {
     return { result: await this.#snapshotMutation('deleteSnapshot', request, options, true) };
   }
 
+  /** Marks the resource retained, protecting it from purge. */
   public async markInstanceRetained(
     request: MarkInstanceRetainedRequest,
     options?: ProviderCallOptions,
@@ -512,6 +582,7 @@ export class FakeProvider implements ProviderPort {
     };
   }
 
+  /** Destroys the resource. Not reachable in Phase 3; no workflow path calls it. */
   public async purgeInstance(
     request: PurgeInstanceRequest,
     options?: ProviderCallOptions,

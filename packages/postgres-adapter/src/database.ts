@@ -1,7 +1,25 @@
+/**
+ * The typed database schema and connection factory.
+ *
+ * Mirrors `db/migrations/0001_phase3.sql` as TypeScript, giving Kysely the type information it
+ * needs to check every query at compile time. A column renamed in a migration but not here
+ * fails the build rather than at runtime.
+ *
+ * The four schemas map onto the four roles in the design:
+ * - `control` — authoritative write model plus the acceptance outbox
+ * - `workflow` — command receipts, leases, saga state, and the workflow outbox
+ * - `projection` — pre-built read documents and their consumption receipts
+ * - `audit` — append-only record of who asked for what
+ *
+ * @see docs/architecture/data-ownership.md
+ * @see docs/architecture/phase-3-persistence.md
+ */
 import { Kysely, PostgresDialect, type ColumnType } from 'kysely';
 import { Pool } from 'pg';
 
+/** `timestamptz`: read as `Date`, accepted as `Date` or ISO string on write. */
 type Timestamp = ColumnType<Date, Date | string, Date | string>;
+/** `json`/`jsonb`: decode with `parseJsonColumn`, since `json` arrives as text. */
 type Json<T> = ColumnType<T, T | string, T | string>;
 
 interface ProjectTable {
@@ -231,6 +249,12 @@ interface WorkflowOutboxTable {
   occurred_at: Timestamp;
 }
 
+/**
+ * Every table Kysely may query, keyed by its qualified name.
+ *
+ * Adding a table to a migration without adding it here means it simply cannot be queried —
+ * the type system rejects the table name.
+ */
 export interface PostgresDatabase {
   'control.projects': ProjectTable;
   'control.quotas': QuotaTable;
@@ -253,6 +277,17 @@ export interface PostgresDatabase {
   'projection.event_receipts': ProjectionReceiptTable;
 }
 
+/**
+ * Creates a pooled Kysely client.
+ *
+ * The pool is sized for the Phase 3 services, each of which runs one request-handling path
+ * plus at most one background poller. `connectionTimeoutMillis` is deliberately short so a
+ * database outage surfaces as a fast, retryable failure rather than a hung request holding a
+ * workflow lease open.
+ *
+ * Callers own the returned client's lifecycle and must `destroy()` it on shutdown — see the
+ * lifecycle providers in each service's `app.module.ts`.
+ */
 export function createPostgresDatabase(connectionString: string): Kysely<PostgresDatabase> {
   return new Kysely<PostgresDatabase>({
     dialect: new PostgresDialect({
@@ -266,4 +301,5 @@ export function createPostgresDatabase(connectionString: string): Kysely<Postgre
   });
 }
 
+/** A connected, schema-typed Kysely client. */
 export type PostgresClient = Kysely<PostgresDatabase>;

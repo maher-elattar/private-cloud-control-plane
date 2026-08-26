@@ -1,3 +1,14 @@
+/**
+ * REST surface for asynchronous operation readback — the polling endpoint.
+ *
+ * A client that receives `202 Accepted` from a mutation polls `GET :operationId` here until
+ * the operation reaches a terminal state. Responses come from the read projection, so they
+ * reflect the last workflow event the projection worker has applied.
+ *
+ * Transport adapter only. `OperationGrpcController` is the gRPC equivalent.
+ *
+ * @see docs/architecture/state-machines.md
+ */
 import {
   Controller,
   DefaultValuePipe,

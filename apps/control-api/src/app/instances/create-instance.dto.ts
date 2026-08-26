@@ -1,3 +1,15 @@
+/**
+ * Request body shape and validation for `POST /v1/projects/:projectId/instances`.
+ *
+ * WHY these rules are duplicated in `packages/domain/validateCreateInstance` rather than only
+ * living here: gRPC callers never pass through `class-validator`, so the domain check is the
+ * one both transports share. This DTO exists so a malformed REST body is rejected at the edge
+ * with a field-level error, rather than reaching the application service as a generic failure.
+ *
+ * If a rule changes, it must change in both places — the domain check is the authority.
+ *
+ * @see docs/contracts/rest-api.md
+ */
 import {
   ArrayMaxSize,
   ArrayUnique,

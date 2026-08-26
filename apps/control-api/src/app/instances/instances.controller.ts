@@ -1,3 +1,17 @@
+/**
+ * REST surface for instance creation and readback.
+ *
+ * Transport adapter only. Every method unpacks the request and delegates to
+ * `ControlPlaneApplication`; authorization, validation, idempotency, and persistence all live
+ * behind that call. `InstanceGrpcController` is the gRPC equivalent and calls the same methods.
+ *
+ * WHY there is no `InstancesService` next to this file: the service layer already exists, in
+ * `packages/application/src/control-plane.ts`. It lives there so it can be tested and reused
+ * without NestJS. A local service that only forwarded to it would add a hop and no behaviour.
+ *
+ * @see docs/contracts/rest-api.md
+ * @see docs/architecture/code-reading-guide.md
+ */
 import {
   Body,
   Controller,
@@ -27,6 +41,17 @@ export class InstancesController {
     @Inject(CONTROL_PLANE_APPLICATION) private readonly application: ControlPlaneApplication,
   ) {}
 
+  /**
+   * Accepts a create request.
+   *
+   * WHY `202 Accepted` rather than `201 Created`: nothing has been created at this point. The
+   * response records that intent was committed durably; the VM is built afterwards by the
+   * orchestrator. Clients poll the returned operation for the outcome.
+   *
+   * `Idempotency-Key` is defaulted to `''` here rather than rejected, so the length rule in
+   * the application service produces the same `VALIDATION_FAILED` for a missing key as for a
+   * malformed one — and the same error a gRPC caller would receive.
+   */
   @Post()
   @HttpCode(202)
   public create(

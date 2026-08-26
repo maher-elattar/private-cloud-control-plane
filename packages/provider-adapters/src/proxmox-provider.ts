@@ -1,3 +1,28 @@
+/**
+ * Proxmox adapter for the allowlisted Phase 3 create path.
+ *
+ * **This is the only file in the repository that can affect real hardware**, and it is written
+ * to be boring on purpose. Every value it acts on is fixed by configuration and re-checked at
+ * the point of use: one node, one template, one storage target, one bridge, one network, one
+ * project, and a VMID inside the reserved `910000-910099` interval.
+ *
+ * What it deliberately never does:
+ *
+ * - **Never calls `/cluster/nextid`.** Cluster-wide ID allocation could hand back an ID outside
+ *   the reserved interval, pointing a later call at a machine this system does not own.
+ * - **Never deletes, purges, or stops** anything. No compensation path exists here at all.
+ * - **Never disables certificate verification.** TLS uses the platform trust store, unmodified.
+ * - **Never performs placement or host mutation.** It uses the one configured node.
+ *
+ * Ownership markers are written into the VM description on create and re-parsed before every
+ * later call, so an ID collision or an operator's manual edit is detected rather than acted on.
+ * That is also what makes a replay after a crash safe: an already-owned VM is recognised as
+ * ours instead of being built a second time.
+ *
+ * @see docs/architecture/proxmox-create-call-map.md
+ * @see docs/architecture/lab-boundary.md
+ * @see docs/architecture/safety-invariants.md
+ */
 import { createHash, randomUUID } from 'node:crypto';
 import { FailureCategory, ObservedPowerState } from '@private-cloud/contracts';
 import {
@@ -29,6 +54,13 @@ import {
 } from '@private-cloud/provider-sdk';
 import ipaddr from 'ipaddr.js';
 
+/**
+ * The complete allowlist this adapter is confined to.
+ *
+ * Every field is required and has no default — `provider.factory.ts` reads each from an
+ * environment variable and refuses to start if any is missing. A default here could point a
+ * partially-configured deployment at the wrong machine.
+ */
 export interface ProxmoxProviderConfiguration {
   readonly endpoint: string;
   readonly apiTokenId: string;
@@ -51,14 +83,17 @@ export interface ProxmoxProviderConfiguration {
   readonly requestTimeoutMs?: number;
 }
 
+/** Proxmox wraps every response body in a `data` field. */
 interface ProxmoxEnvelope<T> {
   readonly data: T;
 }
 
+/** A VM as listed by `/nodes/{node}/qemu`. */
 interface ProxmoxVmSummary {
   readonly vmid?: number;
 }
 
+/** A VM's configuration, including the description that carries ownership markers. */
 interface ProxmoxVmConfig {
   readonly description?: string;
   readonly name?: string;
@@ -71,17 +106,21 @@ interface ProxmoxVmConfig {
   readonly sata0?: string;
 }
 
+/** A task status read. Terminal only when `status` is `stopped`. */
 interface ProxmoxTaskStatus {
   readonly status?: string;
   readonly exitstatus?: string;
 }
 
+/** A VM's live power status. */
 interface ProxmoxCurrentStatus {
   readonly status?: string;
 }
 
+/** Prefix marking a description line as a control-plane ownership marker. */
 const markerPrefix = 'private-cloud-control:';
 
+/** Asserts a configured or request value is present. */
 function required(value: string | undefined, name: string): string {
   if (!value) {
     throw new ProviderTransportError('protocol_error', `${name} is required.`, {
@@ -91,12 +130,14 @@ function required(value: string | undefined, name: string): string {
   return value;
 }
 
+/** Encodes a mutation body. The Proxmox API takes form encoding, not JSON. */
 function form(values: Readonly<Record<string, string | number>>): URLSearchParams {
   const result = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) result.set(key, String(value));
   return result;
 }
 
+/** Builds a sanitised provider failure. No Proxmox detail crosses this boundary. */
 function failure(
   category: FailureCategory,
   code: string,
@@ -109,6 +150,13 @@ function failure(
   };
 }
 
+/**
+ * Renders ownership markers into the VM description field.
+ *
+ * WHY the description: it is the one free-text field Proxmox preserves across clone and
+ * configuration, giving a place to record ownership that survives the whole create sequence
+ * and can be read back on any later call.
+ */
 function ownershipDescription(markers: OwnershipMarkers): string {
   return `${markerPrefix}${JSON.stringify({
     managedBy: markers.managedBy,
@@ -119,6 +167,7 @@ function ownershipDescription(markers: OwnershipMarkers): string {
   })}`;
 }
 
+/** Parses ownership markers back out of a description, or `null` if absent or malformed. */
 function parseOwnership(description: string | undefined): OwnershipMarkers | null {
   if (!description?.startsWith(markerPrefix)) return null;
   try {
@@ -144,6 +193,12 @@ function parseOwnership(description: string | undefined): OwnershipMarkers | nul
   }
 }
 
+/**
+ * Exact, all-fields comparison of ownership markers.
+ *
+ * A partial match is treated as no match. Anything less than complete agreement means this
+ * may not be our VM, and the safe response is to refuse to touch it.
+ */
 function markersMatch(actual: OwnershipMarkers | null, expected: OwnershipMarkers): boolean {
   if (!actual) return false;
   return (
@@ -155,6 +210,7 @@ function markersMatch(actual: OwnershipMarkers | null, expected: OwnershipMarker
   );
 }
 
+/** Extracts the disk size in GiB from a Proxmox disk specification string. */
 function diskGiB(config: ProxmoxVmConfig): string | undefined {
   const disk = config.scsi0 ?? config.virtio0 ?? config.sata0;
   const size = /(?:^|,)size=(\d+(?:\.\d+)?)([KMGT])(?:,|$)/i.exec(disk ?? '');
@@ -170,6 +226,20 @@ function diskGiB(config: ProxmoxVmConfig): string | undefined {
  * deletion, host mutation, cluster-wide ID allocation, or certificate-verification bypasses.
  */
 export class ProxmoxProvider implements CreateInstanceProviderPort {
+  /**
+   * Validates the allowlist before the adapter can be used at all.
+   *
+   * These checks run at construction, not per call, so a misconfigured deployment fails to
+   * start rather than failing partway through provisioning. All three are safety boundaries:
+   *
+   * - HTTPS is mandatory — an API token must never cross a plaintext connection.
+   * - The VMID interval is clamped to `910000-910099` regardless of what was configured, so a
+   *   typo cannot widen the blast radius to production VMIDs.
+   * - The gateway must lie inside the CIDR, catching a mismatched network before a guest is
+   *   configured with an unreachable route.
+   *
+   * @throws Error if any allowlist value is missing, malformed, or out of bounds.
+   */
   public constructor(private readonly configuration: ProxmoxProviderConfiguration) {
     const endpoint = new URL(configuration.endpoint);
     if (endpoint.protocol !== 'https:') throw new Error('Proxmox endpoint must use HTTPS.');
@@ -197,6 +267,7 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
     }
   }
 
+  /** Probes each allowlisted target and reports per-check results. Read-only; no mutation. */
   public async validateProfile(
     request: ValidateProfileRequest,
     options?: ProviderCallOptions,
@@ -259,6 +330,7 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
     };
   }
 
+  /** Reports the bounded create capabilities this adapter supports. */
   public getCapabilities(request: GetCapabilitiesRequest): Promise<GetCapabilitiesResponse> {
     this.assertDirectProfile(request.providerProfileId);
     return Promise.resolve({
@@ -280,6 +352,13 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
     });
   }
 
+  /**
+   * Full-clones the configured template into a reserved VMID.
+   *
+   * Searches only the allowlisted node and interval for a free ID — never `/cluster/nextid`.
+   * An existing VM already carrying our exact markers is recognised as a replay of this same
+   * request and reused, rather than cloned again.
+   */
   public async submitCreateInstance(
     request: SubmitCreateInstanceRequest,
     options?: ProviderCallOptions,
@@ -322,6 +401,13 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
     return { result: this.accepted(vmid, required(upid, 'provider task reference')) };
   }
 
+  /**
+   * Applies CPU, memory, network, and cloud-init settings to an owned VM.
+   *
+   * Preserves the inherited `net0` model, MAC, and options rather than rewriting the NIC, so
+   * the guest keeps a stable MAC across configuration. Blank SSH keys and every password
+   * field are omitted entirely.
+   */
   public async applyInstanceConfiguration(
     request: ApplyInstanceConfigurationRequest,
     options?: ProviderCallOptions,
@@ -389,6 +475,12 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
     };
   }
 
+  /**
+   * Reads one task status by UPID.
+   *
+   * A task counts as successful only when it is `stopped` *and* reports `exitstatus=OK`.
+   * `stopped` alone means finished, not succeeded.
+   */
   public async getTask(
     request: GetTaskRequest,
     options?: ProviderCallOptions,
@@ -429,6 +521,7 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
     };
   }
 
+  /** Powers on a VM, after confirming its ownership markers match exactly. */
   public async startInstance(
     request: StartInstanceRequest,
     options?: ProviderCallOptions,
@@ -457,6 +550,12 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
     return { result: this.accepted(vmid, required(upid, 'provider task reference')) };
   }
 
+  /**
+   * Reads config, status, and ownership to prove what actually exists.
+   *
+   * The completion evidence for the create workflow. Reports absence rather than throwing when
+   * the VM is not found, so the caller can distinguish "not there" from "could not tell".
+   */
   public async observeInstance(
     request: ObserveInstanceRequest,
     options?: ProviderCallOptions,
@@ -818,6 +917,7 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
   }
 }
 
+/** An HTTP-level Proxmox failure, carrying the status for classification. */
 class ProxmoxHttpError extends ProviderTransportError {
   public constructor(public readonly status: number) {
     const retryable = status === 408 || status === 429 || status >= 500;

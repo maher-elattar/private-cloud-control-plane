@@ -1,3 +1,18 @@
+/**
+ * The provider-neutral lifecycle port.
+ *
+ * PATTERN — Ports and adapters. This is the contract every provider must satisfy: the
+ * deterministic `FakeProvider` used in tests, the allowlisted `ProxmoxProvider`, and any
+ * future vendor. Nothing here names a vendor, and nothing may.
+ *
+ * WHY the abstraction is worth its cost: the workflow that decides whether a create is safe to
+ * retry must be testable against every failure mode — timeout after the provider acted,
+ * duplicate delivery, ambiguous task result. Reproducing those against real hardware is
+ * impractical; against a fake that satisfies this interface it is a unit test.
+ *
+ * @see docs/architecture/contracts-and-provider-port.md
+ * @see docs/adr/0011-provider-port-and-deterministic-fake.md
+ */
 import type {
   ApplyInstanceConfigurationRequest,
   ApplyInstanceConfigurationResponse,
@@ -35,6 +50,12 @@ import type {
   ValidateProfileResponse,
 } from '@private-cloud/contracts/provider';
 
+/**
+ * Every method name on the port.
+ *
+ * Used by the fake to count logical calls per method when asserting that a retry did not
+ * produce a second mutation.
+ */
 export type ProviderMethod =
   | 'validateProfile'
   | 'getCapabilities'
@@ -54,6 +75,7 @@ export type ProviderMethod =
   | 'markInstanceRetained'
   | 'purgeInstance';
 
+/** Per-call transport options. */
 export interface ProviderCallOptions {
   /** Cancellation is local transport control; it must not be interpreted as provider rollback. */
   readonly signal?: AbortSignal;
