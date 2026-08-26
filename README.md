@@ -121,6 +121,7 @@ The repository boundaries and promotion contract are defined in [Repository Boun
 - [Lab Boundary](docs/architecture/lab-boundary.md): exact live-provider scope and activation gate
 - [C4 Model](docs/architecture/c4-model.md): system context and container views
 - [Create-Instance Sequence](docs/architecture/create-instance-sequence.md): acceptance, outbox, workflow, provider, and projection path
+- [Proxmox Create Call Map](docs/architecture/proxmox-create-call-map.md): allowlisted Phase 3 endpoints, task semantics, and rejected behaviors
 - [Failure Sequences](docs/architecture/failure-sequences.md): broker outage, provider timeout, duplicate delivery, and compensation behavior
 - [State Machines](docs/architecture/state-machines.md): instance, desired power, observed provider, and operation lifecycles
 - [Data Ownership Map](docs/architecture/data-ownership.md): authoritative writers, schemas, topics, transactions, and AWS ownership

@@ -9,7 +9,8 @@ The lab boundary makes live Proxmox testing possible without treating a general 
 | Field | Value |
 | --- | --- |
 | Environment | `lab` |
-| Project ID | `lab-sandbox` |
+| Project ID | `00000000-0000-4000-8000-000000000001` |
+| Project name | `lab-sandbox` |
 | Kubernetes namespace | `private-cloud-control-plane` |
 | Provider profile | `proxmox-lab` |
 | Provider cluster alias | `lab-proxmox` |
@@ -49,7 +50,7 @@ Every created VM must include all of these values in provider tags or descriptio
 ```text
 managed-by=private-cloud-control-plane
 environment=lab
-project-id=lab-sandbox
+project-id=00000000-0000-4000-8000-000000000001
 instance-id=<control-plane UUID>
 operation-id=<create operation UUID>
 ```
