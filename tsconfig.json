@@ -26,6 +26,12 @@
     },
     {
       "path": "./packages/testing"
+    },
+    {
+      "path": "./packages/postgres-adapter"
+    },
+    {
+      "path": "./packages/application"
     }
   ]
 }

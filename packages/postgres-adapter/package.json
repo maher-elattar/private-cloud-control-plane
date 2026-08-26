@@ -1,5 +1,5 @@
 {
-  "name": "@private-cloud/domain",
+  "name": "@private-cloud/postgres-adapter",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -16,7 +16,15 @@
     }
   },
   "dependencies": {
-    "ipaddr.js": "2.2.0",
-    "tslib": "^2.3.0"
+    "@private-cloud/application": "workspace:*",
+    "@private-cloud/contracts": "workspace:*",
+    "@private-cloud/domain": "workspace:*",
+    "kysely": "0.28.8",
+    "pg": "8.16.3",
+    "tslib": "2.8.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.6",
+    "vitest": "4.1.11"
   }
 }

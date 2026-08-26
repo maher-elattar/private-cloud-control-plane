@@ -5,6 +5,7 @@
 # Dependencies and generated output
 node_modules/
 dist/
+out-tsc/
 coverage/
 .turbo/
 .nx/

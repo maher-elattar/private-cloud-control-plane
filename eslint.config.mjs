@@ -40,6 +40,25 @@ export default [
               onlyDependOnLibsWithTags: ['layer:domain', 'layer:contract', 'layer:port'],
             },
             {
+              sourceTag: 'layer:application',
+              onlyDependOnLibsWithTags: [
+                'layer:domain',
+                'layer:contract',
+                'layer:port',
+                'layer:application',
+              ],
+            },
+            {
+              sourceTag: 'layer:adapter',
+              onlyDependOnLibsWithTags: [
+                'layer:domain',
+                'layer:contract',
+                'layer:port',
+                'layer:application',
+                'layer:adapter',
+              ],
+            },
+            {
               sourceTag: 'layer:testing',
               onlyDependOnLibsWithTags: [
                 'layer:domain',

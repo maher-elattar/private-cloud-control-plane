@@ -1,0 +1,220 @@
+import { Kysely, PostgresDialect, type ColumnType } from 'kysely';
+import { Pool } from 'pg';
+
+type Timestamp = ColumnType<Date, Date | string, Date | string>;
+type Json<T> = ColumnType<T, T | string, T | string>;
+
+interface ProjectTable {
+  id: string;
+  name: string;
+  enabled: boolean;
+  version: number;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface QuotaTable {
+  project_id: string;
+  instances: number;
+  cpu_count: number;
+  memory_mib: string;
+  disk_gib: string;
+  ipv4_addresses: number;
+  snapshots: number;
+  updated_at: Timestamp;
+}
+
+interface NetworkTable {
+  id: string;
+  name: string;
+  ipv4_cidr: string;
+  gateway: string;
+  dns_servers: Json<string[]>;
+  exclusions: Json<string[]>;
+  enabled: boolean;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface ProviderProfileTable {
+  id: string;
+  provider_type: string;
+  state: string;
+  endpoint: string;
+  cluster_alias: string;
+  compute_target: string;
+  image_source_reference: string;
+  storage_target: string;
+  network_attachment: string;
+  resource_id_minimum: string;
+  resource_id_maximum: string;
+  network_id: string;
+  credential_reference: string;
+  version: number;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface ImageTable {
+  id: string;
+  name: string;
+  provider_profile_id: string;
+  enabled: boolean;
+  architecture: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface FlavorTable {
+  id: string;
+  name: string;
+  cpu_count: number;
+  memory_mib: string;
+  minimum_disk_gib: string;
+  enabled: boolean;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface InstanceTable {
+  id: string;
+  project_id: string;
+  image_id: string;
+  flavor_id: string;
+  network_id: string;
+  provider_profile_id: string;
+  hostname: string;
+  ssh_public_keys: Json<string[]>;
+  desired_cpu_count: number;
+  desired_memory_mib: string;
+  desired_disk_gib: string;
+  desired_power_state: string;
+  lifecycle_state: string;
+  active_operation_id: string | null;
+  version: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface OperationTable {
+  id: string;
+  project_id: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  state: string;
+  stage: string;
+  progress_percent: number;
+  accepted_at: Timestamp;
+  started_at: Timestamp | null;
+  updated_at: Timestamp;
+  completed_at: Timestamp | null;
+  error_category: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  manual_review_required: boolean;
+}
+
+interface Ipv4LeaseTable {
+  id: string;
+  project_id: string;
+  instance_id: string;
+  network_id: string;
+  address: string;
+  prefix_length: number;
+  gateway: string;
+  state: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface IdempotencyTable {
+  actor_id: string;
+  project_id: string;
+  operation_type: string;
+  idempotency_key: string;
+  target_id: string;
+  request_hash: string;
+  operation_id: string;
+  response: Json<unknown>;
+  created_at: Timestamp;
+  expires_at: Timestamp;
+}
+
+interface OutboxTable {
+  event_id: string;
+  aggregate_id: string;
+  aggregate_type: string;
+  schema_name: string;
+  schema_version: number;
+  partition_key: string;
+  payload: Json<unknown>;
+  occurred_at: Timestamp;
+}
+
+interface AuditTable {
+  id: string;
+  project_id: string;
+  actor_id: string;
+  actor_role: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  outcome: string;
+  operation_id: string;
+  occurred_at: Timestamp;
+}
+
+interface ProjectionInstanceTable {
+  instance_id: string;
+  project_id: string;
+  document: Json<unknown>;
+  updated_at: Timestamp;
+}
+
+interface ProjectionOperationTable {
+  operation_id: string;
+  project_id: string;
+  target_id: string;
+  document: Json<unknown>;
+  updated_at: Timestamp;
+}
+
+interface ProjectionReceiptTable {
+  event_id: string;
+  consumer_name: string;
+  received_at: Timestamp;
+}
+
+export interface PostgresDatabase {
+  'control.projects': ProjectTable;
+  'control.quotas': QuotaTable;
+  'control.networks': NetworkTable;
+  'control.provider_profiles': ProviderProfileTable;
+  'control.images': ImageTable;
+  'control.flavors': FlavorTable;
+  'control.instances': InstanceTable;
+  'control.operations': OperationTable;
+  'control.ipv4_leases': Ipv4LeaseTable;
+  'control.idempotency_records': IdempotencyTable;
+  'control.outbox': OutboxTable;
+  'audit.entries': AuditTable;
+  'projection.instances': ProjectionInstanceTable;
+  'projection.operations': ProjectionOperationTable;
+  'projection.event_receipts': ProjectionReceiptTable;
+}
+
+export function createPostgresDatabase(connectionString: string): Kysely<PostgresDatabase> {
+  return new Kysely<PostgresDatabase>({
+    dialect: new PostgresDialect({
+      pool: new Pool({
+        connectionString,
+        max: 10,
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 5_000,
+      }),
+    }),
+  });
+}
+
+export type PostgresClient = Kysely<PostgresDatabase>;

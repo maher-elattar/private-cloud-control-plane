@@ -1,5 +1,5 @@
 {
-  "name": "@private-cloud/domain",
+  "name": "@private-cloud/application",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -16,7 +16,11 @@
     }
   },
   "dependencies": {
-    "ipaddr.js": "2.2.0",
-    "tslib": "^2.3.0"
+    "@private-cloud/contracts": "workspace:*",
+    "@private-cloud/domain": "workspace:*",
+    "tslib": "2.8.1"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
   }
 }
