@@ -1,0 +1,35 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":36,"rankSpacing":58,"htmlLabels":true}}}%%
+flowchart TB
+  Caller["OIDC-authenticated caller"]
+
+  subgraph Runtime["Phase 3 runtime"]
+    direction LR
+    API["<b>Control API</b><br/>REST v1 + public gRPC v1<br/>acceptance + projection poller"]
+    DB[("<b>PostgreSQL</b><br/>control + audit schemas<br/>workflow + projection schemas")]
+    Worker["<b>Provisioning orchestrator</b><br/>command poller + fenced workflow<br/>provider gRPC client"]
+    Provider["<b>Provider service</b><br/>internal gRPC v1<br/>CreateInstanceProviderPort"]
+  end
+
+  subgraph Adapters["Runtime-selected provider adapter"]
+    direction LR
+    Fake["Deterministic fake<br/><i>default</i>"]
+    Proxmox["Allowlisted Proxmox<br/><i>explicit selection</i>"]
+  end
+
+  Caller -->|"REST or gRPC + JWT"| API
+  API <-->|"durable intent / ordered projections"| DB
+  DB <-->|"commands / leases + checkpoints + events"| Worker
+  Worker -->|"internal gRPC"| Provider
+  Provider -->|"default"| Fake
+  Provider -.->|"operator-selected"| Proxmox
+
+  classDef external fill:#f1f5f9,stroke:#475569,color:#0f172a
+  classDef api fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef worker fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef provider fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef data fill:#fce7f3,stroke:#be185d,color:#500724
+  class Caller external
+  class API api
+  class Worker worker
+  class Provider,Fake,Proxmox provider
+  class DB data

@@ -19,6 +19,7 @@ This call map defines the only Proxmox write path implemented in Phase 3. The pr
 | Recheck network | VM list and occupied VM config reads | None | Reject a live collision before configuration | Read-only and limited to the allowlisted node |
 | Read inherited NIC | `GET /api2/json/nodes/{node}/qemu/{vmid}/config` | None | Read and parse `net0` | Preserve model, MAC, and unrelated options |
 | Configure | `POST /api2/json/nodes/{node}/qemu/{vmid}/config` | `name`, `cores`, `sockets=1`, `vcpus`, `memory`, `net0`, `ipconfig0`, `nameserver`, optional `sshkeys` | Persist a non-empty returned UPID before polling; an empty result is synchronous success | No password fields; omit blank SSH keys |
+| Start preflight | `GET /api2/json/nodes/{node}/qemu/{vmid}/status/current` | None | An already-running owned VM is synchronous success; otherwise continue | Makes checkpoint replay safe without repeating a completed start |
 | Start | `POST /api2/json/nodes/{node}/qemu/{vmid}/status/start` | None | Persist returned UPID before polling | Only the owned VM selected by the workflow |
 | Observe | VM `config` and `status/current` reads | None | Success requires an existing VM and exact marker match | Observation, not transport success, completes the operation |
 
@@ -28,9 +29,9 @@ Proxmox mutations use `application/x-www-form-urlencoded`; reads use encoded que
 
 - The provider adapter performs one task-status read per `GetTask` call. It never blocks in a sleep loop.
 - The orchestrator stores a pre-call checkpoint before each mutation and stores a returned task reference before polling.
-- A transport timeout after submission is an unknown outcome. The workflow observes ownership and does not submit another create automatically.
+- A transport timeout after submission is an unknown outcome. The workflow enters `manual_review` and does not resubmit the ambiguous mutation automatically; provider observation supplies the operator's recovery evidence.
 - A stopped task with a non-`OK` exit status is a classified provider failure.
-- Configuration or start may complete synchronously when Proxmox returns no task reference.
+- Configuration may complete synchronously when Proxmox returns no task reference. Start completes synchronously when the owned VM is already running.
 
 ## Deliberately Rejected Behavior
 

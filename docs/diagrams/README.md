@@ -36,6 +36,10 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | Desired power state             | `mermaid/desired-power-state.mmd`            | `rendered/desired-power-state.mermaid.svg`            |
 | Observed provider state         | `mermaid/observed-provider-state.mmd`        | `rendered/observed-provider-state.mermaid.svg`        |
 | Operation lifecycle             | `mermaid/operation-lifecycle.mmd`            | `rendered/operation-lifecycle.mermaid.svg`            |
+| Phase 3 components              | `mermaid/phase-3-components.mmd`             | `rendered/phase-3-components.mermaid.svg`             |
+| Phase 3 synchronous create      | `mermaid/phase-3-synchronous-create.mmd`     | `rendered/phase-3-synchronous-create.mermaid.svg`     |
+| Phase 3 checkpoint recovery     | `mermaid/phase-3-checkpoint-recovery.mmd`    | `rendered/phase-3-checkpoint-recovery.mermaid.svg`    |
+| Phase 3 workflow stages         | `mermaid/phase-3-workflow-stages.mmd`        | `rendered/phase-3-workflow-stages.mermaid.svg`        |
 
 ## Mermaid Editing And Validation
 

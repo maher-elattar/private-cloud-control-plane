@@ -1,0 +1,37 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569"}}}%%
+stateDiagram-v2
+  direction LR
+  [*] --> accepted: command received
+  accepted --> submitting_create: pre-call checkpoint
+  submitting_create --> polling_create: accepted task persisted
+  submitting_create --> configuring: synchronous success
+  polling_create --> polling_create: queued or running
+  polling_create --> configuring: task succeeded
+  configuring --> polling_configuration: accepted task persisted
+  configuring --> starting: synchronous success
+  polling_configuration --> polling_configuration: queued or running
+  polling_configuration --> starting: task succeeded
+  starting --> polling_start: accepted task persisted
+  starting --> observing: synchronous success
+  polling_start --> polling_start: queued or running
+  polling_start --> observing: task succeeded
+  observing --> succeeded: exists + running + ownership match
+
+  submitting_create --> manual_review: ambiguous mutation transport
+  configuring --> manual_review: ambiguous mutation transport
+  starting --> manual_review: ambiguous mutation transport
+  polling_create --> manual_review: task result unknown
+  polling_configuration --> manual_review: task result unknown
+  polling_start --> manual_review: task result unknown
+  observing --> manual_review: observation ambiguous
+
+  submitting_create --> failed: classified rejection
+  polling_create --> failed: task failed
+  configuring --> failed: classified rejection
+  polling_configuration --> failed: task failed
+  starting --> failed: classified rejection
+  polling_start --> failed: task failed
+
+  succeeded --> [*]
+  failed --> [*]
+  manual_review --> [*]

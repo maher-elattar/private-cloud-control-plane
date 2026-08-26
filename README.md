@@ -23,13 +23,24 @@ The application lifecycle is one pnpm/Nx workspace. Nx tags enforce dependency d
 | Project                     | Boundary                                                  | Runtime status     |
 | --------------------------- | --------------------------------------------------------- | ------------------ |
 | `control-api`               | Synchronous command acceptance and project queries        | REST + gRPC active |
-| `provisioning-orchestrator` | Asynchronous workflow coordination                        | Process shell      |
-| `proxmox-provider`          | Privileged provider-neutral gRPC adapter                  | Process shell      |
+| `provisioning-orchestrator` | Asynchronous workflow coordination                        | Phase 3 active     |
+| `proxmox-provider`          | Privileged provider-neutral gRPC adapter                  | Fake/Proxmox active |
 | `reconciler`                | Scheduled observation and drift classification            | Process shell      |
 | `domain`                    | Framework-independent types and invariants                | Create slice active |
 | `contracts`                 | REST, gRPC, and event contract source and generated types | Contracts defined  |
 | `provider-sdk`              | Provider-neutral lifecycle port and transport semantics   | Port defined       |
+| `provider-adapters`         | Deterministic fake and allowlisted Proxmox implementations | Create slice active |
 | `testing`                   | Deterministic provider adapter and conformance fixtures   | Test implementation |
+
+## Phase 3 Vertical Slice
+
+![Phase 3 component topology](docs/diagrams/rendered/phase-3-components.mermaid.svg)
+
+The implemented pre-Kafka slice accepts REST or gRPC create intent, commits it with an outbox row, executes leased and fenced workflow checkpoints through the internal provider gRPC boundary, proves final ownership through observation, and applies ordered read projections.
+
+![Phase 3 synchronous create](docs/diagrams/rendered/phase-3-synchronous-create.mermaid.svg)
+
+[Phase 3 implementation, recovery semantics, configuration, and evidence](docs/architecture/phase-3-vertical-slice.md)
 
 ## Contract Surface
 
@@ -126,6 +137,7 @@ The repository boundaries and promotion contract are defined in [Repository Boun
 - [State Machines](docs/architecture/state-machines.md): instance, desired power, observed provider, and operation lifecycles
 - [Data Ownership Map](docs/architecture/data-ownership.md): authoritative writers, schemas, topics, transactions, and AWS ownership
 - [Phase 3 Persistence](docs/architecture/phase-3-persistence.md): implemented schemas, records, locks, and acceptance transaction
+- [Phase 3 Vertical Slice](docs/architecture/phase-3-vertical-slice.md): runtime components, workflow stages, recovery semantics, provider selection, and evidence
 - [Phase 3 API Implementation](docs/contracts/phase-3-api.md): active REST/gRPC subset, authentication, fields, and error behavior
 - [Contracts and Provider Port](docs/architecture/contracts-and-provider-port.md): wire authorities, compatibility rules, provider outcomes, and conformance behavior
 - [Quality Gates](docs/architecture/quality-gates.md): CI stages, failure policy, dependency audit, and container scanning
@@ -138,4 +150,4 @@ The repository boundaries and promotion contract are defined in [Repository Boun
 
 ## Current State
 
-The contract and provider-test foundation is complete. The Phase 3 control API now authenticates OIDC callers, accepts create intent idempotently over REST and gRPC, commits desired state and an operation atomically in PostgreSQL, reserves an IPv4 address under lock, and exposes project, catalog, instance, quota, and operation readback. Workflow execution and provider task polling are the remaining parts of the synchronous vertical slice.
+The Phase 3 synchronous vertical slice is complete in code. The control API authenticates OIDC callers and accepts create intent idempotently over REST and gRPC; PostgreSQL atomically commits desired state, operation, IPv4 reservation, audit, and outbox records; the orchestrator executes leased and fenced checkpoints through the provider gRPC service; and ordered projections expose terminal operation and instance state. The fake path is verified end to end. The Proxmox path is implemented behind strict allowlists and fixture-tested, but no live provider mutation has been run.

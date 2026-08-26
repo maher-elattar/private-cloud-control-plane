@@ -1,0 +1,43 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"diagramMarginX":30,"diagramMarginY":20,"actorMargin":45,"messageMargin":34,"noteMargin":12}}}%%
+sequenceDiagram
+  autonumber
+  actor Caller
+  participant API as Control API
+  participant DB as PostgreSQL
+  participant Worker as Orchestrator
+  participant Provider as Provider gRPC
+  participant Adapter as Fake or Proxmox
+
+  Caller->>API: POST create or CreateInstance + OIDC token
+  API->>API: Verify JWT, project grant, fields, idempotency key
+  API->>DB: Begin acceptance transaction
+  DB->>DB: Lock idempotency scope and network pool
+  DB->>DB: Reserve quota and IPv4 address
+  DB->>DB: Insert instance, operation, audit, outbox, projections
+  DB-->>API: Commit durable intent
+  API-->>Caller: 202 Accepted + operation ID
+
+  loop Ordered Phase 3 polling until terminal
+    Worker->>DB: Claim command or ready workflow
+    DB->>DB: Acquire instance lease and increment fencing token
+    DB-->>Worker: Command + persisted stage
+    Worker->>DB: Persist pre-call or result checkpoint
+    Worker->>Provider: Phase 3 provider RPC with stable request ID
+    Provider->>Adapter: Provider-neutral port call
+    Adapter-->>Provider: Accepted task, success, rejection, or observation
+    Provider-->>Worker: Provider-neutral result
+    Worker->>DB: Persist task reference, next stage, and workflow event
+  end
+
+  Worker->>Provider: ObserveInstance with expected ownership
+  Provider->>Adapter: Read resource state and markers
+  Adapter-->>Provider: Exists + running + exact marker match
+  Provider-->>Worker: Authoritative observation
+  Worker->>DB: Complete workflow and emit terminal event
+  API->>DB: Apply ordered event to read projection
+  Caller->>API: GET operation and instance
+  API->>DB: Read project-scoped projections
+  DB-->>API: succeeded operation + active instance
+  API-->>Caller: Desired and observed state
+
+  Note over Worker,DB: Kafka is intentionally absent in Phase 3. Polling is replaced by Debezium and Kafka in Phase 4.

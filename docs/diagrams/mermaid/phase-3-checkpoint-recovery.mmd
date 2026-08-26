@@ -1,0 +1,36 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fee2e2","noteBorderColor":"#b91c1c"}}}%%
+sequenceDiagram
+  autonumber
+  participant W1 as Worker A
+  participant DB as PostgreSQL
+  participant P as Provider service
+  participant W2 as Worker B
+
+  W1->>DB: Claim submitting_create + fencing token 7
+  DB-->>W1: Lease until T + stable operation ID
+  W1->>P: SubmitCreateInstance request ID operation:create
+  P-->>W1: Accepted + resource ID + task reference
+
+  alt Checkpoint commit succeeds
+    W1->>DB: Save polling_create + task reference under token 7
+    DB-->>W1: Commit and release lease
+  else Worker or database fails before checkpoint
+    Note over W1,DB: No terminal failure is written from an uncertain checkpoint.
+    DB->>DB: Lease expires
+    W2->>DB: Claim submitting_create + fencing token 8
+    W2->>P: Replay identical request ID operation:create
+    P-->>W2: Same resource and task, no second resource
+    W2->>DB: Save polling_create under token 8
+    W1-xDB: Late token 7 checkpoint is fenced
+  end
+
+  alt Mutation transport times out
+    W2->>P: Configure or start with stable request ID
+    P--xW2: Deadline or unavailable, outcome unknown
+    W2->>DB: Complete as manual_review
+    Note over W2,DB: No automatic destructive compensation or blind resubmission.
+  else Read-only task poll is unavailable
+    W2->>P: GetTask
+    P--xW2: Unavailable
+    W2->>DB: Save retry_wait with bounded delay
+  end
