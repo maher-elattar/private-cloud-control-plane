@@ -12,6 +12,7 @@
     { "$ref": "#/$defs/InstanceRetentionRequested" },
     { "$ref": "#/$defs/InstancePurgeRequested" },
     { "$ref": "#/$defs/ReconciliationRequested" },
+    { "$ref": "#/$defs/ProvisioningReplayRequested" },
     { "$ref": "#/$defs/WorkflowProgressed" },
     { "$ref": "#/$defs/InstanceMutationCompleted" },
     { "$ref": "#/$defs/InstanceMutationFailed" },
@@ -367,6 +368,32 @@
               "additionalProperties": false,
               "required": ["reasonReference"],
               "properties": { "reasonReference": { "type": "string", "format": "uuid" } }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ProvisioningReplayRequested": {
+      "title": "ProvisioningReplayRequestedV1",
+      "allOf": [
+        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "type": "object",
+          "required": ["data"],
+          "properties": {
+            "schemaName": { "const": "provisioning.replay.requested" },
+            "schemaVersion": { "const": 1 },
+            "aggregateType": { "const": "instance" },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["replayRequestId", "originalEventId", "requestedAt"],
+              "properties": {
+                "replayRequestId": { "type": "string", "format": "uuid" },
+                "originalEventId": { "type": "string", "format": "uuid" },
+                "requestedAt": { "type": "string", "format": "date-time" }
+              }
             }
           }
         }

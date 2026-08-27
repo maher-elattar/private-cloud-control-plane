@@ -336,6 +336,9 @@
           },
           {
             "$ref": "#/components/parameters/Traceparent"
+          },
+          {
+            "$ref": "#/components/parameters/Tracestate"
           }
         ],
         "requestBody": {
@@ -477,6 +480,9 @@
           },
           {
             "$ref": "#/components/parameters/Traceparent"
+          },
+          {
+            "$ref": "#/components/parameters/Tracestate"
           }
         ],
         "responses": {
@@ -542,6 +548,9 @@
           },
           {
             "$ref": "#/components/parameters/Traceparent"
+          },
+          {
+            "$ref": "#/components/parameters/Tracestate"
           }
         ],
         "requestBody": {
@@ -645,6 +654,9 @@
           },
           {
             "$ref": "#/components/parameters/Traceparent"
+          },
+          {
+            "$ref": "#/components/parameters/Tracestate"
           }
         ],
         "requestBody": {
@@ -719,6 +731,9 @@
           },
           {
             "$ref": "#/components/parameters/Traceparent"
+          },
+          {
+            "$ref": "#/components/parameters/Tracestate"
           }
         ],
         "requestBody": {
@@ -789,6 +804,9 @@
           },
           {
             "$ref": "#/components/parameters/Traceparent"
+          },
+          {
+            "$ref": "#/components/parameters/Tracestate"
           }
         ],
         "responses": {
@@ -1475,6 +1493,15 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CorrelationId"
+          },
+          {
+            "$ref": "#/components/parameters/Traceparent"
+          },
+          {
+            "$ref": "#/components/parameters/Tracestate"
           }
         ],
         "requestBody": {
@@ -3670,6 +3697,15 @@
           "type": "string",
           "maxLength": 55,
           "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+        }
+      },
+      "Tracestate": {
+        "name": "tracestate",
+        "in": "header",
+        "description": "Optional W3C vendor trace state, accepted only with a valid traceparent.",
+        "schema": {
+          "type": "string",
+          "maxLength": 512
         }
       },
       "InstanceId": {

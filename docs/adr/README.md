@@ -24,6 +24,7 @@ Architecture Decision Records capture decisions that constrain implementation or
 | [ADR-0009](0009-bounded-aws-reference-slice.md) | Bound the AWS reference slice at reliable command delivery | Accepted |
 | [ADR-0010](0010-versioned-contracts-and-compatibility.md) | Version external contracts and generate language types | Accepted |
 | [ADR-0011](0011-provider-port-and-deterministic-fake.md) | Isolate providers behind a deterministic lifecycle port | Accepted |
+| [ADR-0012](0012-phase-4-delivery-and-telemetry-runtime.md) | Keep delivery state and telemetry context explicit | Accepted |
 
 ## Required ADR Content
 

@@ -15,6 +15,7 @@ export type ControlPlaneEventV1 =
   | InstanceRetentionRequestedV1
   | InstancePurgeRequestedV1
   | ReconciliationRequestedV1
+  | ProvisioningReplayRequestedV1
   | WorkflowProgressedV1
   | InstanceMutationCompletedV1
   | InstanceMutationFailedV1
@@ -116,6 +117,16 @@ export type ReconciliationRequestedV1 = EventEnvelope & {
   aggregateType?: 'instance';
   data: {
     reasonReference: string;
+  };
+};
+export type ProvisioningReplayRequestedV1 = EventEnvelope & {
+  schemaName?: 'provisioning.replay.requested';
+  schemaVersion?: 1;
+  aggregateType?: 'instance';
+  data: {
+    replayRequestId: string;
+    originalEventId: string;
+    requestedAt: string;
   };
 };
 export type WorkflowProgressedV1 = EventEnvelope & {

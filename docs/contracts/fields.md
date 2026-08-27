@@ -313,6 +313,13 @@ Every field declared by the OpenAPI components, event JSON Schema definitions, a
 | JSON Schema | ReconciliationRequested | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ReconciliationRequested | data | object | yes | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ReconciliationRequested.data | reasonReference | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayRequested | schemaName | const "provisioning.replay.requested" | no | const="provisioning.replay.requested" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayRequested | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayRequested | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayRequested | data | object | yes | - | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayRequested.data | replayRequestId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayRequested.data | originalEventId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayRequested.data | requestedAt | string | yes | format="date-time" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | WorkflowProgressed | schemaName | const "workflow.progressed" | no | const="workflow.progressed" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | WorkflowProgressed | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | WorkflowProgressed | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |

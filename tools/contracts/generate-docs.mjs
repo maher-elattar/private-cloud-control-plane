@@ -249,9 +249,15 @@ await writeFile(
 );
 
 const eventUsage = new Map();
+function operationMessageName(reference) {
+  const segments = reference?.split('/') ?? [];
+  if (segments[1] !== 'channels' || segments[3] !== 'messages') return referenceName(reference);
+  const channelMessage = asyncApi.channels?.[segments[2]]?.messages?.[segments[4]];
+  return referenceName(channelMessage?.$ref);
+}
 for (const [operationName, operation] of Object.entries(asyncApi.operations)) {
   for (const message of operation.messages ?? []) {
-    const name = referenceName(message.$ref);
+    const name = operationMessageName(message.$ref);
     const usage = eventUsage.get(name) ?? {
       producers: new Set(),
       consumers: new Set(),

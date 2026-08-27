@@ -86,5 +86,6 @@ This matrix connects the product use cases to the normative requirements, source
 | CT-FIELD-001 | Exhaustive declared field, constraint, classification, and telemetry catalog | `docs/contracts/fields.md` | SRS-FR-023, 075 through 078; SRS-NFR-011, 017, 018, 022, 023, 029, 031 |
 | CT-PROVIDER-001 | Provider success, duplicate, latency, rejection, timeout, and unknown-outcome semantics | `packages/testing/src/fake-provider.spec.ts` | SRS-FR-032 through 036, 069 through 072; SRS-NFR-003 through 007, 027, 030, 038 |
 | CT-CI-001 | Generated drift, code, documentation, dependency, build, and image gates | `.github/workflows/ci.yml` | SRS-NFR-030 through 034 |
+| CT-PH4-CONTRACT-001 | Replay command, W3C propagation, producer/consumer ownership, and delivery-generation semantics | `packages/contracts/asyncapi`; `docs/adr/0012-phase-4-delivery-and-telemetry-runtime.md`; `pnpm run contracts:check` | SRS-FR-057 through 068, 075 through 079; SRS-NFR-001 through 008, 021 through 024 |
 
 Later work must add integration, failure-drill, load, GitOps, live-provider, and AWS evidence. The entries above claim only repository and contract-foundation coverage.

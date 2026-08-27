@@ -1308,6 +1308,8 @@ export interface components {
     readonly SnapshotId: string;
     /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
     readonly Traceparent: string;
+    /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
+    readonly Tracestate: string;
   };
   requestBodies: never;
   headers: never;
@@ -1515,6 +1517,12 @@ export interface operations {
       readonly header: {
         /** @description Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash. */
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
+        /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+        readonly traceparent?: components['parameters']['Traceparent'];
+        /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
+        readonly tracestate?: components['parameters']['Tracestate'];
+        /** @description Optional caller correlation UUID; the service creates one when absent. */
+        readonly 'X-Correlation-ID'?: components['parameters']['CorrelationId'];
       };
       readonly path: {
         readonly eventId: components['parameters']['EventId'];
@@ -2082,6 +2090,8 @@ export interface operations {
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
         /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
         readonly traceparent?: components['parameters']['Traceparent'];
+        /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
+        readonly tracestate?: components['parameters']['Tracestate'];
         /** @description Optional caller correlation UUID; the service creates one when absent. */
         readonly 'X-Correlation-ID'?: components['parameters']['CorrelationId'];
       };
@@ -2142,6 +2152,8 @@ export interface operations {
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
         /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
         readonly traceparent?: components['parameters']['Traceparent'];
+        /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
+        readonly tracestate?: components['parameters']['Tracestate'];
         /** @description Optional caller correlation UUID; the service creates one when absent. */
         readonly 'X-Correlation-ID'?: components['parameters']['CorrelationId'];
       };
@@ -2170,6 +2182,8 @@ export interface operations {
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
         /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
         readonly traceparent?: components['parameters']['Traceparent'];
+        /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
+        readonly tracestate?: components['parameters']['Tracestate'];
         /** @description Optional caller correlation UUID; the service creates one when absent. */
         readonly 'X-Correlation-ID'?: components['parameters']['CorrelationId'];
       };
@@ -2233,6 +2247,8 @@ export interface operations {
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
         /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
         readonly traceparent?: components['parameters']['Traceparent'];
+        /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
+        readonly tracestate?: components['parameters']['Tracestate'];
         /** @description Optional caller correlation UUID; the service creates one when absent. */
         readonly 'X-Correlation-ID'?: components['parameters']['CorrelationId'];
       };
@@ -2267,6 +2283,8 @@ export interface operations {
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
         /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
         readonly traceparent?: components['parameters']['Traceparent'];
+        /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
+        readonly tracestate?: components['parameters']['Tracestate'];
         /** @description Optional caller correlation UUID; the service creates one when absent. */
         readonly 'X-Correlation-ID'?: components['parameters']['CorrelationId'];
       };
@@ -2297,6 +2315,8 @@ export interface operations {
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
         /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
         readonly traceparent?: components['parameters']['Traceparent'];
+        /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
+        readonly tracestate?: components['parameters']['Tracestate'];
         /** @description Optional caller correlation UUID; the service creates one when absent. */
         readonly 'X-Correlation-ID'?: components['parameters']['CorrelationId'];
       };

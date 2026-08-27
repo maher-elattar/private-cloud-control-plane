@@ -207,6 +207,7 @@ paths:
         - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
         - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
         - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+        - $ref: './components.v1.yaml#/components/parameters/Tracestate'
       requestBody:
         required: true
         content:
@@ -282,6 +283,7 @@ paths:
         - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
         - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
         - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+        - $ref: './components.v1.yaml#/components/parameters/Tracestate'
       responses:
         '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
         '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
@@ -324,6 +326,7 @@ paths:
         - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
         - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
         - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+        - $ref: './components.v1.yaml#/components/parameters/Tracestate'
       requestBody:
         required: true
         content:
@@ -381,6 +384,7 @@ paths:
         - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
         - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
         - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+        - $ref: './components.v1.yaml#/components/parameters/Tracestate'
       requestBody:
         required: true
         content:
@@ -421,6 +425,7 @@ paths:
         - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
         - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
         - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+        - $ref: './components.v1.yaml#/components/parameters/Tracestate'
       requestBody:
         required: true
         content:
@@ -459,6 +464,7 @@ paths:
         - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
         - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
         - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+        - $ref: './components.v1.yaml#/components/parameters/Tracestate'
       responses:
         '202': { $ref: './components.v1.yaml#/components/responses/MutationAccepted' }
         '401': { $ref: './components.v1.yaml#/components/responses/Unauthorized' }
@@ -817,6 +823,9 @@ paths:
       x-requirements: [SRS-FR-004, SRS-FR-005, SRS-FR-067, SRS-NFR-019]
       parameters:
         - $ref: './components.v1.yaml#/components/parameters/IdempotencyKey'
+        - $ref: './components.v1.yaml#/components/parameters/CorrelationId'
+        - $ref: './components.v1.yaml#/components/parameters/Traceparent'
+        - $ref: './components.v1.yaml#/components/parameters/Tracestate'
       requestBody:
         required: true
         content:

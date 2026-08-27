@@ -86,6 +86,13 @@ components:
         type: string
         maxLength: 55
         pattern: '^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'
+    Tracestate:
+      name: tracestate
+      in: header
+      description: Optional W3C vendor trace state, accepted only with a valid traceparent.
+      schema:
+        type: string
+        maxLength: 512
   responses:
     MutationAccepted:
       description: Durable intent and operation record committed
