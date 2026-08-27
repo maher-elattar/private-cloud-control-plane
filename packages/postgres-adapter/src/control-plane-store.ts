@@ -30,6 +30,7 @@ import { allocateIpv4, DomainError } from '@private-cloud/domain';
 import { sql, type Transaction } from 'kysely';
 import { parseJsonColumn, toIsoTimestamp } from './column-codec.js';
 import type { PostgresClient, PostgresDatabase } from './database.js';
+import { serializeDebeziumTraceContext } from './trace-carrier.js';
 
 /**
  * How long an idempotency record stays replayable (24 hours).
@@ -606,14 +607,19 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     await tx
       .insertInto('control.outbox')
       .values({
+        outbox_id: randomUUID(),
         event_id: records.eventId,
         aggregate_id: instanceId,
         aggregate_type: 'instance',
         schema_name: 'instance.create.requested',
         schema_version: 1,
+        topic: 'provisioning.commands.v1',
         partition_key: instanceId,
         payload: records.event,
+        tracingspancontext: serializeDebeziumTraceContext(records.event.traceContext),
+        replay_generation: 0,
         occurred_at: now,
+        created_at: now,
       })
       .execute();
     await tx

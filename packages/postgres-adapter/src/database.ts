@@ -1,7 +1,7 @@
 /**
  * The typed database schema and connection factory.
  *
- * Mirrors `db/migrations/0001_phase3.sql` as TypeScript, giving Kysely the type information it
+ * Mirrors the ordered files in `db/migrations` as TypeScript, giving Kysely the type information it
  * needs to check every query at compile time. A column renamed in a migration but not here
  * fails the build rather than at runtime.
  *
@@ -160,14 +160,19 @@ interface IdempotencyTable {
 }
 
 interface OutboxTable {
+  outbox_id: string;
   event_id: string;
   aggregate_id: string;
   aggregate_type: string;
   schema_name: string;
   schema_version: number;
+  topic: string;
   partition_key: string;
   payload: Json<unknown>;
+  tracingspancontext: string;
+  replay_generation: number;
   occurred_at: Timestamp;
+  created_at: Timestamp;
 }
 
 interface AuditTable {
@@ -201,12 +206,20 @@ interface ProjectionOperationTable {
 interface ProjectionReceiptTable {
   event_id: string;
   consumer_name: string;
+  replay_generation: number;
+  source_topic: string | null;
+  source_partition: number | null;
+  source_offset: string | null;
   received_at: Timestamp;
 }
 
 interface CommandReceiptTable {
   event_id: string;
   consumer_name: string;
+  replay_generation: number;
+  source_topic: string | null;
+  source_partition: number | null;
+  source_offset: string | null;
   payload_hash: string;
   received_at: Timestamp;
   completed_at: Timestamp | null;
@@ -229,6 +242,10 @@ interface WorkflowTable {
   status: string;
   stage: string;
   attempt: number;
+  stage_attempt: number;
+  retry_started_at: Timestamp | null;
+  replay_generation: number;
+  trace_context: Json<{ readonly traceparent: string; readonly tracestate?: string }>;
   fencing_token: string;
   provider_resource_id: string | null;
   provider_task_reference: string | null;
@@ -236,17 +253,66 @@ interface WorkflowTable {
   failure_category: string | null;
   failure_code: string | null;
   failure_message: string | null;
+  last_error_category: string | null;
+  last_error_code: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
   completed_at: Timestamp | null;
 }
 
-interface WorkflowOutboxTable {
-  event_id: string;
+interface ReplayRequestTable {
+  id: string;
+  original_event_id: string;
+  actor_id: string;
+  idempotency_key: string;
+  request_hash: string;
+  reason: string;
+  correlation_id: string;
+  trace_context: Json<{ readonly traceparent: string; readonly tracestate?: string }>;
+  status: string;
+  requested_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface DeadLetterTable {
+  original_event_id: string;
+  dead_letter_event_id: string;
+  original_schema_name: string;
+  original_schema_version: number;
   aggregate_id: string;
-  schema_name: string;
-  payload: Json<unknown>;
-  occurred_at: Timestamp;
+  project_id: string;
+  operation_id: string;
+  original_payload: Json<unknown>;
+  failure_category: string;
+  failure_code: string;
+  safe_message: string | null;
+  attempts: number;
+  replay_allowed: boolean;
+  replay_generation: number;
+  status: string;
+  dead_lettered_at: Timestamp;
+  last_replay_at: Timestamp | null;
+}
+
+interface PoisonRecordTable {
+  id: string;
+  consumer_name: string;
+  source_topic: string;
+  source_partition: number;
+  source_offset: string;
+  payload_hash: string;
+  failure_code: string;
+  safe_message: string;
+  quarantined_at: Timestamp;
+}
+
+interface ProjectionDeadLetterTable {
+  original_event_id: string;
+  project_id: string;
+  operation_id: string;
+  aggregate_id: string;
+  document: Json<unknown>;
+  updated_at: Timestamp;
 }
 
 /**
@@ -267,14 +333,18 @@ export interface PostgresDatabase {
   'control.ipv4_leases': Ipv4LeaseTable;
   'control.idempotency_records': IdempotencyTable;
   'control.outbox': OutboxTable;
+  'control.replay_requests': ReplayRequestTable;
   'audit.entries': AuditTable;
   'workflow.command_receipts': CommandReceiptTable;
   'workflow.instance_leases': InstanceLeaseTable;
   'workflow.workflows': WorkflowTable;
-  'workflow.outbox': WorkflowOutboxTable;
+  'workflow.outbox': OutboxTable;
+  'workflow.dead_letters': DeadLetterTable;
+  'workflow.poison_records': PoisonRecordTable;
   'projection.instances': ProjectionInstanceTable;
   'projection.operations': ProjectionOperationTable;
   'projection.event_receipts': ProjectionReceiptTable;
+  'projection.dead_letters': ProjectionDeadLetterTable;
 }
 
 /**

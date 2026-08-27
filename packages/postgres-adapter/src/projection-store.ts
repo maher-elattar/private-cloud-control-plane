@@ -114,7 +114,15 @@ export class PostgresProjectionStore implements ProjectionStore {
 
       await tx
         .insertInto('projection.event_receipts')
-        .values({ event_id: row.event_id, consumer_name: CONSUMER_NAME, received_at: new Date() })
+        .values({
+          event_id: row.event_id,
+          consumer_name: CONSUMER_NAME,
+          replay_generation: 0,
+          source_topic: null,
+          source_partition: null,
+          source_offset: null,
+          received_at: new Date(),
+        })
         .execute();
       return true;
     });

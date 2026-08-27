@@ -14,6 +14,10 @@ This map defines which deployable may author each category of durable state. Pos
 6. Credentials are referenced by name; no application-owned table or message stores secret values.
 7. The AWS reference slice is a separate persistence implementation, not a second writer for Kubernetes aggregates.
 
+Kafka coordinates retained by Phase 4 inbox receipts are delivery evidence, not domain state and not
+write authority. The owning PostgreSQL transaction commits before its consumer advances the offset.
+See [Phase 4 Persistence and Delivery Identity](phase-4-persistence.md).
+
 ## PostgreSQL Logical Schemas
 
 | Schema | Authoritative deployable | Owned records | Other access |
@@ -41,8 +45,8 @@ This map defines which deployable may author each category of durable state. Pos
 | IPv4 lease | Control API create transaction | Control API lifecycle transition or recovery action | Release or quarantine; retain history | Unique active-address constraint and aggregate version |
 | Snapshot desired/operation state | Control API | Control API projection handler | Soft lifecycle record | Instance operation lease and event receipt |
 | Drift and manual-review record | Reconciler | Reconciler; administrator may append disposition through Control API command | Close, never silently erase | Observation version and attributed disposition |
-| Inbox receipt | Consuming deployable | Same consumer transaction | Retention process only | Unique event ID plus consumer name |
-| Outbox record | Originating deployable transaction | Debezium reads; owner may mark operational metadata only if design requires | Retention process after publication horizon | Unique event ID and aggregate ordering value |
+| Inbox receipt | Consuming deployable | Same consumer transaction | Retention process only | Consumer name, logical event ID, and authorized replay generation |
+| Outbox record | Originating deployable transaction | Immutable after insert; Debezium reads | Retention process after publication horizon | Physical outbox ID, logical event ID, replay generation, and aggregate ordering value |
 | Audit entry | Service performing the action | Append-only; no update | Archive lifecycle only | Unique audit/event ID |
 
 ## Field Ownership for an Instance

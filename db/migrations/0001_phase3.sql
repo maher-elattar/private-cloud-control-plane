@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE SCHEMA IF NOT EXISTS control;
 CREATE SCHEMA IF NOT EXISTS workflow;
 CREATE SCHEMA IF NOT EXISTS projection;
@@ -244,5 +242,3 @@ CREATE TABLE projection.operations (
   document jsonb NOT NULL,
   updated_at timestamptz NOT NULL
 );
-
-COMMIT;

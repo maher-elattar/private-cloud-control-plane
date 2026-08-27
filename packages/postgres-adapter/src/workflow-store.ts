@@ -18,6 +18,7 @@
  * @see docs/architecture/glossary.md#lease-and-fencing-token
  * @see docs/architecture/phase-3-persistence.md
  */
+import { randomUUID } from 'node:crypto';
 import {
   toWorkflowStage,
   type ClaimedCreateWorkflow,
@@ -29,6 +30,7 @@ import { canonicalSha256 } from '@private-cloud/domain';
 import { sql, type Transaction } from 'kysely';
 import { parseJsonColumn } from './column-codec.js';
 import type { PostgresClient, PostgresDatabase } from './database.js';
+import { serializeDebeziumTraceContext } from './trace-carrier.js';
 
 /** Identifies this consumer in `workflow.command_receipts`. */
 const CONSUMER_NAME = 'provisioning-orchestrator.phase3';
@@ -71,6 +73,7 @@ interface WorkflowRow {
   readonly command: unknown;
   readonly stage: string;
   readonly attempt: number;
+  readonly replay_generation: number;
   readonly fencing_token: string;
   readonly provider_resource_id: string | null;
   readonly provider_task_reference: string | null;
@@ -254,6 +257,8 @@ export class PostgresWorkflowStore implements WorkflowStore {
         .updateTable('workflow.command_receipts')
         .set({ completed_at: now })
         .where('event_id', '=', workflow.event_id)
+        .where('consumer_name', '=', CONSUMER_NAME)
+        .where('replay_generation', '=', workflow.replay_generation)
         .executeTakeFirstOrThrow();
       await this.writeEvent(tx, input.event);
       await this.releaseLease(tx, workflow.instance_id, input);
@@ -318,6 +323,10 @@ export class PostgresWorkflowStore implements WorkflowStore {
       .values({
         event_id: command.eventId,
         consumer_name: CONSUMER_NAME,
+        replay_generation: 0,
+        source_topic: null,
+        source_partition: null,
+        source_offset: null,
         payload_hash: canonicalSha256(command),
         received_at: now,
         // Set by `complete`, not here — an in-progress workflow must not look consumed.
@@ -338,6 +347,10 @@ export class PostgresWorkflowStore implements WorkflowStore {
         stage: 'accepted',
         // Zero because the claim in progress will immediately increment it to 1.
         attempt: 0,
+        stage_attempt: 0,
+        retry_started_at: null,
+        replay_generation: 0,
+        trace_context: command.traceContext,
         fencing_token: '0',
         provider_resource_id: null,
         provider_task_reference: null,
@@ -345,6 +358,8 @@ export class PostgresWorkflowStore implements WorkflowStore {
         failure_category: null,
         failure_code: null,
         failure_message: null,
+        last_error_category: null,
+        last_error_code: null,
         created_at: now,
         updated_at: now,
         completed_at: null,
@@ -415,11 +430,19 @@ export class PostgresWorkflowStore implements WorkflowStore {
     return tx
       .insertInto('workflow.outbox')
       .values({
+        outbox_id: randomUUID(),
         event_id: event.eventId,
         aggregate_id: event.aggregateId,
+        aggregate_type: event.aggregateType,
         schema_name: event.schemaName,
+        schema_version: event.schemaVersion,
+        topic: 'provisioning.events.v1',
+        partition_key: event.partitionKey,
         payload: event,
+        tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
+        replay_generation: 0,
         occurred_at: new Date(event.occurredAt),
+        created_at: new Date(),
       })
       .executeTakeFirst();
   }
