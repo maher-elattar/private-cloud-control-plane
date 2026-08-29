@@ -104,7 +104,9 @@ Expected outcomes:
 | Idempotent response | The same operator request was already accepted | Follow the returned replay request; do not generate another key |
 
 Replay preserves the original event ID and allocates a new delivery generation. The replay request
-has its own event ID and records actor, reason, correlation, and causation.
+has its own event ID and records actor, reason, correlation, and causation. In Tempo, search for the
+new `controlplane.replay.request` span and inspect its link to the original failed trace. The replay
+span must not appear as a child of that completed trace.
 
 ## Telemetry Checks
 
@@ -113,10 +115,15 @@ Prometheus metric names use its OpenTelemetry translation, for example:
 ```promql
 sum by (outbox_owner) (controlplane_outbox_pending)
 max by (outbox_owner) (controlplane_outbox_oldest_age_seconds)
+controlplane_workflow_active
+controlplane_workflow_oldest_ready_age_seconds
 histogram_quantile(0.95,
   sum by (le, messaging_destination_name)
     (rate(controlplane_messaging_queue_residence_seconds_bucket[5m])))
 sum by (event_schema_name, outcome) (rate(controlplane_messaging_processed_total[5m]))
+histogram_quantile(0.95,
+  sum by (le, event_schema_name)
+    (rate(controlplane_projection_event_age_seconds_bucket[5m])))
 sum(increase(controlplane_dead_letter_total[1h]))
 ```
 

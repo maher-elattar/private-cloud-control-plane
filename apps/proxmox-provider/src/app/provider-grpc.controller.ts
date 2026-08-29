@@ -171,7 +171,7 @@ export class ProviderGrpcController {
     let outcome = 'succeeded';
     try {
       return await withSpan(
-        'controlplane.provider.operation',
+        'controlplane.provider.adapter',
         { 'provider.operation': operation },
         handler,
       );

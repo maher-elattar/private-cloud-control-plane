@@ -20,9 +20,11 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
+  NOOP_APPLICATION_TELEMETRY,
   isInstanceCreateRequestedV1,
   toWorkflowStage,
   type ClaimedCreateWorkflow,
+  type ApplicationTelemetry,
   type MessageDeliveryIdentity,
   type WorkflowEvent,
   type WorkflowStore,
@@ -90,7 +92,10 @@ type Tx = Transaction<PostgresDatabase>;
  */
 export class PostgresWorkflowStore implements WorkflowStore {
   /** @param db Kysely client owned by the orchestrator's DI container. */
-  public constructor(private readonly db: PostgresClient) {}
+  public constructor(
+    private readonly db: PostgresClient,
+    private readonly telemetry: ApplicationTelemetry = NOOP_APPLICATION_TELEMETRY,
+  ) {}
 
   /** Records the Kafka delivery and creates a resumable workflow in one transaction. */
   public admitCreateCommand(
@@ -733,24 +738,29 @@ export class PostgresWorkflowStore implements WorkflowStore {
         deadLetteredAt: input.now.toISOString(),
       },
     };
-    await tx
-      .insertInto('workflow.outbox')
-      .values({
-        outbox_id: randomUUID(),
-        event_id: event.eventId,
-        aggregate_id: event.aggregateId,
-        aggregate_type: event.aggregateType,
-        schema_name: event.schemaName,
-        schema_version: event.schemaVersion,
-        topic: 'provisioning.dlq.v1',
-        partition_key: event.partitionKey,
-        payload: event,
-        tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
-        replay_generation: 0,
-        occurred_at: input.now,
-        created_at: input.now,
-      })
-      .executeTakeFirstOrThrow();
+    await this.telemetry.trace(
+      'controlplane.outbox.write',
+      { 'outbox.owner': 'workflow', 'event.schema.name': event.schemaName },
+      () =>
+        tx
+          .insertInto('workflow.outbox')
+          .values({
+            outbox_id: randomUUID(),
+            event_id: event.eventId,
+            aggregate_id: event.aggregateId,
+            aggregate_type: event.aggregateType,
+            schema_name: event.schemaName,
+            schema_version: event.schemaVersion,
+            topic: 'provisioning.dlq.v1',
+            partition_key: event.partitionKey,
+            payload: event,
+            tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
+            replay_generation: 0,
+            occurred_at: input.now,
+            created_at: input.now,
+          })
+          .executeTakeFirstOrThrow(),
+    );
   }
 
   /**
@@ -762,24 +772,29 @@ export class PostgresWorkflowStore implements WorkflowStore {
    * @see docs/architecture/glossary.md#transactional-outbox
    */
   private writeEvent(tx: Tx, event: WorkflowEvent): Promise<unknown> {
-    return tx
-      .insertInto('workflow.outbox')
-      .values({
-        outbox_id: randomUUID(),
-        event_id: event.eventId,
-        aggregate_id: event.aggregateId,
-        aggregate_type: event.aggregateType,
-        schema_name: event.schemaName,
-        schema_version: event.schemaVersion,
-        topic: 'provisioning.events.v1',
-        partition_key: event.partitionKey,
-        payload: event,
-        tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
-        replay_generation: 0,
-        occurred_at: new Date(event.occurredAt),
-        created_at: new Date(),
-      })
-      .executeTakeFirst();
+    return this.telemetry.trace(
+      'controlplane.outbox.write',
+      { 'outbox.owner': 'workflow', 'event.schema.name': event.schemaName },
+      () =>
+        tx
+          .insertInto('workflow.outbox')
+          .values({
+            outbox_id: randomUUID(),
+            event_id: event.eventId,
+            aggregate_id: event.aggregateId,
+            aggregate_type: event.aggregateType,
+            schema_name: event.schemaName,
+            schema_version: event.schemaVersion,
+            topic: 'provisioning.events.v1',
+            partition_key: event.partitionKey,
+            payload: event,
+            tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
+            replay_generation: 0,
+            occurred_at: new Date(event.occurredAt),
+            created_at: new Date(),
+          })
+          .executeTakeFirst(),
+    );
   }
 
   /**

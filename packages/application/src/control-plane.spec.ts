@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { DomainError } from '@private-cloud/domain';
 import { ControlPlaneApplication } from './control-plane.js';
 import type { ControlPlaneStore } from './ports.js';
+import type {
+  ApplicationTelemetry,
+  ApplicationTraceContext,
+  TelemetryAttributes,
+} from './telemetry.js';
 
 function store(): ControlPlaneStore {
   return {
@@ -13,6 +18,7 @@ function store(): ControlPlaneStore {
       replayed: false,
     }),
     listDeadLetters: vi.fn(),
+    getDeadLetterTraceContext: vi.fn().mockResolvedValue(null),
     requestDeadLetterReplay: vi.fn(),
     getProject: vi.fn(),
     getQuota: vi.fn(),
@@ -71,5 +77,58 @@ describe('ControlPlaneApplication', () => {
       }),
     ).rejects.toBeInstanceOf(DomainError);
     expect(repository.acceptCreate).not.toHaveBeenCalled();
+  });
+
+  it('starts replay in a new trace linked to the original failed trace', async () => {
+    const repository = store();
+    const failedTrace = {
+      traceparent: '00-11111111111111111111111111111111-2222222222222222-01',
+    };
+    vi.mocked(repository.getDeadLetterTraceContext).mockResolvedValue(failedTrace);
+    vi.mocked(repository.requestDeadLetterReplay).mockResolvedValue({
+      operationId: '40000000-0000-4000-8000-000000000001',
+      targetId: '20000000-0000-4000-8000-000000000001',
+      acceptedAt: '2026-08-26T00:00:00.000Z',
+      statusUrl: '/operations/40000000-0000-4000-8000-000000000001',
+      replayed: false,
+    });
+    const traceCalls = vi.fn();
+    const telemetry: ApplicationTelemetry = {
+      trace: async <T>(
+        name: string,
+        attributes: TelemetryAttributes,
+        operation: () => Promise<T>,
+        parent?: ApplicationTraceContext,
+        links?: readonly ApplicationTraceContext[],
+      ): Promise<T> => {
+        traceCalls(name, attributes, operation, parent, links);
+        return operation();
+      },
+      currentTraceContext: (fallback) => fallback,
+      commandAccepted: vi.fn(),
+      workflowTransition: vi.fn(),
+      workflowRetry: vi.fn(),
+    };
+    const application = new ControlPlaneApplication(repository, telemetry);
+
+    await application.requestDeadLetterReplay({
+      actor: { subject: 'admin-1', roles: ['platform_administrator'], projects: [] },
+      originalEventId: '60000000-0000-4000-8000-000000000001',
+      idempotencyKey: 'replay-event-01',
+      correlationId: '50000000-0000-4000-8000-000000000001',
+      traceparent: '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01',
+      reason: 'Provider recovered after the incident.',
+    });
+
+    expect(repository.getDeadLetterTraceContext).toHaveBeenCalledWith(
+      '60000000-0000-4000-8000-000000000001',
+    );
+    expect(traceCalls).toHaveBeenCalledWith(
+      'controlplane.replay.request',
+      { 'command.type': 'replay_dead_letter' },
+      expect.any(Function),
+      undefined,
+      [failedTrace],
+    );
   });
 });

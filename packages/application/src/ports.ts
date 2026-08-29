@@ -27,6 +27,7 @@ import type {
   WorkflowProgressedV1,
 } from '@private-cloud/contracts';
 import type { WorkflowStage } from './workflow-stage.js';
+import type { ApplicationTraceContext } from './telemetry.js';
 
 /*
  * The view types below are aliases of the generated OpenAPI schemas rather than hand-written
@@ -165,6 +166,8 @@ export interface ControlPlaneStore {
   acceptCreate(command: CreateInstanceCommand, requestHash: string): Promise<AcceptedMutation>;
   /** Lists projected dead-letter evidence for administrators. */
   listDeadLetters(limit: number): Promise<Page<DeadLetterView>>;
+  /** Reads the failed trace carrier used only to link a new administrative replay trace. */
+  getDeadLetterTraceContext(originalEventId: string): Promise<ApplicationTraceContext | null>;
   /** Atomically records replay intent and its outbox command. */
   requestDeadLetterReplay(
     command: ReplayDeadLetterCommand,

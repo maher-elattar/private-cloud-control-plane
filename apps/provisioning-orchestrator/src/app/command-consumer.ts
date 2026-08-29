@@ -28,6 +28,7 @@ import {
   recordQuarantine,
   recordReplay,
   structuredLog,
+  withSpan,
 } from '@private-cloud/observability';
 import { WORKFLOW_STORE } from './tokens';
 
@@ -93,7 +94,11 @@ export class CommandConsumer implements OnApplicationBootstrap, OnModuleDestroy 
     const envelope = decodeEventEnvelope(record.value);
     if (envelope.schemaName === 'instance.create.requested') {
       const command = createCommand(record);
-      const outcome = await this.store.admitCreateCommand(command, record.delivery);
+      const outcome = await withSpan(
+        'controlplane.transaction.command_admission',
+        { 'event.schema.name': command.schemaName },
+        () => this.store.admitCreateCommand(command, record.delivery),
+      );
       structuredLog('info', 'provisioning_command_admitted', {
         schema_name: command.schemaName,
         outcome,
@@ -108,7 +113,11 @@ export class CommandConsumer implements OnApplicationBootstrap, OnModuleDestroy 
     }
     if (envelope.schemaName === 'provisioning.replay.requested') {
       const request = replayRequest(record);
-      const outcome = await this.store.admitReplayRequest(request, record.delivery);
+      const outcome = await withSpan(
+        'controlplane.replay.decision',
+        { 'event.schema.name': request.schemaName },
+        () => this.store.admitReplayRequest(request, record.delivery),
+      );
       recordReplay(outcome);
       return {
         outcome: outcome === 'duplicate' ? 'duplicate' : 'handled',
@@ -149,22 +158,28 @@ export class CommandConsumer implements OnApplicationBootstrap, OnModuleDestroy 
       };
     }
 
+    const envelope = record.envelope;
     const replayAllowed =
       error.code === 'COMMAND_SCHEMA_UNSUPPORTED' &&
-      record.envelope.schemaName === 'instance.create.requested';
-    const outcome = await this.store.deadLetterCommand({
-      event: record.envelope,
-      delivery: record.delivery,
-      attempts,
-      failureCode: error.code,
-      safeMessage: 'The command schema is not supported by this consumer deployment.',
-      replayAllowed,
-    });
-    recordDeadLetter(record.envelope.schemaName, error.code, replayAllowed);
+      envelope.schemaName === 'instance.create.requested';
+    const outcome = await withSpan(
+      'controlplane.dead_letter.persist',
+      { 'event.schema.name': envelope.schemaName, 'failure.code': error.code },
+      () =>
+        this.store.deadLetterCommand({
+          event: envelope,
+          delivery: record.delivery,
+          attempts,
+          failureCode: error.code,
+          safeMessage: 'The command schema is not supported by this consumer deployment.',
+          replayAllowed,
+        }),
+    );
+    recordDeadLetter(envelope.schemaName, error.code, replayAllowed);
     return {
       outcome: outcome === 'dead_lettered' ? 'dead_lettered' : 'duplicate',
-      schemaName: record.envelope.schemaName,
-      occurredAtMs: Date.parse(record.envelope.occurredAt),
+      schemaName: envelope.schemaName,
+      occurredAtMs: Date.parse(envelope.occurredAt),
     };
   }
 }

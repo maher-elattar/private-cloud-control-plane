@@ -106,9 +106,19 @@ export class PostgresProjectionStore implements ProjectionStore {
           operation_id: event.operationId,
           aggregate_id: event.aggregateId,
           document,
+          trace_context: event.traceContext,
           updated_at: new Date(event.occurredAt),
         })
-        .onConflict((conflict) => conflict.column('original_event_id').doNothing())
+        .onConflict((conflict) =>
+          conflict.column('original_event_id').doUpdateSet({
+            project_id: event.projectId,
+            operation_id: event.operationId,
+            aggregate_id: event.aggregateId,
+            document,
+            trace_context: event.traceContext,
+            updated_at: new Date(event.occurredAt),
+          }),
+        )
         .executeTakeFirst();
       return 'applied';
     });

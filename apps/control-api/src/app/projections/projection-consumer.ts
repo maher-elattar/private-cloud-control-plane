@@ -28,6 +28,7 @@ import {
   recordProjectionDuration,
   recordQuarantine,
   structuredLog,
+  withSpan,
 } from '@private-cloud/observability';
 import { PROJECTION_STORE } from '../tokens';
 
@@ -100,8 +101,17 @@ export class ProjectionConsumer implements OnApplicationBootstrap, OnModuleDestr
     const started = performance.now();
     if (record.delivery.topic === EVENT_TOPIC) {
       const event = workflowEvent(record);
-      const outcome = await this.store.applyWorkflowEvent(event, record.delivery);
-      recordProjectionDuration(event.schemaName, outcome, (performance.now() - started) / 1_000);
+      const outcome = await withSpan(
+        'controlplane.projection.apply',
+        { 'event.schema.name': event.schemaName },
+        () => this.store.applyWorkflowEvent(event, record.delivery),
+      );
+      recordProjectionDuration(
+        event.schemaName,
+        outcome,
+        (performance.now() - started) / 1_000,
+        Date.parse(event.occurredAt),
+      );
       structuredLog('info', 'workflow_event_projected', {
         schema_name: event.schemaName,
         outcome,
@@ -115,8 +125,17 @@ export class ProjectionConsumer implements OnApplicationBootstrap, OnModuleDestr
       };
     }
     const event = deadLetterEvent(record);
-    const outcome = await this.store.applyDeadLetterEvent(event, record.delivery);
-    recordProjectionDuration(event.schemaName, outcome, (performance.now() - started) / 1_000);
+    const outcome = await withSpan(
+      'controlplane.projection.apply',
+      { 'event.schema.name': event.schemaName },
+      () => this.store.applyDeadLetterEvent(event, record.delivery),
+    );
+    recordProjectionDuration(
+      event.schemaName,
+      outcome,
+      (performance.now() - started) / 1_000,
+      Date.parse(event.occurredAt),
+    );
     return {
       outcome: outcome === 'applied' ? 'handled' : 'duplicate',
       schemaName: event.schemaName,

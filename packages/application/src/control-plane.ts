@@ -276,29 +276,31 @@ export class ControlPlaneApplication {
   }
 
   /** Accepts attributed replay intent; the original command is restored asynchronously. */
-  public requestDeadLetterReplay(input: ReplayDeadLetterInput): Promise<AcceptedMutation> {
-    return this.telemetry.trace(
-      'controlplane.command.accept',
-      { 'command.type': 'replay_dead_letter' },
-      async () => {
-        try {
-          this.authorizeAdministrator(input.actor);
-          if (
-            input.idempotencyKey.length < IDEMPOTENCY_KEY_MINIMUM_LENGTH ||
-            input.idempotencyKey.length > IDEMPOTENCY_KEY_MAXIMUM_LENGTH
-          ) {
-            throw new DomainError(
-              'VALIDATION_FAILED',
-              'Idempotency key must contain 8 to 128 characters.',
-            );
-          }
-          const reason = input.reason.trim();
-          if (reason.length < 10 || reason.length > 512) {
-            throw new DomainError(
-              'VALIDATION_FAILED',
-              'Replay reason must contain 10 to 512 characters.',
-            );
-          }
+  public async requestDeadLetterReplay(input: ReplayDeadLetterInput): Promise<AcceptedMutation> {
+    try {
+      this.authorizeAdministrator(input.actor);
+      if (
+        input.idempotencyKey.length < IDEMPOTENCY_KEY_MINIMUM_LENGTH ||
+        input.idempotencyKey.length > IDEMPOTENCY_KEY_MAXIMUM_LENGTH
+      ) {
+        throw new DomainError(
+          'VALIDATION_FAILED',
+          'Idempotency key must contain 8 to 128 characters.',
+        );
+      }
+      const reason = input.reason.trim();
+      if (reason.length < 10 || reason.length > 512) {
+        throw new DomainError(
+          'VALIDATION_FAILED',
+          'Replay reason must contain 10 to 512 characters.',
+        );
+      }
+
+      const failedTrace = await this.store.getDeadLetterTraceContext(input.originalEventId);
+      return await this.telemetry.trace(
+        'controlplane.replay.request',
+        { 'command.type': 'replay_dead_letter' },
+        async () => {
           const activeTrace = this.telemetry.currentTraceContext({
             traceparent: input.traceparent,
             ...(input.tracestate ? { tracestate: input.tracestate } : {}),
@@ -318,12 +320,14 @@ export class ControlPlaneApplication {
             accepted.replayed ? 'replayed' : 'accepted',
           );
           return accepted;
-        } catch (error: unknown) {
-          this.telemetry.commandAccepted('replay_dead_letter', 'rejected');
-          throw error;
-        }
-      },
-    );
+        },
+        undefined,
+        failedTrace ? [failedTrace] : [],
+      );
+    } catch (error: unknown) {
+      this.telemetry.commandAccepted('replay_dead_letter', 'rejected');
+      throw error;
+    }
   }
 
   /**

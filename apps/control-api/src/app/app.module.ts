@@ -134,11 +134,13 @@ function requiredDatabaseUrl(): string {
     {
       provide: CONTROL_PLANE_APPLICATION,
       inject: [POSTGRES_DATABASE],
-      useFactory: (database: PostgresClient) =>
-        new ControlPlaneApplication(
-          new PostgresControlPlaneStore(database),
-          new OpenTelemetryApplicationTelemetry(),
-        ),
+      useFactory: (database: PostgresClient) => {
+        const telemetry = new OpenTelemetryApplicationTelemetry();
+        return new ControlPlaneApplication(
+          new PostgresControlPlaneStore(database, telemetry),
+          telemetry,
+        );
+      },
     },
     {
       provide: PROJECTION_STORE,

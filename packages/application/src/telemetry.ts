@@ -20,6 +20,7 @@ export interface ApplicationTelemetry {
     attributes: TelemetryAttributes,
     operation: () => Promise<T>,
     parent?: ApplicationTraceContext,
+    links?: readonly ApplicationTraceContext[],
   ): Promise<T>;
   /** Captures the active span carrier, falling back when telemetry is disabled. */
   currentTraceContext(fallback: ApplicationTraceContext): ApplicationTraceContext;

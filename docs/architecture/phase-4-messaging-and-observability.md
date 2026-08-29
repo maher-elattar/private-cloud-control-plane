@@ -116,6 +116,20 @@ envelope, Debezium carrier column, and workflow checkpoint. Consumers and resume
 restore that parent into short-lived spans. No span is held open while work waits in Kafka, sleeps for
 retry, or waits for a provider task.
 
+Administrative replay deliberately starts a new trace. The Control API retains the failed event's
+bounded W3C carrier in its dead-letter projection and adds that trace as a span link on
+`controlplane.replay.request`; it does not make completed failure work the parent of a later operator
+action. The new replay carrier is then persisted in the replay command and becomes the parent of the
+new delivery generation.
+
+Manual spans identify the business boundaries that driver instrumentation cannot infer:
+`controlplane.transaction.*`, `controlplane.outbox.write`,
+`controlplane.transaction.command_admission`, `controlplane.workflow.retry_decision`,
+`controlplane.dead_letter.persist`, `controlplane.replay.decision`,
+`controlplane.projection.apply`, `controlplane.provider.adapter`, and
+`controlplane.workflow.compensation_decision`. HTTP, gRPC, PostgreSQL, Undici, host, Node.js runtime,
+and event-loop signals remain enabled through standard OpenTelemetry instrumentations.
+
 Services export traces and metrics through OTLP to the Collector. The Collector batches traces into
 Tempo and exposes one Prometheus scrape endpoint. Applications do not push to Prometheus and do not
 depend on a telemetry backend for correctness. Alloy sends one-line JSON service logs to Loki;
@@ -132,13 +146,19 @@ The custom metric surface is deliberately low-cardinality:
 | `controlplane.outbox.pending` | How many owner outbox rows have no durable consumer result? |
 | `controlplane.outbox.oldest_age` | How old is the oldest pending owner record? |
 | `controlplane.workflow.transition`, `controlplane.workflow.retry` | How is workflow execution progressing? |
+| `controlplane.workflow.active`, `controlplane.workflow.oldest_ready.age` | How much non-terminal work exists, and how long has claimable work waited? |
 | `controlplane.provider.operation.duration` | How long do provider operations take by operation and outcome? |
 | `controlplane.projection.apply.duration` | How long do projection transactions take by schema and outcome? |
+| `controlplane.projection.event_age` | How stale is an event when its projection transaction completes? |
 | `controlplane.dead_letter`, `controlplane.quarantine`, `controlplane.replay` | Which governed recovery paths are active? |
 
 Metric attributes are bounded classifications only. Project, instance, operation, event, resource,
 provider-task, address, credential, and tenant-configuration values may be trace or restricted log
-fields where allowed, but are never metric labels.
+fields where allowed, but are never metric labels. One exact SDK view per custom instrument enforces
+its attribute allowlist and caps aggregation cardinality at 128 series. Messaging and event-age
+histograms use explicit boundaries from 5 ms through 15 minutes; provider and projection-operation
+histograms use boundaries from 5 ms through 60 seconds. These second-based boundaries are stable
+across OTLP export and Prometheus translation.
 
 ## Scope Boundary
 

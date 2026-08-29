@@ -23,12 +23,15 @@ import {
   createPostgresDatabase,
   PostgresWorkflowStore,
   readOutboxBacklog,
+  readWorkflowActivity,
   type PostgresClient,
 } from '@private-cloud/postgres-adapter';
 import {
+  OpenTelemetryApplicationTelemetry,
   shutdownTelemetry,
   structuredLog,
   updateOutboxBacklog,
+  updateWorkflowActivity,
 } from '@private-cloud/observability';
 import { AppController } from './app.controller';
 import { CommandConsumer } from './command-consumer';
@@ -86,8 +89,12 @@ class RuntimeLifecycle implements OnApplicationBootstrap, OnApplicationShutdown 
 
   private async refresh(): Promise<void> {
     try {
-      const backlog = await readOutboxBacklog(this.database, 'workflow');
+      const [backlog, activity] = await Promise.all([
+        readOutboxBacklog(this.database, 'workflow'),
+        readWorkflowActivity(this.database),
+      ]);
       updateOutboxBacklog('workflow', backlog.count, backlog.oldestAgeSeconds);
+      updateWorkflowActivity(activity.active, activity.oldestReadyAgeSeconds);
     } catch {
       structuredLog('warn', 'outbox_metrics_read_failed', { outbox_owner: 'workflow' });
     } finally {
@@ -122,7 +129,8 @@ const DEFAULT_PROVIDER_GRPC_DEADLINE_MS = 10_000;
     {
       provide: WORKFLOW_STORE,
       inject: [POSTGRES_DATABASE],
-      useFactory: (database: PostgresClient) => new PostgresWorkflowStore(database),
+      useFactory: (database: PostgresClient) =>
+        new PostgresWorkflowStore(database, new OpenTelemetryApplicationTelemetry()),
     },
     {
       provide: PROVIDER_CLIENT,

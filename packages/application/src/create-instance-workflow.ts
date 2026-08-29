@@ -502,59 +502,71 @@ export class CreateInstanceWorkflow {
     workflow: ClaimedCreateWorkflow,
     error: ProviderTransportError,
   ): Promise<void> {
-    const now = this.recovery.now?.() ?? new Date();
-    const retryStartedAt = workflow.retryStartedAt ?? now;
-    const stageAttempt = workflow.stageAttempt + 1;
-    const remainingBudgetMs = retryStartedAt.getTime() + RETRY_BUDGET_MS - now.getTime();
+    return this.telemetry.trace(
+      'controlplane.workflow.retry_decision',
+      { 'workflow.stage': workflow.stage, 'error.category': error.code },
+      async () => {
+        const now = this.recovery.now?.() ?? new Date();
+        const retryStartedAt = workflow.retryStartedAt ?? now;
+        const stageAttempt = workflow.stageAttempt + 1;
+        const remainingBudgetMs = retryStartedAt.getTime() + RETRY_BUDGET_MS - now.getTime();
 
-    if (stageAttempt >= MAXIMUM_RETRY_ATTEMPTS || remainingBudgetMs <= 0) {
-      const failure: InstanceMutationFailedV1['data']['failure'] = {
-        category: 'transient',
-        code: 'WORKFLOW_RETRY_EXHAUSTED',
-        safeMessage: 'The provider remained unavailable until the workflow retry policy expired.',
-      };
-      const event: InstanceMutationFailedV1 = {
-        ...this.envelope(workflow, 'instance.mutation.failed'),
-        data: {
-          action: 'create_instance',
-          failure,
-          compensationState: 'not_required',
-        },
-      };
-      await this.store.deadLetterWorkflow({
-        operationId: workflow.command.operationId,
-        workerId: this.workerId,
-        fencingToken: workflow.fencingToken,
-        attempts: stageAttempt,
-        failureCode: failure.code,
-        safeMessage: failure.safeMessage,
-        lastErrorCategory: 'provider_transport',
-        lastErrorCode: error.code,
-        event,
-      });
-      this.telemetry.workflowTransition(workflow.stage, 'failed');
-      return;
-    }
+        if (stageAttempt >= MAXIMUM_RETRY_ATTEMPTS || remainingBudgetMs <= 0) {
+          const failure: InstanceMutationFailedV1['data']['failure'] = {
+            category: 'transient',
+            code: 'WORKFLOW_RETRY_EXHAUSTED',
+            safeMessage:
+              'The provider remained unavailable until the workflow retry policy expired.',
+          };
+          const event: InstanceMutationFailedV1 = {
+            ...this.envelope(workflow, 'instance.mutation.failed'),
+            data: {
+              action: 'create_instance',
+              failure,
+              compensationState: 'not_required',
+            },
+          };
+          await this.telemetry.trace(
+            'controlplane.dead_letter.persist',
+            { 'event.schema.name': event.schemaName, 'failure.code': failure.code },
+            () =>
+              this.store.deadLetterWorkflow({
+                operationId: workflow.command.operationId,
+                workerId: this.workerId,
+                fencingToken: workflow.fencingToken,
+                attempts: stageAttempt,
+                failureCode: failure.code,
+                safeMessage: failure.safeMessage,
+                lastErrorCategory: 'provider_transport',
+                lastErrorCode: error.code,
+                event,
+              }),
+          );
+          this.telemetry.workflowTransition(workflow.stage, 'failed');
+          return;
+        }
 
-    const exponentialCeiling = Math.min(
-      RETRY_BACKOFF_CEILING_MS,
-      RETRY_BACKOFF_BASE_MS * 2 ** (stageAttempt - 1),
-    );
-    const random = this.recovery.random?.() ?? Math.random();
-    if (!Number.isFinite(random) || random < 0 || random >= 1) {
-      throw new Error('Workflow retry random source must return a value in [0, 1).');
-    }
-    const delayMs = Math.min(Math.floor(random * exponentialCeiling), remainingBudgetMs);
-    await this.progress(workflow, workflow.stage, {
-      nextAttemptAt: new Date(now.getTime() + delayMs),
-      operationState: 'retry_wait',
-      retry: {
-        attempt: stageAttempt,
-        startedAt: retryStartedAt,
-        errorCategory: 'provider_transport',
-        errorCode: error.code,
+        const exponentialCeiling = Math.min(
+          RETRY_BACKOFF_CEILING_MS,
+          RETRY_BACKOFF_BASE_MS * 2 ** (stageAttempt - 1),
+        );
+        const random = this.recovery.random?.() ?? Math.random();
+        if (!Number.isFinite(random) || random < 0 || random >= 1) {
+          throw new Error('Workflow retry random source must return a value in [0, 1).');
+        }
+        const delayMs = Math.min(Math.floor(random * exponentialCeiling), remainingBudgetMs);
+        await this.progress(workflow, workflow.stage, {
+          nextAttemptAt: new Date(now.getTime() + delayMs),
+          operationState: 'retry_wait',
+          retry: {
+            attempt: stageAttempt,
+            startedAt: retryStartedAt,
+            errorCategory: 'provider_transport',
+            errorCode: error.code,
+          },
+        });
       },
-    });
+    );
   }
 
   /**
@@ -592,25 +604,30 @@ export class CreateInstanceWorkflow {
         ...(options.nextAttemptAt ? { nextActionAt: options.nextAttemptAt.toISOString() } : {}),
       },
     };
-    await this.store.checkpoint({
-      operationId: workflow.command.operationId,
-      workerId: this.workerId,
-      fencingToken: workflow.fencingToken,
-      stage,
-      // Carry the existing resource ID forward when this transition does not supply one, so a
-      // later stage does not lose the handle to the VM that was already created.
-      ...(options.providerResourceId
-        ? { providerResourceId: options.providerResourceId }
-        : workflow.providerResourceId
-          ? { providerResourceId: workflow.providerResourceId }
-          : {}),
-      ...('providerTaskReference' in options
-        ? { providerTaskReference: options.providerTaskReference ?? null }
-        : {}),
-      ...(options.nextAttemptAt ? { nextAttemptAt: options.nextAttemptAt } : {}),
-      ...(options.retry ? { retry: options.retry } : {}),
-      event,
-    });
+    await this.telemetry.trace(
+      'controlplane.transaction.workflow_checkpoint',
+      { 'workflow.stage.from': workflow.stage, 'workflow.stage.to': stage },
+      () =>
+        this.store.checkpoint({
+          operationId: workflow.command.operationId,
+          workerId: this.workerId,
+          fencingToken: workflow.fencingToken,
+          stage,
+          // Carry the existing resource ID forward when this transition does not supply one, so a
+          // later stage does not lose the handle to the VM that was already created.
+          ...(options.providerResourceId
+            ? { providerResourceId: options.providerResourceId }
+            : workflow.providerResourceId
+              ? { providerResourceId: workflow.providerResourceId }
+              : {}),
+          ...('providerTaskReference' in options
+            ? { providerTaskReference: options.providerTaskReference ?? null }
+            : {}),
+          ...(options.nextAttemptAt ? { nextAttemptAt: options.nextAttemptAt } : {}),
+          ...(options.retry ? { retry: options.retry } : {}),
+          event,
+        }),
+    );
     this.telemetry.workflowTransition(workflow.stage, stage);
   }
 
@@ -656,13 +673,23 @@ export class CreateInstanceWorkflow {
         compensationState: status === 'manual_review' ? 'unsafe' : 'not_required',
       },
     };
-    await this.store.complete({
-      operationId: workflow.command.operationId,
-      workerId: this.workerId,
-      fencingToken: workflow.fencingToken,
-      status,
-      event,
-    });
+    await this.telemetry.trace(
+      'controlplane.workflow.compensation_decision',
+      { 'compensation.state': event.data.compensationState, 'workflow.outcome': status },
+      () =>
+        this.telemetry.trace(
+          'controlplane.transaction.workflow_completion',
+          { 'workflow.outcome': status },
+          () =>
+            this.store.complete({
+              operationId: workflow.command.operationId,
+              workerId: this.workerId,
+              fencingToken: workflow.fencingToken,
+              status,
+              event,
+            }),
+        ),
+    );
     this.telemetry.workflowTransition(workflow.stage, status);
   }
 

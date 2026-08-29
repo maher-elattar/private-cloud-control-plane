@@ -12,8 +12,11 @@
  * @see docs/architecture/phase-3-persistence.md
  */
 import { randomBytes, randomUUID } from 'node:crypto';
+import { NOOP_APPLICATION_TELEMETRY } from '@private-cloud/application';
 import type {
   AcceptedMutation,
+  ApplicationTelemetry,
+  ApplicationTraceContext,
   ControlPlaneStore,
   CreateInstanceCommand,
   DeadLetterView,
@@ -146,7 +149,10 @@ type Tx = Transaction<PostgresDatabase>;
  */
 export class PostgresControlPlaneStore implements ControlPlaneStore {
   /** @param db Kysely client owned by the calling service's DI container. */
-  public constructor(private readonly db: PostgresClient) {}
+  public constructor(
+    private readonly db: PostgresClient,
+    private readonly telemetry: ApplicationTelemetry = NOOP_APPLICATION_TELEMETRY,
+  ) {}
 
   /**
    * Commits a create request as durable intent, or replays a previous identical one.
@@ -162,20 +168,25 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     command: CreateInstanceCommand,
     requestHash: string,
   ): Promise<AcceptedMutation> {
-    return this.db.transaction().execute(async (tx) => {
-      await this.lockIdempotencyScope(tx, command);
+    return this.telemetry.trace(
+      'controlplane.transaction.accept_create',
+      { 'command.type': CREATE_INSTANCE_ACTION },
+      () =>
+        this.db.transaction().execute(async (tx) => {
+          await this.lockIdempotencyScope(tx, command);
 
-      const replayed = await this.findReplayedResponse(tx, command, requestHash);
-      if (replayed) return replayed;
+          const replayed = await this.findReplayedResponse(tx, command, requestHash);
+          if (replayed) return replayed;
 
-      const context = await this.loadAcceptanceContext(tx, command);
-      await this.assertQuotaHeadroom(tx, command, context);
-      const address = await this.reserveIpv4Address(tx, context);
+          const context = await this.loadAcceptanceContext(tx, command);
+          await this.assertQuotaHeadroom(tx, command, context);
+          const address = await this.reserveIpv4Address(tx, context);
 
-      const records = this.buildAcceptanceRecords(command, context, address);
-      await this.writeAcceptanceRecords(tx, command, context, records, requestHash);
-      return records.accepted;
-    });
+          const records = this.buildAcceptanceRecords(command, context, address);
+          await this.writeAcceptanceRecords(tx, command, context, records, requestHash);
+          return records.accepted;
+        }),
+    );
   }
 
   /** Lists the Kafka-projected dead-letter view without exposing original payloads. */
@@ -192,115 +203,115 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     };
   }
 
+  /** Reads only the bounded W3C carrier needed to link replay to the failed trace. */
+  public async getDeadLetterTraceContext(
+    originalEventId: string,
+  ): Promise<ApplicationTraceContext | null> {
+    const row = await this.db
+      .selectFrom('projection.dead_letters')
+      .select('trace_context')
+      .where('original_event_id', '=', originalEventId)
+      .executeTakeFirst();
+    return row?.trace_context ? parseJsonColumn<ApplicationTraceContext>(row.trace_context) : null;
+  }
+
   /** Persists attributed replay intent and its Debezium-routed command atomically. */
   public requestDeadLetterReplay(
     command: ReplayDeadLetterCommand,
     requestHash: string,
   ): Promise<AcceptedMutation> {
-    return this.db.transaction().execute(async (tx) => {
-      const scope = `${command.actor.subject}:replay_dead_letter:${command.idempotencyKey}`;
-      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))`.execute(tx);
+    return this.telemetry.trace(
+      'controlplane.transaction.request_replay',
+      { 'command.type': 'replay_dead_letter' },
+      () =>
+        this.db.transaction().execute(async (tx) => {
+          const scope = `${command.actor.subject}:replay_dead_letter:${command.idempotencyKey}`;
+          await sql`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))`.execute(tx);
 
-      const previous = await tx
-        .selectFrom('control.replay_requests')
-        .selectAll()
-        .where('actor_id', '=', command.actor.subject)
-        .where('idempotency_key', '=', command.idempotencyKey)
-        .executeTakeFirst();
-      const projected = await tx
-        .selectFrom('projection.dead_letters')
-        .select('document')
-        .where('original_event_id', '=', command.originalEventId)
-        .executeTakeFirst();
-      if (!projected) {
-        throw new DomainError('DEAD_LETTER_NOT_FOUND', 'The dead letter was not found.');
-      }
-      const deadLetter = parseJsonColumn<DeadLetterView>(projected.document);
-      if (previous) {
-        if (previous.request_hash !== requestHash) {
-          throw new DomainError(
-            'IDEMPOTENCY_CONFLICT',
-            'The idempotency key is already bound to different replay intent.',
-          );
-        }
-        return {
-          operationId: deadLetter.operationId,
-          targetId: deadLetter.aggregateId,
-          acceptedAt: toIsoTimestamp(previous.requested_at),
-          statusUrl: `/v1/projects/${deadLetter.projectId}/operations/${deadLetter.operationId}`,
-          replayed: true,
-        };
-      }
-      if (!deadLetter.replayAllowed) {
-        throw new DomainError('REPLAY_NOT_ALLOWED', 'This dead letter is not replayable.');
-      }
+          const previous = await tx
+            .selectFrom('control.replay_requests')
+            .selectAll()
+            .where('actor_id', '=', command.actor.subject)
+            .where('idempotency_key', '=', command.idempotencyKey)
+            .executeTakeFirst();
+          const projected = await tx
+            .selectFrom('projection.dead_letters')
+            .select('document')
+            .where('original_event_id', '=', command.originalEventId)
+            .executeTakeFirst();
+          if (!projected) {
+            throw new DomainError('DEAD_LETTER_NOT_FOUND', 'The dead letter was not found.');
+          }
+          const deadLetter = parseJsonColumn<DeadLetterView>(projected.document);
+          if (previous) {
+            if (previous.request_hash !== requestHash) {
+              throw new DomainError(
+                'IDEMPOTENCY_CONFLICT',
+                'The idempotency key is already bound to different replay intent.',
+              );
+            }
+            return {
+              operationId: deadLetter.operationId,
+              targetId: deadLetter.aggregateId,
+              acceptedAt: toIsoTimestamp(previous.requested_at),
+              statusUrl: `/v1/projects/${deadLetter.projectId}/operations/${deadLetter.operationId}`,
+              replayed: true,
+            };
+          }
+          if (!deadLetter.replayAllowed) {
+            throw new DomainError('REPLAY_NOT_ALLOWED', 'This dead letter is not replayable.');
+          }
 
-      const now = new Date();
-      const replayRequestId = randomUUID();
-      const event: ProvisioningReplayRequestedV1 = {
-        eventId: randomUUID(),
-        schemaName: 'provisioning.replay.requested',
-        schemaVersion: 1,
-        aggregateType: 'instance',
-        aggregateId: deadLetter.aggregateId,
-        projectId: deadLetter.projectId,
-        operationId: deadLetter.operationId,
-        correlationId: command.correlationId,
-        causationId: command.originalEventId,
-        occurredAt: now.toISOString(),
-        traceContext: {
-          traceparent: command.traceparent,
-          ...(command.tracestate ? { tracestate: command.tracestate } : {}),
-        },
-        partitionKey: deadLetter.aggregateId,
-        data: {
-          replayRequestId,
-          originalEventId: command.originalEventId,
-          requestedAt: now.toISOString(),
-        },
-      };
-      await tx
-        .insertInto('control.replay_requests')
-        .values({
-          id: replayRequestId,
-          original_event_id: command.originalEventId,
-          actor_id: command.actor.subject,
-          idempotency_key: command.idempotencyKey,
-          request_hash: requestHash,
-          reason: command.reason,
-          correlation_id: command.correlationId,
-          trace_context: event.traceContext,
-          status: 'accepted',
-          requested_at: now,
-          updated_at: now,
-        })
-        .executeTakeFirstOrThrow();
-      await tx
-        .insertInto('control.outbox')
-        .values({
-          outbox_id: randomUUID(),
-          event_id: event.eventId,
-          aggregate_id: event.aggregateId,
-          aggregate_type: event.aggregateType,
-          schema_name: event.schemaName,
-          schema_version: event.schemaVersion,
-          topic: 'provisioning.commands.v1',
-          partition_key: event.partitionKey,
-          payload: event,
-          tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
-          replay_generation: 0,
-          occurred_at: now,
-          created_at: now,
-        })
-        .executeTakeFirstOrThrow();
-      return {
-        operationId: deadLetter.operationId,
-        targetId: deadLetter.aggregateId,
-        acceptedAt: now.toISOString(),
-        statusUrl: `/v1/projects/${deadLetter.projectId}/operations/${deadLetter.operationId}`,
-        replayed: false,
-      };
-    });
+          const now = new Date();
+          const replayRequestId = randomUUID();
+          const event: ProvisioningReplayRequestedV1 = {
+            eventId: randomUUID(),
+            schemaName: 'provisioning.replay.requested',
+            schemaVersion: 1,
+            aggregateType: 'instance',
+            aggregateId: deadLetter.aggregateId,
+            projectId: deadLetter.projectId,
+            operationId: deadLetter.operationId,
+            correlationId: command.correlationId,
+            causationId: command.originalEventId,
+            occurredAt: now.toISOString(),
+            traceContext: {
+              traceparent: command.traceparent,
+              ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+            },
+            partitionKey: deadLetter.aggregateId,
+            data: {
+              replayRequestId,
+              originalEventId: command.originalEventId,
+              requestedAt: now.toISOString(),
+            },
+          };
+          await tx
+            .insertInto('control.replay_requests')
+            .values({
+              id: replayRequestId,
+              original_event_id: command.originalEventId,
+              actor_id: command.actor.subject,
+              idempotency_key: command.idempotencyKey,
+              request_hash: requestHash,
+              reason: command.reason,
+              correlation_id: command.correlationId,
+              trace_context: event.traceContext,
+              status: 'accepted',
+              requested_at: now,
+              updated_at: now,
+            })
+            .executeTakeFirstOrThrow();
+          await this.writeControlOutbox(tx, event, now);
+          return {
+            operationId: deadLetter.operationId,
+            targetId: deadLetter.aggregateId,
+            acceptedAt: now.toISOString(),
+            statusUrl: `/v1/projects/${deadLetter.projectId}/operations/${deadLetter.operationId}`,
+            replayed: false,
+          };
+        }),
+    );
   }
 
   /**
@@ -737,24 +748,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         expires_at: new Date(now.getTime() + IDEMPOTENCY_RECORD_TTL_MS),
       })
       .execute();
-    await tx
-      .insertInto('control.outbox')
-      .values({
-        outbox_id: randomUUID(),
-        event_id: records.eventId,
-        aggregate_id: instanceId,
-        aggregate_type: 'instance',
-        schema_name: 'instance.create.requested',
-        schema_version: 1,
-        topic: 'provisioning.commands.v1',
-        partition_key: instanceId,
-        payload: records.event,
-        tracingspancontext: serializeDebeziumTraceContext(records.event.traceContext),
-        replay_generation: 0,
-        occurred_at: now,
-        created_at: now,
-      })
-      .execute();
+    await this.writeControlOutbox(tx, records.event, now);
     await tx
       .insertInto('audit.entries')
       .values({
@@ -1005,5 +999,36 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       items: rows.map((row) => parseJsonColumn<OperationView>(row.document)),
       page: { limit, nextCursor: null },
     };
+  }
+
+  /** Appends a command under a dedicated child span inside its owning transaction. */
+  private writeControlOutbox(
+    tx: Tx,
+    event: InstanceCreateRequestedV1 | ProvisioningReplayRequestedV1,
+    now: Date,
+  ): Promise<unknown> {
+    return this.telemetry.trace(
+      'controlplane.outbox.write',
+      { 'outbox.owner': 'control', 'event.schema.name': event.schemaName },
+      () =>
+        tx
+          .insertInto('control.outbox')
+          .values({
+            outbox_id: randomUUID(),
+            event_id: event.eventId,
+            aggregate_id: event.aggregateId,
+            aggregate_type: event.aggregateType,
+            schema_name: event.schemaName,
+            schema_version: event.schemaVersion,
+            topic: 'provisioning.commands.v1',
+            partition_key: event.partitionKey,
+            payload: event,
+            tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
+            replay_generation: 0,
+            occurred_at: now,
+            created_at: now,
+          })
+          .executeTakeFirstOrThrow(),
+    );
   }
 }

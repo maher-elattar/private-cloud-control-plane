@@ -7,9 +7,9 @@ without recording concrete evidence.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: 2 - Complete telemetry semantics and application instrumentation
-- Last completed checkpoint: 1 - Durable retry, exhaustion, and recovery policy
-- Last Phase 4 commit: `a0bee75 feat: complete durable workflow recovery policy`
+- Current checkpoint: 3 - Complete event topology and audit publication
+- Last completed checkpoint: 2 - Complete telemetry semantics and application instrumentation
+- Last Phase 4 commit: pending checkpoint 2 commit
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -50,7 +50,7 @@ without recording concrete evidence.
 
 ### Checkpoint 2 - Complete telemetry semantics and application instrumentation
 
-- Status: In progress
+- Status: Complete
 - Required work:
   - Add administrative replay traces with a span link to the original failed trace.
   - Add injectable/in-memory trace and metric exporters for deterministic tests.
@@ -60,11 +60,31 @@ without recording concrete evidence.
   - Define explicit histogram boundaries and enforce metric attribute allowlists.
   - Verify standard HTTP, gRPC, PostgreSQL, process, runtime, and event-loop metrics.
 - Verification required: telemetry unit tests, exported-attribute tests, typecheck, lint, and build.
+- Evidence recorded 2026-08-30:
+  - Replay acceptance starts `controlplane.replay.request` as a new administrative trace with a
+    span link to the failed workflow trace retained in the Control API dead-letter projection.
+  - SDK-level in-memory exporter tests prove the replay link, exact histogram boundaries,
+    workflow gauges, and removal of a deliberately prohibited `event.id` metric attribute.
+  - Exact SDK views enforce per-instrument attribute allowlists and a 128-series cardinality cap;
+    HTTP, gRPC, PostgreSQL, Undici, host, runtime, and event-loop instrumentations are explicit.
+  - Named spans cover owner transactions, owner outbox writes, command admission, workflow
+    checkpoints and completion, retry decisions, DLQ persistence, replay decisions, projection
+    transactions, provider adapter calls, and compensation decisions.
+  - `controlplane.workflow.active`, `controlplane.workflow.oldest_ready.age`, and
+    `controlplane.projection.event_age` are implemented from authoritative scheduler and event
+    timestamps.
+  - Application tests pass 10 cases, observability tests pass 4 exporter-level cases, and provider
+    adapter tests pass 12 cases.
+  - Uncached typecheck, lint, and build pass for all six affected projects and their dependencies;
+    documentation validation passes for 48 Markdown files and required diagram artifacts.
+  - All four migrations and the Phase 3 seed apply cleanly to disposable PostgreSQL 16.10; schema
+    inspection confirms the projected dead-letter trace carrier column.
+- Review result: approved after removing one unnecessary non-null assertion; no blocking findings.
 - Planned commit: `feat: complete phase 4 telemetry coverage`
 
 ### Checkpoint 3 - Complete event topology and audit publication
 
-- Status: Pending
+- Status: In progress
 - Required work:
   - Publish `audit.recorded` facts transactionally from Control API and Orchestrator owner outboxes.
   - Preserve replay identity and trace semantics without fabricating Kafka coordinates.

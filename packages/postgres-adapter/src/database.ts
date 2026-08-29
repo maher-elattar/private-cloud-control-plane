@@ -312,6 +312,7 @@ interface ProjectionDeadLetterTable {
   operation_id: string;
   aggregate_id: string;
   document: Json<unknown>;
+  trace_context: Json<{ readonly traceparent: string; readonly tracestate?: string }> | null;
   updated_at: Timestamp;
 }
 

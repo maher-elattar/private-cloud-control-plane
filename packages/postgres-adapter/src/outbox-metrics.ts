@@ -7,6 +7,37 @@ export interface OutboxBacklog {
   readonly oldestAgeSeconds: number;
 }
 
+/** Snapshot consumed by workflow scheduler gauges. */
+export interface WorkflowActivity {
+  readonly active: number;
+  readonly oldestReadyAgeSeconds: number;
+}
+
+/** Reads non-terminal workflow count and the age of the oldest claimable checkpoint. */
+export async function readWorkflowActivity(db: PostgresClient): Promise<WorkflowActivity> {
+  const result = await sql<{ active: string; oldest_ready_age_seconds: string | null }>`
+    SELECT
+      count(*) FILTER (WHERE w.status IN ('running', 'retry_wait'))::text AS active,
+      extract(epoch FROM (
+        now() - min(w.next_attempt_at) FILTER (
+          WHERE w.status IN ('running', 'retry_wait')
+            AND w.next_attempt_at <= now()
+            AND (l.instance_id IS NULL OR l.leased_until <= now())
+        )
+      ))::text AS oldest_ready_age_seconds
+    FROM workflow.workflows w
+    LEFT JOIN workflow.instance_leases l ON l.instance_id = w.instance_id
+  `.execute(db);
+  const row = result.rows[0];
+  return {
+    active: Number.parseInt(row?.active ?? '0', 10),
+    oldestReadyAgeSeconds: Math.max(
+      0,
+      Number.parseFloat(row?.oldest_ready_age_seconds ?? '0') || 0,
+    ),
+  };
+}
+
 /** Reads one logical owner's unconsumed outbox backlog. */
 export async function readOutboxBacklog(
   db: PostgresClient,
