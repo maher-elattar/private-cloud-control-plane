@@ -1,0 +1,101 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum by (outbox_owner) (controlplane_outbox_pending)",
+          "legendFormat": "{{outbox_owner}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Pending outbox records",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "max by (outbox_owner) (controlplane_outbox_oldest_age_seconds)",
+          "legendFormat": "{{outbox_owner}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Oldest pending outbox age",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, messaging_destination_name) (rate(controlplane_messaging_queue_residence_seconds_bucket[5m])))",
+          "legendFormat": "{{messaging_destination_name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Queue residence p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum by (event_schema_name, outcome) (rate(controlplane_messaging_processed_total[5m]))",
+          "legendFormat": "{{event_schema_name}} / {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Message handling rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum(increase(controlplane_dead_letter_total[1h]))",
+          "legendFormat": "dead letters",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(controlplane_quarantine_total[1h]))",
+          "legendFormat": "quarantine",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(controlplane_workflow_retry_total[1h]))",
+          "legendFormat": "workflow retries",
+          "refId": "C"
+        }
+      ],
+      "title": "Recovery signals (1h)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 41,
+  "tags": ["private-cloud", "phase-4", "kafka", "opentelemetry"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "browser",
+  "title": "Private Cloud / Event Pipeline",
+  "uid": "private-cloud-phase4-event-pipeline",
+  "version": 1
+}

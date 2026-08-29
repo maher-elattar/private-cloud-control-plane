@@ -20,12 +20,20 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
+  isInstanceCreateRequestedV1,
   toWorkflowStage,
   type ClaimedCreateWorkflow,
+  type MessageDeliveryIdentity,
   type WorkflowEvent,
   type WorkflowStore,
 } from '@private-cloud/application';
-import type { InstanceCreateRequestedV1 } from '@private-cloud/contracts';
+import type {
+  EventEnvelope,
+  InstanceCreateRequestedV1,
+  ProvisioningDeadLetteredV1,
+  ProvisioningReplayResolvedV1,
+  ProvisioningReplayRequestedV1,
+} from '@private-cloud/contracts';
 import { canonicalSha256 } from '@private-cloud/domain';
 import { sql, type Transaction } from 'kysely';
 import { parseJsonColumn } from './column-codec.js';
@@ -33,7 +41,7 @@ import type { PostgresClient, PostgresDatabase } from './database.js';
 import { serializeDebeziumTraceContext } from './trace-carrier.js';
 
 /** Identifies this consumer in `workflow.command_receipts`. */
-const CONSUMER_NAME = 'provisioning-orchestrator.phase3';
+const CONSUMER_NAME = 'provisioning-orchestrator.v1';
 
 /** Shortest lease a caller may request. Below this, normal provider latency outlives it. */
 const MINIMUM_LEASE_SECONDS = 5;
@@ -48,21 +56,11 @@ const MAXIMUM_LEASE_SECONDS = 300;
  * cheaper than discovering a missing field midway through provisioning, when a VM may already
  * exist.
  *
- * @throws Error if the payload is not a well-formed create command.
+ * Returns `null` while the current deployment does not support the stored command contract.
  */
-function createCommand(value: unknown): InstanceCreateRequestedV1 {
-  const command = parseJsonColumn<Partial<InstanceCreateRequestedV1>>(value);
-  if (
-    command.schemaName !== 'instance.create.requested' ||
-    !command.eventId ||
-    !command.operationId ||
-    !command.aggregateId ||
-    !command.projectId ||
-    !command.data
-  ) {
-    throw new Error('The create-instance outbox command is malformed.');
-  }
-  return command as InstanceCreateRequestedV1;
+function createCommand(value: unknown): InstanceCreateRequestedV1 | null {
+  const command = parseJsonColumn<EventEnvelope & { readonly data?: unknown }>(value);
+  return isInstanceCreateRequestedV1(command) ? command : null;
 }
 
 /** A row of `workflow.workflows` as returned by the raw claim queries. */
@@ -74,15 +72,10 @@ interface WorkflowRow {
   readonly stage: string;
   readonly attempt: number;
   readonly replay_generation: number;
+  readonly trace_context: unknown;
   readonly fencing_token: string;
   readonly provider_resource_id: string | null;
   readonly provider_task_reference: string | null;
-}
-
-/** An unconsumed command row read from `control.outbox`. */
-interface CommandRow {
-  readonly event_id: string;
-  readonly payload: unknown;
 }
 
 /** Open transaction handle passed between the private steps. */
@@ -96,6 +89,202 @@ type Tx = Transaction<PostgresDatabase>;
 export class PostgresWorkflowStore implements WorkflowStore {
   /** @param db Kysely client owned by the orchestrator's DI container. */
   public constructor(private readonly db: PostgresClient) {}
+
+  /** Records the Kafka delivery and creates a resumable workflow in one transaction. */
+  public admitCreateCommand(
+    command: InstanceCreateRequestedV1,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'accepted' | 'duplicate'> {
+    return this.db.transaction().execute((tx) => this.admitCommand(tx, command, delivery));
+  }
+
+  /** Restores an approved dead letter with a new generation but the original event identity. */
+  public admitReplayRequest(
+    request: ProvisioningReplayRequestedV1,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'accepted' | 'duplicate' | 'rejected'> {
+    return this.db.transaction().execute(async (tx) => {
+      const now = new Date();
+      const receipt = await this.insertCommandReceipt(tx, request, delivery, now, true);
+      if (!receipt) return 'duplicate';
+
+      const deadLetter = await tx
+        .selectFrom('workflow.dead_letters')
+        .selectAll()
+        .where('original_event_id', '=', request.data.originalEventId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!deadLetter || !deadLetter.replay_allowed || deadLetter.status === 'closed') {
+        throw new Error('Replay request does not reference an open replayable dead letter.');
+      }
+      if (deadLetter.status === 'replayed') {
+        await this.writeReplayResolution(
+          tx,
+          request,
+          'rejected',
+          deadLetter.replay_generation,
+          now,
+        );
+        return 'rejected';
+      }
+
+      const original = createCommand(deadLetter.original_payload);
+      if (!original) {
+        // A replay may be requested before the deployment that understands the original schema is
+        // live. Consume this request deterministically, leave the dead letter open, and require a
+        // fresh attributed request after compatibility has been deployed.
+        await this.writeReplayResolution(
+          tx,
+          request,
+          'rejected',
+          deadLetter.replay_generation,
+          now,
+        );
+        return 'rejected';
+      }
+      const replayGeneration = deadLetter.replay_generation + 1;
+      const replayed: InstanceCreateRequestedV1 = {
+        ...original,
+        correlationId: request.correlationId,
+        causationId: request.eventId,
+        traceContext: request.traceContext,
+      };
+      const outcome = await this.admitCommand(
+        tx,
+        replayed,
+        { ...delivery, replayGeneration },
+        false,
+      );
+      if (outcome === 'accepted') {
+        await tx
+          .updateTable('workflow.dead_letters')
+          .set({
+            replay_generation: replayGeneration,
+            status: 'replayed',
+            last_replay_at: now,
+          })
+          .where('original_event_id', '=', original.eventId)
+          .executeTakeFirstOrThrow();
+        await this.writeReplayResolution(tx, request, 'completed', replayGeneration, now);
+        return 'accepted';
+      }
+      await this.writeReplayResolution(tx, request, 'rejected', deadLetter.replay_generation, now);
+      return 'rejected';
+    });
+  }
+
+  /** Quarantines an undecodable record by hash and broker coordinates, never by raw value. */
+  public quarantineRecord(
+    input: Parameters<WorkflowStore['quarantineRecord']>[0],
+  ): Promise<'quarantined' | 'duplicate'> {
+    return this.db.transaction().execute(async (tx) => {
+      const inserted = await tx
+        .insertInto('workflow.poison_records')
+        .values({
+          id: randomUUID(),
+          consumer_name: CONSUMER_NAME,
+          source_topic: input.delivery.topic,
+          source_partition: input.delivery.partition,
+          source_offset: input.delivery.offset,
+          payload_hash: input.payloadHash,
+          failure_code: input.failureCode,
+          safe_message: input.safeMessage,
+          quarantined_at: new Date(),
+        })
+        .onConflict((conflict) =>
+          conflict
+            .columns(['consumer_name', 'source_topic', 'source_partition', 'source_offset'])
+            .doNothing(),
+        )
+        .returning('id')
+        .executeTakeFirst();
+      return inserted ? 'quarantined' : 'duplicate';
+    });
+  }
+
+  /** Stores DLQ evidence and publishes its governed event through the workflow outbox. */
+  public deadLetterCommand(
+    input: Parameters<WorkflowStore['deadLetterCommand']>[0],
+  ): Promise<'dead_lettered' | 'duplicate'> {
+    return this.db.transaction().execute(async (tx) => {
+      const deadLetterEventId = randomUUID();
+      const now = new Date();
+      const receipt = await this.insertCommandReceipt(tx, input.event, input.delivery, now, true);
+      if (!receipt) return 'duplicate';
+      const inserted = await tx
+        .insertInto('workflow.dead_letters')
+        .values({
+          original_event_id: input.event.eventId,
+          dead_letter_event_id: deadLetterEventId,
+          original_schema_name: input.event.schemaName,
+          original_schema_version: input.event.schemaVersion,
+          aggregate_id: input.event.aggregateId,
+          project_id: input.event.projectId,
+          operation_id: input.event.operationId,
+          original_payload: input.event,
+          failure_category: 'permanent',
+          failure_code: input.failureCode,
+          safe_message: input.safeMessage,
+          attempts: input.attempts,
+          replay_allowed: input.replayAllowed,
+          replay_generation: 0,
+          status: 'open',
+          dead_lettered_at: now,
+          last_replay_at: null,
+        })
+        .onConflict((conflict) => conflict.column('original_event_id').doNothing())
+        .returning('original_event_id')
+        .executeTakeFirst();
+      if (!inserted) return 'duplicate';
+
+      const event: ProvisioningDeadLetteredV1 = {
+        eventId: deadLetterEventId,
+        schemaName: 'provisioning.dead_lettered',
+        schemaVersion: 1,
+        aggregateType: 'instance',
+        aggregateId: input.event.aggregateId,
+        projectId: input.event.projectId,
+        operationId: input.event.operationId,
+        correlationId: input.event.correlationId,
+        causationId: input.event.eventId,
+        occurredAt: now.toISOString(),
+        traceContext: input.event.traceContext,
+        partitionKey: input.event.partitionKey,
+        data: {
+          originalEventId: input.event.eventId,
+          originalSchemaName: input.event.schemaName,
+          originalSchemaVersion: input.event.schemaVersion,
+          failure: {
+            category: 'permanent',
+            code: input.failureCode,
+            safeMessage: input.safeMessage,
+          },
+          attempts: input.attempts,
+          replayAllowed: input.replayAllowed,
+          deadLetteredAt: now.toISOString(),
+        },
+      };
+      await tx
+        .insertInto('workflow.outbox')
+        .values({
+          outbox_id: randomUUID(),
+          event_id: event.eventId,
+          aggregate_id: event.aggregateId,
+          aggregate_type: event.aggregateType,
+          schema_name: event.schemaName,
+          schema_version: event.schemaVersion,
+          topic: 'provisioning.dlq.v1',
+          partition_key: event.partitionKey,
+          payload: event,
+          tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
+          replay_generation: 0,
+          occurred_at: now,
+          created_at: now,
+        })
+        .executeTakeFirstOrThrow();
+      return 'dead_lettered';
+    });
+  }
 
   /**
    * Claims the next ready workflow, admitting a new command if none is in flight.
@@ -128,8 +317,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
     return this.db.transaction().execute(async (tx) => {
       // In-flight work first, so a backlog of new commands cannot starve workflows that have
       // already started — and already have a VM part-built on the provider.
-      let workflow = await this.readyWorkflow(tx, workerId);
-      if (!workflow) workflow = await this.receiveCommand(tx);
+      const workflow = await this.readyWorkflow(tx, workerId);
       if (!workflow) return null;
 
       const lease = await sql<{ fencing_token: string }>`
@@ -164,9 +352,18 @@ export class PostgresWorkflowStore implements WorkflowStore {
         .where('operation_id', '=', workflow.operation_id)
         .returningAll()
         .executeTakeFirstOrThrow();
+      const command = createCommand(claimed.command);
+      if (!command) {
+        // Workflow rows are admitted only after validation. Reaching this branch means stored
+        // state was corrupted or written by an incompatible deployment, so no provider call is safe.
+        throw new Error('The persisted create workflow is not supported by this deployment.');
+      }
 
       return {
-        command: createCommand(claimed.command),
+        command,
+        traceContext: parseJsonColumn<InstanceCreateRequestedV1['traceContext']>(
+          claimed.trace_context,
+        ),
         stage: toWorkflowStage(claimed.stage),
         attempt: claimed.attempt,
         // `bigint` because the token is a Postgres `bigint` and must not lose precision; the
@@ -209,6 +406,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
             ? { provider_task_reference: input.providerTaskReference ?? null }
             : {}),
           next_attempt_at: nextAttemptAt,
+          trace_context: input.event.traceContext,
           updated_at: new Date(),
         })
         .where('operation_id', '=', input.operationId)
@@ -247,6 +445,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
           failure_category: failed?.category ?? null,
           failure_code: failed?.code ?? null,
           failure_message: failed?.safeMessage ?? null,
+          trace_context: input.event.traceContext,
           completed_at: now,
           updated_at: now,
         })
@@ -288,52 +487,28 @@ export class PostgresWorkflowStore implements WorkflowStore {
     return result.rows[0] ?? null;
   }
 
-  /**
-   * Admits one accepted command from the outbox and turns it into a workflow.
-   *
-   * PATTERN — Inbox. The `NOT EXISTS` against `command_receipts` is what makes admission
-   * exactly-once: a command already seen has a receipt and is never selected again, no matter
-   * how many times it is delivered.
-   *
-   * `payload_hash` stores a canonical hash of the command, so a redelivery whose *content*
-   * differs can be detected rather than silently accepted.
-   *
-   * In Phase 4 this method's role is taken over by Kafka consumption. The receipts table, the
-   * hash, and the exactly-once property stay exactly as they are.
-   */
-  private async receiveCommand(tx: Tx): Promise<WorkflowRow | null> {
-    const result = await sql<CommandRow>`
-      SELECT o.event_id, o.payload
-      FROM control.outbox o
-      WHERE o.schema_name = 'instance.create.requested'
-        AND NOT EXISTS (
-          SELECT 1 FROM workflow.command_receipts r WHERE r.event_id = o.event_id
-        )
-      ORDER BY o.occurred_at, o.event_id
-      FOR UPDATE OF o SKIP LOCKED
-      LIMIT 1
-    `.execute(tx);
-    const row = result.rows[0];
-    if (!row) return null;
-
-    const command = createCommand(row.payload);
+  /** Inserts the command inbox receipt and initial workflow as one atomic admission. */
+  private async admitCommand(
+    tx: Tx,
+    command: InstanceCreateRequestedV1,
+    delivery: MessageDeliveryIdentity,
+    sourceCoordinates = true,
+  ): Promise<'accepted' | 'duplicate'> {
     const now = new Date();
+    const existing = await tx
+      .selectFrom('workflow.workflows')
+      .select('operation_id')
+      .where('operation_id', '=', command.operationId)
+      .executeTakeFirst();
+    if (existing) {
+      await this.insertCommandReceipt(tx, command, delivery, now, sourceCoordinates);
+      return 'duplicate';
+    }
+
+    const receipt = await this.insertCommandReceipt(tx, command, delivery, null, sourceCoordinates);
+    if (!receipt) return 'duplicate';
+
     await tx
-      .insertInto('workflow.command_receipts')
-      .values({
-        event_id: command.eventId,
-        consumer_name: CONSUMER_NAME,
-        replay_generation: 0,
-        source_topic: null,
-        source_partition: null,
-        source_offset: null,
-        payload_hash: canonicalSha256(command),
-        received_at: now,
-        // Set by `complete`, not here — an in-progress workflow must not look consumed.
-        completed_at: null,
-      })
-      .execute();
-    return tx
       .insertInto('workflow.workflows')
       .values({
         operation_id: command.operationId,
@@ -349,7 +524,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         attempt: 0,
         stage_attempt: 0,
         retry_started_at: null,
-        replay_generation: 0,
+        replay_generation: delivery.replayGeneration,
         trace_context: command.traceContext,
         fencing_token: '0',
         provider_resource_id: null,
@@ -364,8 +539,69 @@ export class PostgresWorkflowStore implements WorkflowStore {
         updated_at: now,
         completed_at: null,
       })
-      .returningAll()
       .executeTakeFirstOrThrow();
+    return 'accepted';
+  }
+
+  /** Inserts one physical or governed logical command receipt. */
+  private async insertCommandReceipt(
+    tx: Tx,
+    event: EventEnvelope,
+    delivery: MessageDeliveryIdentity,
+    completedAt: Date | null,
+    sourceCoordinates: boolean,
+  ): Promise<boolean> {
+    const receipt = await tx
+      .insertInto('workflow.command_receipts')
+      .values({
+        event_id: event.eventId,
+        consumer_name: CONSUMER_NAME,
+        replay_generation: delivery.replayGeneration,
+        source_topic: sourceCoordinates ? delivery.topic : null,
+        source_partition: sourceCoordinates ? delivery.partition : null,
+        source_offset: sourceCoordinates ? delivery.offset : null,
+        payload_hash: canonicalSha256(event),
+        received_at: new Date(),
+        completed_at: completedAt,
+      })
+      .onConflict((conflict) =>
+        conflict.columns(['consumer_name', 'event_id', 'replay_generation']).doNothing(),
+      )
+      .returning('event_id')
+      .executeTakeFirst();
+    return Boolean(receipt);
+  }
+
+  /** Publishes replay resolution without writing state owned by the Control API. */
+  private writeReplayResolution(
+    tx: Tx,
+    request: ProvisioningReplayRequestedV1,
+    outcome: ProvisioningReplayResolvedV1['data']['outcome'],
+    replayGeneration: number,
+    resolvedAt: Date,
+  ): Promise<unknown> {
+    const event: ProvisioningReplayResolvedV1 = {
+      eventId: randomUUID(),
+      schemaName: 'provisioning.replay.resolved',
+      schemaVersion: 1,
+      aggregateType: 'instance',
+      aggregateId: request.aggregateId,
+      projectId: request.projectId,
+      operationId: request.operationId,
+      correlationId: request.correlationId,
+      causationId: request.eventId,
+      occurredAt: resolvedAt.toISOString(),
+      traceContext: request.traceContext,
+      partitionKey: request.partitionKey,
+      data: {
+        replayRequestId: request.data.replayRequestId,
+        originalEventId: request.data.originalEventId,
+        outcome,
+        replayGeneration,
+        resolvedAt: resolvedAt.toISOString(),
+      },
+    };
+    return this.writeEvent(tx, event);
   }
 
   /**

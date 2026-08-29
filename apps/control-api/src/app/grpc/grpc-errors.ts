@@ -33,6 +33,8 @@ const STATUS_BY_HTTP_CODE: Readonly<Record<number, status>> = {
  * are retryable-after-a-change, which is what those codes signal to a generated client.
  */
 const STATUS_BY_DOMAIN_CODE: Readonly<Record<DomainError['code'], status>> = {
+  ADMIN_REQUIRED: status.PERMISSION_DENIED,
+  DEAD_LETTER_NOT_FOUND: status.NOT_FOUND,
   IDEMPOTENCY_CONFLICT: status.ALREADY_EXISTS,
   INSTANCE_BUSY: status.ABORTED,
   INSTANCE_NOT_FOUND: status.NOT_FOUND,
@@ -41,6 +43,7 @@ const STATUS_BY_DOMAIN_CODE: Readonly<Record<DomainError['code'], status>> = {
   PROJECT_ACCESS_DENIED: status.PERMISSION_DENIED,
   PROJECT_NOT_FOUND: status.NOT_FOUND,
   QUOTA_EXCEEDED: status.RESOURCE_EXHAUSTED,
+  REPLAY_NOT_ALLOWED: status.FAILED_PRECONDITION,
   VALIDATION_FAILED: status.INVALID_ARGUMENT,
 };
 

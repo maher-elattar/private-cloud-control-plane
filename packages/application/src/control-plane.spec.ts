@@ -12,6 +12,8 @@ function store(): ControlPlaneStore {
       statusUrl: '/operations/40000000-0000-4000-8000-000000000001',
       replayed: false,
     }),
+    listDeadLetters: vi.fn(),
+    requestDeadLetterReplay: vi.fn(),
     getProject: vi.fn(),
     getQuota: vi.fn(),
     listImages: vi.fn(),

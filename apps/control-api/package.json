@@ -12,6 +12,8 @@
     "@private-cloud/application": "workspace:*",
     "@private-cloud/contracts": "workspace:*",
     "@private-cloud/domain": "workspace:*",
+    "@private-cloud/messaging": "workspace:*",
+    "@private-cloud/observability": "workspace:*",
     "@private-cloud/postgres-adapter": "workspace:*",
     "class-transformer": "0.5.1",
     "class-validator": "0.14.3",

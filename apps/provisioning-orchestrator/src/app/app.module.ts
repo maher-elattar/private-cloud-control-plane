@@ -12,13 +12,26 @@
  * @see docs/security/trust-boundaries.md
  * @see docs/architecture/glossary.md#ports-and-adapters-hexagonal-architecture
  */
-import { Inject, Injectable, Module, type OnApplicationShutdown } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Module,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+} from '@nestjs/common';
 import {
   createPostgresDatabase,
   PostgresWorkflowStore,
+  readOutboxBacklog,
   type PostgresClient,
 } from '@private-cloud/postgres-adapter';
+import {
+  shutdownTelemetry,
+  structuredLog,
+  updateOutboxBacklog,
+} from '@private-cloud/observability';
 import { AppController } from './app.controller';
+import { CommandConsumer } from './command-consumer';
 import { GrpcProviderClient } from './grpc-provider.client';
 import { ProvisioningWorker } from './provisioning-worker';
 import { POSTGRES_DATABASE, PROVIDER_CLIENT, WORKFLOW_STORE } from './tokens';
@@ -37,7 +50,10 @@ function requiredDatabaseUrl(): string {
  * the pool drains whatever checkpoint was already in flight.
  */
 @Injectable()
-class RuntimeLifecycle implements OnApplicationShutdown {
+class RuntimeLifecycle implements OnApplicationBootstrap, OnApplicationShutdown {
+  private timer: NodeJS.Timeout | undefined;
+  private current: Promise<void> | undefined;
+  private stopping = false;
   /**
    * @param database Shared connection pool.
    * @param provider gRPC channel to the provider service.
@@ -47,10 +63,36 @@ class RuntimeLifecycle implements OnApplicationShutdown {
     @Inject(PROVIDER_CLIENT) private readonly provider: GrpcProviderClient,
   ) {}
 
+  public onApplicationBootstrap(): void {
+    this.schedule(0);
+  }
+
   /** Stops new provider calls, then drains the pool. */
   public async onApplicationShutdown(): Promise<void> {
+    this.stopping = true;
+    if (this.timer) clearTimeout(this.timer);
+    await this.current;
     this.provider.close();
     await this.database.destroy();
+    await shutdownTelemetry();
+  }
+
+  private schedule(delay: number): void {
+    if (this.stopping) return;
+    this.timer = setTimeout(() => {
+      this.current = this.refresh();
+    }, delay);
+  }
+
+  private async refresh(): Promise<void> {
+    try {
+      const backlog = await readOutboxBacklog(this.database, 'workflow');
+      updateOutboxBacklog('workflow', backlog.count, backlog.oldestAgeSeconds);
+    } catch {
+      structuredLog('warn', 'outbox_metrics_read_failed', { outbox_owner: 'workflow' });
+    } finally {
+      this.schedule(2_000);
+    }
   }
 }
 
@@ -91,6 +133,7 @@ const DEFAULT_PROVIDER_GRPC_DEADLINE_MS = 10_000;
         ),
     },
     ProvisioningWorker,
+    CommandConsumer,
     RuntimeLifecycle,
   ],
 })

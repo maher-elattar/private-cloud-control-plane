@@ -1,0 +1,8 @@
+{
+  "name": "observability",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/observability/src",
+  "projectType": "library",
+  "tags": ["type:lib", "layer:adapter", "visibility:production"],
+  "targets": {}
+}

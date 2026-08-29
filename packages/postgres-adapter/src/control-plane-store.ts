@@ -16,6 +16,7 @@ import type {
   AcceptedMutation,
   ControlPlaneStore,
   CreateInstanceCommand,
+  DeadLetterView,
   FlavorView,
   ImageView,
   InstanceView,
@@ -24,8 +25,12 @@ import type {
   Page,
   ProjectView,
   QuotaView,
+  ReplayDeadLetterCommand,
 } from '@private-cloud/application';
-import type { InstanceCreateRequestedV1 } from '@private-cloud/contracts';
+import type {
+  InstanceCreateRequestedV1,
+  ProvisioningReplayRequestedV1,
+} from '@private-cloud/contracts';
 import { allocateIpv4, DomainError } from '@private-cloud/domain';
 import { sql, type Transaction } from 'kysely';
 import { parseJsonColumn, toIsoTimestamp } from './column-codec.js';
@@ -170,6 +175,131 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       const records = this.buildAcceptanceRecords(command, context, address);
       await this.writeAcceptanceRecords(tx, command, context, records, requestHash);
       return records.accepted;
+    });
+  }
+
+  /** Lists the Kafka-projected dead-letter view without exposing original payloads. */
+  public async listDeadLetters(limit: number): Promise<Page<DeadLetterView>> {
+    const rows = await this.db
+      .selectFrom('projection.dead_letters')
+      .select('document')
+      .orderBy('updated_at', 'desc')
+      .limit(limit)
+      .execute();
+    return {
+      items: rows.map((row) => parseJsonColumn<DeadLetterView>(row.document)),
+      page: { limit, nextCursor: null },
+    };
+  }
+
+  /** Persists attributed replay intent and its Debezium-routed command atomically. */
+  public requestDeadLetterReplay(
+    command: ReplayDeadLetterCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation> {
+    return this.db.transaction().execute(async (tx) => {
+      const scope = `${command.actor.subject}:replay_dead_letter:${command.idempotencyKey}`;
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))`.execute(tx);
+
+      const previous = await tx
+        .selectFrom('control.replay_requests')
+        .selectAll()
+        .where('actor_id', '=', command.actor.subject)
+        .where('idempotency_key', '=', command.idempotencyKey)
+        .executeTakeFirst();
+      const projected = await tx
+        .selectFrom('projection.dead_letters')
+        .select('document')
+        .where('original_event_id', '=', command.originalEventId)
+        .executeTakeFirst();
+      if (!projected) {
+        throw new DomainError('DEAD_LETTER_NOT_FOUND', 'The dead letter was not found.');
+      }
+      const deadLetter = parseJsonColumn<DeadLetterView>(projected.document);
+      if (previous) {
+        if (previous.request_hash !== requestHash) {
+          throw new DomainError(
+            'IDEMPOTENCY_CONFLICT',
+            'The idempotency key is already bound to different replay intent.',
+          );
+        }
+        return {
+          operationId: deadLetter.operationId,
+          targetId: deadLetter.aggregateId,
+          acceptedAt: toIsoTimestamp(previous.requested_at),
+          statusUrl: `/v1/projects/${deadLetter.projectId}/operations/${deadLetter.operationId}`,
+          replayed: true,
+        };
+      }
+      if (!deadLetter.replayAllowed) {
+        throw new DomainError('REPLAY_NOT_ALLOWED', 'This dead letter is not replayable.');
+      }
+
+      const now = new Date();
+      const replayRequestId = randomUUID();
+      const event: ProvisioningReplayRequestedV1 = {
+        eventId: randomUUID(),
+        schemaName: 'provisioning.replay.requested',
+        schemaVersion: 1,
+        aggregateType: 'instance',
+        aggregateId: deadLetter.aggregateId,
+        projectId: deadLetter.projectId,
+        operationId: deadLetter.operationId,
+        correlationId: command.correlationId,
+        causationId: command.originalEventId,
+        occurredAt: now.toISOString(),
+        traceContext: {
+          traceparent: command.traceparent,
+          ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+        },
+        partitionKey: deadLetter.aggregateId,
+        data: {
+          replayRequestId,
+          originalEventId: command.originalEventId,
+          requestedAt: now.toISOString(),
+        },
+      };
+      await tx
+        .insertInto('control.replay_requests')
+        .values({
+          id: replayRequestId,
+          original_event_id: command.originalEventId,
+          actor_id: command.actor.subject,
+          idempotency_key: command.idempotencyKey,
+          request_hash: requestHash,
+          reason: command.reason,
+          correlation_id: command.correlationId,
+          trace_context: event.traceContext,
+          status: 'accepted',
+          requested_at: now,
+          updated_at: now,
+        })
+        .executeTakeFirstOrThrow();
+      await tx
+        .insertInto('control.outbox')
+        .values({
+          outbox_id: randomUUID(),
+          event_id: event.eventId,
+          aggregate_id: event.aggregateId,
+          aggregate_type: event.aggregateType,
+          schema_name: event.schemaName,
+          schema_version: event.schemaVersion,
+          topic: 'provisioning.commands.v1',
+          partition_key: event.partitionKey,
+          payload: event,
+          tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
+          replay_generation: 0,
+          occurred_at: now,
+          created_at: now,
+        })
+        .executeTakeFirstOrThrow();
+      return {
+        operationId: deadLetter.operationId,
+        targetId: deadLetter.aggregateId,
+        acceptedAt: now.toISOString(),
+        statusUrl: `/v1/projects/${deadLetter.projectId}/operations/${deadLetter.operationId}`,
+        replayed: false,
+      };
     });
   }
 
@@ -458,7 +588,10 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       causationId: operationId,
       correlationId: command.correlationId,
       occurredAt,
-      traceContext: { traceparent: command.traceparent || generatedTraceparent() },
+      traceContext: {
+        traceparent: command.traceparent || generatedTraceparent(),
+        ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+      },
       // Partitioning by instance is what will preserve per-instance ordering once Kafka
       // replaces the poller in Phase 4.
       partitionKey: instanceId,

@@ -1306,7 +1306,7 @@ export interface components {
     readonly ReviewId: string;
     /** @description Provider-neutral snapshot UUID. */
     readonly SnapshotId: string;
-    /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+    /** @description W3C Trace Context header. Invalid supplied values are rejected. */
     readonly Traceparent: string;
     /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
     readonly Tracestate: string;
@@ -1517,7 +1517,7 @@ export interface operations {
       readonly header: {
         /** @description Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash. */
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
-        /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+        /** @description W3C Trace Context header. Invalid supplied values are rejected. */
         readonly traceparent?: components['parameters']['Traceparent'];
         /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
         readonly tracestate?: components['parameters']['Tracestate'];
@@ -2088,7 +2088,7 @@ export interface operations {
       readonly header: {
         /** @description Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash. */
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
-        /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+        /** @description W3C Trace Context header. Invalid supplied values are rejected. */
         readonly traceparent?: components['parameters']['Traceparent'];
         /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
         readonly tracestate?: components['parameters']['Tracestate'];
@@ -2150,7 +2150,7 @@ export interface operations {
       readonly header: {
         /** @description Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash. */
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
-        /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+        /** @description W3C Trace Context header. Invalid supplied values are rejected. */
         readonly traceparent?: components['parameters']['Traceparent'];
         /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
         readonly tracestate?: components['parameters']['Tracestate'];
@@ -2180,7 +2180,7 @@ export interface operations {
       readonly header: {
         /** @description Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash. */
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
-        /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+        /** @description W3C Trace Context header. Invalid supplied values are rejected. */
         readonly traceparent?: components['parameters']['Traceparent'];
         /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
         readonly tracestate?: components['parameters']['Tracestate'];
@@ -2245,7 +2245,7 @@ export interface operations {
       readonly header: {
         /** @description Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash. */
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
-        /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+        /** @description W3C Trace Context header. Invalid supplied values are rejected. */
         readonly traceparent?: components['parameters']['Traceparent'];
         /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
         readonly tracestate?: components['parameters']['Tracestate'];
@@ -2281,7 +2281,7 @@ export interface operations {
       readonly header: {
         /** @description Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash. */
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
-        /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+        /** @description W3C Trace Context header. Invalid supplied values are rejected. */
         readonly traceparent?: components['parameters']['Traceparent'];
         /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
         readonly tracestate?: components['parameters']['Tracestate'];
@@ -2313,7 +2313,7 @@ export interface operations {
       readonly header: {
         /** @description Scoped mutation identity, bound to the actor, project, action, target, and canonical body hash. */
         readonly 'Idempotency-Key': components['parameters']['IdempotencyKey'];
-        /** @description W3C Trace Context header. Invalid values are ignored and replaced, not echoed. */
+        /** @description W3C Trace Context header. Invalid supplied values are rejected. */
         readonly traceparent?: components['parameters']['Traceparent'];
         /** @description Optional W3C vendor trace state, accepted only with a valid traceparent. */
         readonly tracestate?: components['parameters']['Tracestate'];

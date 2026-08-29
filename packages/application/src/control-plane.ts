@@ -27,6 +27,7 @@ import type {
   Actor,
   ControlPlaneStore,
   CreateInstanceCommand,
+  DeadLetterView,
   FlavorView,
   ImageView,
   InstanceView,
@@ -35,7 +36,9 @@ import type {
   Page,
   ProjectView,
   QuotaView,
+  ReplayDeadLetterCommand,
 } from './ports.js';
+import { NOOP_APPLICATION_TELEMETRY, type ApplicationTelemetry } from './telemetry.js';
 
 /** Default page size when a caller does not ask for one. */
 const DEFAULT_PAGE_LIMIT = 50;
@@ -65,6 +68,8 @@ export interface CreateInstanceInput {
   readonly correlationId: string;
   /** W3C trace context, propagated all the way to the provider call. */
   readonly traceparent: string;
+  /** Optional W3C vendor state paired with `traceparent`. */
+  readonly tracestate?: string;
   /** Catalog image slug. */
   readonly imageId: string;
   /** Catalog flavor slug. */
@@ -77,6 +82,17 @@ export interface CreateInstanceInput {
   readonly sshPublicKeys?: readonly string[];
 }
 
+/** Administrator replay request before it crosses the persistence port. */
+export interface ReplayDeadLetterInput {
+  readonly actor: Actor;
+  readonly originalEventId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  readonly reason: string;
+}
+
 /**
  * Authorizes, validates, and delegates synchronous control-plane requests.
  *
@@ -84,8 +100,14 @@ export interface CreateInstanceInput {
  * data without checking the actor's access to that project.
  */
 export class ControlPlaneApplication {
-  /** @param store Persistence port, injected as `PostgresControlPlaneStore` at runtime. */
-  public constructor(private readonly store: ControlPlaneStore) {}
+  /**
+   * @param store Persistence port, injected as `PostgresControlPlaneStore` at runtime.
+   * @param telemetry Vendor-neutral telemetry port; tests use the no-op default.
+   */
+  public constructor(
+    private readonly store: ControlPlaneStore,
+    private readonly telemetry: ApplicationTelemetry = NOOP_APPLICATION_TELEMETRY,
+  ) {}
 
   /**
    * Accepts a create request as durable intent and returns immediately.
@@ -104,37 +126,62 @@ export class ControlPlaneApplication {
    *   `PROFILE_DISABLED`, `PROJECT_NOT_FOUND`, or `QUOTA_EXCEEDED`.
    */
   public async createInstance(input: CreateInstanceInput): Promise<AcceptedMutation> {
-    this.authorize(input.actor, input.projectId);
+    return this.telemetry.trace(
+      'controlplane.command.accept',
+      {
+        'command.type': 'create_instance',
+        'cloud.project.id': input.projectId,
+      },
+      async () => {
+        try {
+          this.authorize(input.actor, input.projectId);
 
-    // Checked here rather than in the DTO because gRPC callers do not pass through
-    // class-validator, and both transports must enforce the same rule.
-    if (
-      input.idempotencyKey.length < IDEMPOTENCY_KEY_MINIMUM_LENGTH ||
-      input.idempotencyKey.length > IDEMPOTENCY_KEY_MAXIMUM_LENGTH
-    ) {
-      throw new DomainError(
-        'VALIDATION_FAILED',
-        'Idempotency key must contain 8 to 128 characters.',
-      );
-    }
-    validateCreateInstance(input);
+          // Checked here rather than in the DTO because gRPC callers do not pass through
+          // class-validator, and both transports must enforce the same rule.
+          if (
+            input.idempotencyKey.length < IDEMPOTENCY_KEY_MINIMUM_LENGTH ||
+            input.idempotencyKey.length > IDEMPOTENCY_KEY_MAXIMUM_LENGTH
+          ) {
+            throw new DomainError(
+              'VALIDATION_FAILED',
+              'Idempotency key must contain 8 to 128 characters.',
+            );
+          }
+          validateCreateInstance(input);
 
-    const command: CreateInstanceCommand = {
-      ...input,
-      sshPublicKeys: [...(input.sshPublicKeys ?? [])],
-    };
-    const requestHash = canonicalSha256({
-      actor: input.actor.subject,
-      projectId: input.projectId,
-      operation: 'create_instance',
-      imageId: input.imageId,
-      flavorId: input.flavorId,
-      networkId: input.networkId,
-      hostname: input.hostname,
-      // Sorted so that reordering the same set of keys is the same request, not a conflict.
-      sshPublicKeys: [...(input.sshPublicKeys ?? [])].sort(),
-    });
-    return this.store.acceptCreate(command, requestHash);
+          const activeTrace = this.telemetry.currentTraceContext({
+            traceparent: input.traceparent,
+            ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+          });
+          const command: CreateInstanceCommand = {
+            ...input,
+            traceparent: activeTrace.traceparent,
+            ...(activeTrace.tracestate ? { tracestate: activeTrace.tracestate } : {}),
+            sshPublicKeys: [...(input.sshPublicKeys ?? [])],
+          };
+          const requestHash = canonicalSha256({
+            actor: input.actor.subject,
+            projectId: input.projectId,
+            operation: 'create_instance',
+            imageId: input.imageId,
+            flavorId: input.flavorId,
+            networkId: input.networkId,
+            hostname: input.hostname,
+            // Sorted so that reordering the same set of keys is the same request, not a conflict.
+            sshPublicKeys: [...(input.sshPublicKeys ?? [])].sort(),
+          });
+          const accepted = await this.store.acceptCreate(command, requestHash);
+          this.telemetry.commandAccepted(
+            'create_instance',
+            accepted.replayed ? 'replayed' : 'accepted',
+          );
+          return accepted;
+        } catch (error: unknown) {
+          this.telemetry.commandAccepted('create_instance', 'rejected');
+          throw error;
+        }
+      },
+    );
   }
 
   /** Reads a project. @throws DomainError `PROJECT_ACCESS_DENIED` or `PROJECT_NOT_FOUND`. */
@@ -222,6 +269,63 @@ export class ControlPlaneApplication {
     return this.store.listOperations(projectId, this.limit(limit));
   }
 
+  /** Lists governed dead-letter evidence for a platform administrator. */
+  public listDeadLetters(actor: Actor, limit = DEFAULT_PAGE_LIMIT): Promise<Page<DeadLetterView>> {
+    this.authorizeAdministrator(actor);
+    return this.store.listDeadLetters(this.limit(limit));
+  }
+
+  /** Accepts attributed replay intent; the original command is restored asynchronously. */
+  public requestDeadLetterReplay(input: ReplayDeadLetterInput): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.command.accept',
+      { 'command.type': 'replay_dead_letter' },
+      async () => {
+        try {
+          this.authorizeAdministrator(input.actor);
+          if (
+            input.idempotencyKey.length < IDEMPOTENCY_KEY_MINIMUM_LENGTH ||
+            input.idempotencyKey.length > IDEMPOTENCY_KEY_MAXIMUM_LENGTH
+          ) {
+            throw new DomainError(
+              'VALIDATION_FAILED',
+              'Idempotency key must contain 8 to 128 characters.',
+            );
+          }
+          const reason = input.reason.trim();
+          if (reason.length < 10 || reason.length > 512) {
+            throw new DomainError(
+              'VALIDATION_FAILED',
+              'Replay reason must contain 10 to 512 characters.',
+            );
+          }
+          const activeTrace = this.telemetry.currentTraceContext({
+            traceparent: input.traceparent,
+            ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+          });
+          const command: ReplayDeadLetterCommand = {
+            ...input,
+            reason,
+            traceparent: activeTrace.traceparent,
+            ...(activeTrace.tracestate ? { tracestate: activeTrace.tracestate } : {}),
+          };
+          const accepted = await this.store.requestDeadLetterReplay(
+            command,
+            canonicalSha256({ originalEventId: input.originalEventId, reason }),
+          );
+          this.telemetry.commandAccepted(
+            'replay_dead_letter',
+            accepted.replayed ? 'replayed' : 'accepted',
+          );
+          return accepted;
+        } catch (error: unknown) {
+          this.telemetry.commandAccepted('replay_dead_letter', 'rejected');
+          throw error;
+        }
+      },
+    );
+  }
+
   /**
    * Rejects any caller without the role and explicit project membership.
    *
@@ -237,6 +341,13 @@ export class ControlPlaneApplication {
   private authorize(actor: Actor, projectId: string): void {
     if (!actor.roles.includes('tenant_developer') || !actor.projects.includes(projectId)) {
       throw new DomainError('PROJECT_ACCESS_DENIED', 'Project access is denied.');
+    }
+  }
+
+  /** Administrative recovery is never inferred from project membership. */
+  private authorizeAdministrator(actor: Actor): void {
+    if (!actor.roles.includes('platform_administrator')) {
+      throw new DomainError('ADMIN_REQUIRED', 'Platform administrator access is required.');
     }
   }
 

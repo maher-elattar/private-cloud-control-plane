@@ -17,9 +17,13 @@
  */
 import type { components } from '@private-cloud/contracts';
 import type {
+  EventEnvelope,
   InstanceCreateRequestedV1,
   InstanceMutationCompletedV1,
   InstanceMutationFailedV1,
+  ProvisioningDeadLetteredV1,
+  ProvisioningReplayResolvedV1,
+  ProvisioningReplayRequestedV1,
   WorkflowProgressedV1,
 } from '@private-cloud/contracts';
 import type { WorkflowStage } from './workflow-stage.js';
@@ -47,6 +51,16 @@ export type InstanceView = components['schemas']['Instance'];
 export type OperationView = components['schemas']['Operation'];
 /** The `202 Accepted` body: what was accepted, and where to poll for its outcome. */
 export type AcceptedMutation = components['schemas']['MutationAccepted'];
+/** Administrative dead-letter evidence returned by the REST API. */
+export type DeadLetterView = components['schemas']['DeadLetter'];
+
+/** Durable broker coordinates used for inbox identity and operational evidence. */
+export interface MessageDeliveryIdentity {
+  readonly topic: string;
+  readonly partition: number;
+  readonly offset: string;
+  readonly replayGeneration: number;
+}
 
 /**
  * An authenticated caller and the authorization claims carried by its token.
@@ -81,6 +95,8 @@ export interface CreateInstanceCommand {
   readonly correlationId: string;
   /** W3C trace context propagated to the provider call for distributed tracing. */
   readonly traceparent: string;
+  /** Optional W3C vendor state propagated with `traceparent`. */
+  readonly tracestate?: string;
   /** Catalog image slug. */
   readonly imageId: string;
   /** Catalog flavor slug, resolved to concrete CPU/memory/disk at acceptance. */
@@ -91,6 +107,17 @@ export interface CreateInstanceCommand {
   readonly hostname: string;
   /** Zero to five unique SSH public keys injected via cloud-init. */
   readonly sshPublicKeys: readonly string[];
+}
+
+/** Validated administrator request to replay one governed dead letter. */
+export interface ReplayDeadLetterCommand {
+  readonly actor: Actor;
+  readonly originalEventId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  readonly reason: string;
 }
 
 /**
@@ -136,6 +163,13 @@ export interface ControlPlaneStore {
    *   `PROFILE_DISABLED`, `QUOTA_EXCEEDED`, or `VALIDATION_FAILED`.
    */
   acceptCreate(command: CreateInstanceCommand, requestHash: string): Promise<AcceptedMutation>;
+  /** Lists projected dead-letter evidence for administrators. */
+  listDeadLetters(limit: number): Promise<Page<DeadLetterView>>;
+  /** Atomically records replay intent and its outbox command. */
+  requestDeadLetterReplay(
+    command: ReplayDeadLetterCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation>;
   /** Reads a project, or `null` when it does not exist. */
   getProject(projectId: string): Promise<ProjectView | null>;
   /** Reads quota limits with freshly measured usage, or `null` when the project has none. */
@@ -165,6 +199,8 @@ export interface ControlPlaneStore {
 export interface ClaimedCreateWorkflow {
   /** The original accepted command, replayed verbatim from the outbox. */
   readonly command: InstanceCreateRequestedV1;
+  /** Latest durable W3C parent for the next short-lived workflow stage span. */
+  readonly traceContext: InstanceCreateRequestedV1['traceContext'];
   /** Persisted position in the state machine — where to resume. */
   readonly stage: WorkflowStage;
   /** Claim counter, used to widen the retry backoff. Not a per-stage counter. */
@@ -186,7 +222,8 @@ export interface ClaimedCreateWorkflow {
 export type WorkflowEvent =
   | WorkflowProgressedV1
   | InstanceMutationCompletedV1
-  | InstanceMutationFailedV1;
+  | InstanceMutationFailedV1
+  | ProvisioningReplayResolvedV1;
 
 /**
  * Persistence for leased, fenced workflow execution.
@@ -200,6 +237,32 @@ export type WorkflowEvent =
  * @see docs/architecture/glossary.md#lease-and-fencing-token
  */
 export interface WorkflowStore {
+  /** Atomically records a Kafka inbox receipt and creates the workflow on first delivery. */
+  admitCreateCommand(
+    command: InstanceCreateRequestedV1,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'accepted' | 'duplicate'>;
+  /** Executes an approved replay request against its durable dead-letter evidence. */
+  admitReplayRequest(
+    request: ProvisioningReplayRequestedV1,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'accepted' | 'duplicate' | 'rejected'>;
+  /** Persists a raw poison-record hash and coordinates; raw bytes are never retained. */
+  quarantineRecord(input: {
+    readonly delivery: MessageDeliveryIdentity;
+    readonly payloadHash: string;
+    readonly failureCode: string;
+    readonly safeMessage: string;
+  }): Promise<'quarantined' | 'duplicate'>;
+  /** Persists governed DLQ evidence and its outbox event after bounded retries are exhausted. */
+  deadLetterCommand(input: {
+    readonly event: EventEnvelope;
+    readonly delivery: MessageDeliveryIdentity;
+    readonly attempts: number;
+    readonly failureCode: string;
+    readonly safeMessage: string;
+    readonly replayAllowed: boolean;
+  }): Promise<'dead_lettered' | 'duplicate'>;
   /**
    * Claims the next ready workflow, or returns `null` when none is due.
    *
@@ -258,6 +321,25 @@ export interface WorkflowStore {
  * @see docs/architecture/glossary.md#read-projection-cqrs
  */
 export interface ProjectionStore {
+  /** Applies one Kafka-delivered workflow event and commits its inbox receipt atomically. */
+  applyWorkflowEvent(
+    event: WorkflowEvent,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'applied' | 'duplicate'>;
+  /** Projects a governed dead-letter event for administrative readback. */
+  applyDeadLetterEvent(
+    event: ProvisioningDeadLetteredV1,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'applied' | 'duplicate'>;
+  /** Persists a projection poison-record hash and coordinates without retaining raw bytes. */
+  quarantineRecord(input: {
+    readonly delivery: MessageDeliveryIdentity;
+    /** Trusted envelope identity when decoding succeeded; absent for raw poison bytes. */
+    readonly eventId?: string;
+    readonly payloadHash: string;
+    readonly failureCode: string;
+    readonly safeMessage: string;
+  }): Promise<'quarantined' | 'duplicate'>;
   /**
    * Applies the oldest unconsumed workflow event, respecting per-aggregate ordering.
    *

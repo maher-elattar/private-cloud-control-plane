@@ -17,22 +17,30 @@
  */
 import {
   STAGE_PROGRESS_PERCENT,
+  type DeadLetterView,
   type InstanceView,
+  type MessageDeliveryIdentity,
   type OperationView,
   type PersistedStage,
   type ProjectionStore,
+  type WorkflowEvent,
 } from '@private-cloud/application';
 import type {
   InstanceMutationCompletedV1,
   InstanceMutationFailedV1,
+  ProvisioningDeadLetteredV1,
+  ProvisioningReplayResolvedV1,
   WorkflowProgressedV1,
 } from '@private-cloud/contracts';
+import { randomUUID } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
 import { parseJsonColumn } from './column-codec.js';
 import type { PostgresClient, PostgresDatabase } from './database.js';
 
 /** Identifies this consumer in `projection.event_receipts`. */
-const CONSUMER_NAME = 'control-api.phase3-projection';
+const LEGACY_CONSUMER_NAME = 'control-api.phase3-projection';
+const EVENT_CONSUMER_NAME = 'control-api.provisioning-events.v1';
+const DLQ_CONSUMER_NAME = 'control-api.provisioning-dlq.v1';
 
 /** A row of `workflow.outbox` awaiting projection. */
 interface EventRow {
@@ -54,6 +62,91 @@ type Tx = Transaction<PostgresDatabase>;
 export class PostgresProjectionStore implements ProjectionStore {
   /** @param db Kysely client owned by the control API's DI container. */
   public constructor(private readonly db: PostgresClient) {}
+
+  /** Applies one Kafka workflow event and its inbox receipt atomically. */
+  public applyWorkflowEvent(
+    event: WorkflowEvent,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'applied' | 'duplicate'> {
+    return this.db.transaction().execute(async (tx) => {
+      const receipt = await this.insertReceipt(tx, EVENT_CONSUMER_NAME, event.eventId, delivery);
+      if (!receipt) return 'duplicate';
+      await this.applyEvent(tx, event);
+      return 'applied';
+    });
+  }
+
+  /** Projects governed DLQ evidence for the administrator API. */
+  public applyDeadLetterEvent(
+    event: ProvisioningDeadLetteredV1,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'applied' | 'duplicate'> {
+    return this.db.transaction().execute(async (tx) => {
+      const receipt = await this.insertReceipt(tx, DLQ_CONSUMER_NAME, event.eventId, delivery);
+      if (!receipt) return 'duplicate';
+      const document: DeadLetterView = {
+        eventId: event.data.originalEventId,
+        schemaName: event.data.originalSchemaName,
+        schemaVersion: event.data.originalSchemaVersion,
+        aggregateId: event.aggregateId,
+        projectId: event.projectId,
+        operationId: event.operationId,
+        category: event.data.failure.category,
+        safeMessage: event.data.failure.safeMessage,
+        attempts: event.data.attempts,
+        deadLetteredAt: event.data.deadLetteredAt,
+        replayAllowed: event.data.replayAllowed,
+        lastReplayAt: null,
+      };
+      await tx
+        .insertInto('projection.dead_letters')
+        .values({
+          original_event_id: event.data.originalEventId,
+          project_id: event.projectId,
+          operation_id: event.operationId,
+          aggregate_id: event.aggregateId,
+          document,
+          updated_at: new Date(event.occurredAt),
+        })
+        .onConflict((conflict) => conflict.column('original_event_id').doNothing())
+        .executeTakeFirst();
+      return 'applied';
+    });
+  }
+
+  /** Quarantines malformed or unsupported projection input without retaining its raw body. */
+  public quarantineRecord(
+    input: Parameters<ProjectionStore['quarantineRecord']>[0],
+  ): Promise<'quarantined' | 'duplicate'> {
+    return this.db.transaction().execute(async (tx) => {
+      const consumerName =
+        input.delivery.topic === 'provisioning.dlq.v1' ? DLQ_CONSUMER_NAME : EVENT_CONSUMER_NAME;
+      const inserted = await tx
+        .insertInto('projection.poison_records')
+        .values({
+          id: randomUUID(),
+          consumer_name: consumerName,
+          source_topic: input.delivery.topic,
+          source_partition: input.delivery.partition,
+          source_offset: input.delivery.offset,
+          payload_hash: input.payloadHash,
+          failure_code: input.failureCode,
+          safe_message: input.safeMessage,
+          quarantined_at: new Date(),
+        })
+        .onConflict((conflict) =>
+          conflict
+            .columns(['consumer_name', 'source_topic', 'source_partition', 'source_offset'])
+            .doNothing(),
+        )
+        .returning('id')
+        .executeTakeFirst();
+      if (input.eventId) {
+        await this.insertReceipt(tx, consumerName, input.eventId, input.delivery);
+      }
+      return inserted ? 'quarantined' : 'duplicate';
+    });
+  }
 
   /**
    * Applies the oldest unconsumed workflow event, then records its receipt.
@@ -99,24 +192,14 @@ export class PostgresProjectionStore implements ProjectionStore {
       const row = result.rows[0];
       if (!row) return false;
 
-      if (row.schema_name === 'workflow.progressed') {
-        await this.applyProgress(tx, parseJsonColumn<WorkflowProgressedV1>(row.payload));
-      } else if (row.schema_name === 'instance.mutation.completed') {
-        await this.applyCompleted(tx, parseJsonColumn<InstanceMutationCompletedV1>(row.payload));
-      } else if (row.schema_name === 'instance.mutation.failed') {
-        await this.applyFailed(tx, parseJsonColumn<InstanceMutationFailedV1>(row.payload));
-      } else {
-        // Throwing rolls the transaction back, leaving the event unconsumed. Skipping it
-        // instead would let the ordering guard release later events for the same instance and
-        // project state that never happened.
-        throw new Error(`Unsupported workflow event: ${row.schema_name}`);
-      }
+      const event = parseJsonColumn<WorkflowEvent>(row.payload);
+      await this.applyEvent(tx, event);
 
       await tx
         .insertInto('projection.event_receipts')
         .values({
           event_id: row.event_id,
-          consumer_name: CONSUMER_NAME,
+          consumer_name: LEGACY_CONSUMER_NAME,
           replay_generation: 0,
           source_topic: null,
           source_partition: null,
@@ -126,6 +209,84 @@ export class PostgresProjectionStore implements ProjectionStore {
         .execute();
       return true;
     });
+  }
+
+  /** Dispatches a contract-narrowed workflow event inside its receipt transaction. */
+  private async applyEvent(tx: Tx, event: WorkflowEvent): Promise<void> {
+    if (event.schemaName === 'workflow.progressed') {
+      await this.applyProgress(tx, event as WorkflowProgressedV1);
+    } else if (event.schemaName === 'instance.mutation.completed') {
+      await this.applyCompleted(tx, event as InstanceMutationCompletedV1);
+    } else if (event.schemaName === 'instance.mutation.failed') {
+      await this.applyFailed(tx, event as InstanceMutationFailedV1);
+    } else if (event.schemaName === 'provisioning.replay.resolved') {
+      await this.applyReplayResolved(tx, event as ProvisioningReplayResolvedV1);
+    } else {
+      throw new Error('Unsupported workflow event.');
+    }
+  }
+
+  /** Inserts an inbox receipt, returning false for a redelivery already handled. */
+  private async insertReceipt(
+    tx: Tx,
+    consumerName: string,
+    eventId: string,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<boolean> {
+    const receipt = await tx
+      .insertInto('projection.event_receipts')
+      .values({
+        event_id: eventId,
+        consumer_name: consumerName,
+        replay_generation: delivery.replayGeneration,
+        source_topic: delivery.topic,
+        source_partition: delivery.partition,
+        source_offset: delivery.offset,
+        received_at: new Date(),
+      })
+      .onConflict((conflict) =>
+        conflict.columns(['consumer_name', 'event_id', 'replay_generation']).doNothing(),
+      )
+      .returning('event_id')
+      .executeTakeFirst();
+    return Boolean(receipt);
+  }
+
+  /** Applies the Orchestrator-owned replay decision to Control API state. */
+  private async applyReplayResolved(tx: Tx, event: ProvisioningReplayResolvedV1): Promise<void> {
+    const updatedRequest = await tx
+      .updateTable('control.replay_requests')
+      .set({ status: event.data.outcome, updated_at: new Date(event.data.resolvedAt) })
+      .where('id', '=', event.data.replayRequestId)
+      .where('original_event_id', '=', event.data.originalEventId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!updatedRequest) {
+      // The receipt is in this transaction and rolls back with the failed ownership lookup, so
+      // Kafka can redeliver after the missing Control API state has been investigated.
+      throw new Error('Replay resolution does not match an owned replay request.');
+    }
+
+    if (event.data.outcome !== 'completed') return;
+    const row = await tx
+      .selectFrom('projection.dead_letters')
+      .select('document')
+      .where('original_event_id', '=', event.data.originalEventId)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    const document = parseJsonColumn<DeadLetterView>(row.document);
+    await tx
+      .updateTable('projection.dead_letters')
+      .set({
+        document: {
+          ...document,
+          replayAllowed: false,
+          lastReplayAt: event.data.resolvedAt,
+        },
+        updated_at: new Date(event.data.resolvedAt),
+      })
+      .where('original_event_id', '=', event.data.originalEventId)
+      .executeTakeFirstOrThrow();
   }
 
   /**

@@ -1,0 +1,8 @@
+{
+  "name": "messaging",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/messaging/src",
+  "projectType": "library",
+  "tags": ["type:lib", "layer:adapter", "visibility:production"],
+  "targets": {}
+}

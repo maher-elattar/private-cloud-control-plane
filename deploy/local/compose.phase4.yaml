@@ -1,0 +1,167 @@
+name: private-cloud-phase4
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    command: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4']
+    environment:
+      POSTGRES_DB: private_cloud
+      POSTGRES_USER: private_cloud
+      POSTGRES_PASSWORD: private_cloud
+    ports: ['55432:5432']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U private_cloud -d private_cloud']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes: ['postgres-data:/var/lib/postgresql/data']
+
+  kafka:
+    image: apache/kafka:4.1.2
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: CONTROLLER://:9093,INTERNAL://:29092,HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,HOST://127.0.0.1:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+    ports: ['9092:9092']
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          '/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1',
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    volumes: ['kafka-data:/tmp/kraft-combined-logs']
+
+  kafka-init:
+    image: apache/kafka:4.1.2
+    depends_on:
+      kafka: { condition: service_healthy }
+    entrypoint: ['/bin/bash', '/config/create-topics.sh']
+    volumes:
+      - ./kafka/create-topics.sh:/config/create-topics.sh:ro
+    restart: 'no'
+
+  debezium-connect:
+    profiles: ['cdc']
+    build:
+      context: ../..
+      dockerfile: tools/docker/debezium-connect.Dockerfile
+    depends_on:
+      kafka: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: private-cloud-connect
+      CONFIG_STORAGE_TOPIC: connect.configs
+      OFFSET_STORAGE_TOPIC: connect.offsets
+      STATUS_STORAGE_TOPIC: connect.status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      ENABLE_OTEL: 'true'
+      OTEL_SDK_DISABLED: 'false'
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: debezium-connect
+      OTEL_PROPAGATORS: tracecontext
+      # EventRouter owns outbox context propagation; producer auto-instrumentation would overwrite it.
+      OTEL_INSTRUMENTATION_KAFKA_ENABLED: 'false'
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: none
+    ports: ['8083:8083']
+
+  debezium-init:
+    profiles: ['cdc']
+    image: curlimages/curl:8.16.0
+    depends_on:
+      debezium-connect: { condition: service_started }
+      kafka-init: { condition: service_completed_successfully }
+    entrypoint: ['/bin/sh', '/config/register-connector.sh']
+    volumes:
+      - ./debezium/register-connector.sh:/config/register-connector.sh:ro
+      - ./debezium/outbox-connector.json:/config/outbox-connector.json:ro
+    restart: 'no'
+
+  tempo:
+    image: grafana/tempo:2.10.7
+    command: ['-config.file=/etc/tempo.yaml']
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports: ['3200:3200']
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.158.0
+    command: ['--config=/etc/otelcol/config.yaml']
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports: ['4317:4317', '4318:4318', '8888:8888', '8889:8889', '13133:13133']
+    depends_on:
+      tempo: { condition: service_started }
+
+  prometheus:
+    image: prom/prometheus:v3.12.0
+    command: ['--config.file=/etc/prometheus/prometheus.yaml', '--storage.tsdb.path=/prometheus']
+    volumes:
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus-data:/prometheus
+    ports: ['9090:9090']
+    depends_on:
+      otel-collector: { condition: service_started }
+
+  loki:
+    image: grafana/loki:3.7.6
+    command: ['-config.file=/etc/loki/local-config.yaml']
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports: ['3100:3100']
+
+  alloy:
+    image: grafana/alloy:v1.18.0
+    command: ['run', '/etc/alloy/config.alloy', '--server.http.listen-addr=0.0.0.0:12345']
+    user: root
+    volumes:
+      - ./observability/config.alloy:/etc/alloy/config.alloy:ro
+      - ./runtime-logs:/var/log/private-cloud:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports: ['12345:12345']
+    depends_on:
+      loki: { condition: service_started }
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ['3005:3000']
+    depends_on:
+      prometheus: { condition: service_started }
+      tempo: { condition: service_started }
+      loki: { condition: service_started }
+
+volumes:
+  postgres-data:
+  kafka-data:
+  tempo-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:

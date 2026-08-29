@@ -17,9 +17,23 @@
   "include": ["src/**/*.ts"],
   "exclude": ["eslint.config.js", "eslint.config.cjs", "eslint.config.mjs"],
   "references": [
-    { "path": "../../packages/application/tsconfig.lib.json" },
-    { "path": "../../packages/contracts/tsconfig.lib.json" },
-    { "path": "../../packages/postgres-adapter/tsconfig.lib.json" },
-    { "path": "../../packages/provider-sdk/tsconfig.lib.json" }
+    {
+      "path": "../../packages/provider-sdk/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/postgres-adapter/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/observability/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/messaging/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/contracts/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/application/tsconfig.lib.json"
+    }
   ]
 }

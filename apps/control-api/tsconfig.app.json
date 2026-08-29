@@ -21,6 +21,12 @@
       "path": "../../packages/postgres-adapter/tsconfig.lib.json"
     },
     {
+      "path": "../../packages/observability/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/messaging/tsconfig.lib.json"
+    },
+    {
       "path": "../../packages/domain/tsconfig.lib.json"
     },
     {

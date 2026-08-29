@@ -35,6 +35,7 @@ import {
   ProviderTransportError,
   type CreateInstanceProviderPort,
 } from '@private-cloud/provider-sdk';
+import { recordProviderDuration, structuredLog, withSpan } from '@private-cloud/observability';
 import { CREATE_INSTANCE_PROVIDER } from './tokens';
 
 /**
@@ -90,7 +91,7 @@ export class ProviderGrpcController {
   /** Probes that the configured profile and its allowlists are usable. Activation evidence. */
   @GrpcMethod('ProviderService', 'ValidateProfile')
   public async validateProfile(request: ValidateProfileRequest): Promise<ValidateProfileResponse> {
-    return this.call(async () => {
+    return this.call('validate_profile', async () => {
       const response = await this.provider.validateProfile(request);
       return { ...response, validatedAt: wireTimestamp(response.validatedAt) };
     });
@@ -99,7 +100,7 @@ export class ProviderGrpcController {
   /** Reports what this adapter can do, so the control plane never assumes a capability. */
   @GrpcMethod('ProviderService', 'GetCapabilities')
   public async getCapabilities(request: GetCapabilitiesRequest): Promise<GetCapabilitiesResponse> {
-    return this.call(async () => {
+    return this.call('get_capabilities', async () => {
       const response = await this.provider.getCapabilities(request);
       return { ...response, observedAt: wireTimestamp(response.observedAt) };
     });
@@ -110,7 +111,7 @@ export class ProviderGrpcController {
   public submitCreateInstance(
     request: SubmitCreateInstanceRequest,
   ): Promise<SubmitCreateInstanceResponse> {
-    return this.call(() => this.provider.submitCreateInstance(request));
+    return this.call('submit_create_instance', () => this.provider.submitCreateInstance(request));
   }
 
   /** Applies CPU, memory, network, and cloud-init configuration to the created VM. */
@@ -118,13 +119,15 @@ export class ProviderGrpcController {
   public applyInstanceConfiguration(
     request: ApplyInstanceConfigurationRequest,
   ): Promise<ApplyInstanceConfigurationResponse> {
-    return this.call(() => this.provider.applyInstanceConfiguration(request));
+    return this.call('apply_instance_configuration', () =>
+      this.provider.applyInstanceConfiguration(request),
+    );
   }
 
   /** Reads an asynchronous task's state. Read-only, so safe to call repeatedly. */
   @GrpcMethod('ProviderService', 'GetTask')
   public async getTask(request: GetTaskRequest): Promise<GetTaskResponse> {
-    return this.call(async () => {
+    return this.call('get_task', async () => {
       const response = await this.provider.getTask(request);
       return { ...response, observedAt: wireTimestamp(response.observedAt) };
     });
@@ -138,7 +141,7 @@ export class ProviderGrpcController {
    */
   @GrpcMethod('ProviderService', 'ObserveInstance')
   public async observeInstance(request: ObserveInstanceRequest): Promise<ObserveInstanceResponse> {
-    return this.call(async () => {
+    return this.call('observe_instance', async () => {
       const response = await this.provider.observeInstance(request);
       return response.observation
         ? {
@@ -154,7 +157,7 @@ export class ProviderGrpcController {
   /** Powers on an owned VM. */
   @GrpcMethod('ProviderService', 'StartInstance')
   public startInstance(request: StartInstanceRequest): Promise<StartInstanceResponse> {
-    return this.call(() => this.provider.startInstance(request));
+    return this.call('start_instance', () => this.provider.startInstance(request));
   }
 
   /**
@@ -163,11 +166,21 @@ export class ProviderGrpcController {
    * Every RPC routes through here, so no adapter exception can escape unmapped and carry
    * vendor detail across the trust boundary.
    */
-  private async call<T>(handler: () => Promise<T>): Promise<T> {
+  private async call<T>(operation: string, handler: () => Promise<T>): Promise<T> {
+    const started = performance.now();
+    let outcome = 'succeeded';
     try {
-      return await handler();
+      return await withSpan(
+        'controlplane.provider.operation',
+        { 'provider.operation': operation },
+        handler,
+      );
     } catch (error: unknown) {
+      outcome = 'failed';
       throw rpcError(error);
+    } finally {
+      recordProviderDuration(operation, outcome, (performance.now() - started) / 1_000);
+      structuredLog('info', 'provider_operation_completed', { operation, outcome });
     }
   }
 }

@@ -38,6 +38,7 @@ channels:
       workflowProgressed: { $ref: '#/components/messages/WorkflowProgressed' }
       instanceMutationCompleted: { $ref: '#/components/messages/InstanceMutationCompleted' }
       instanceMutationFailed: { $ref: '#/components/messages/InstanceMutationFailed' }
+      provisioningReplayResolved: { $ref: '#/components/messages/ProvisioningReplayResolved' }
   reconciliationEvents:
     address: reconciliation.events.v1
     description: Provider observations, drift, and unknown-outcome resolution facts.
@@ -109,6 +110,7 @@ operations:
       - { $ref: '#/channels/provisioningEvents/messages/workflowProgressed' }
       - { $ref: '#/channels/provisioningEvents/messages/instanceMutationCompleted' }
       - { $ref: '#/channels/provisioningEvents/messages/instanceMutationFailed' }
+      - { $ref: '#/channels/provisioningEvents/messages/provisioningReplayResolved' }
     x-service: provisioning-orchestrator
   controlApiReceivesProvisioningEvents:
     action: receive
@@ -118,6 +120,7 @@ operations:
       - { $ref: '#/channels/provisioningEvents/messages/workflowProgressed' }
       - { $ref: '#/channels/provisioningEvents/messages/instanceMutationCompleted' }
       - { $ref: '#/channels/provisioningEvents/messages/instanceMutationFailed' }
+      - { $ref: '#/channels/provisioningEvents/messages/provisioningReplayResolved' }
     x-service: control-api
   reconcilerSendsReconciliationEvents:
     action: send
@@ -266,6 +269,13 @@ components:
       payload:
         { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/InstanceMutationFailed' }
       x-requirements: [SRS-FR-034, SRS-FR-035, SRS-FR-036, SRS-FR-064, SRS-FR-068]
+    ProvisioningReplayResolved:
+      name: ProvisioningReplayResolved
+      title: Provisioning replay resolved
+      summary: The orchestrator accepted or rejected a governed replay request against its owned evidence.
+      payload:
+        { $ref: './schemas/control-plane-events.v1.schema.json#/$defs/ProvisioningReplayResolved' }
+      x-requirements: [SRS-FR-005, SRS-FR-067, SRS-FR-068, SRS-NFR-019]
     InstanceObserved:
       name: InstanceObserved
       title: Instance observed

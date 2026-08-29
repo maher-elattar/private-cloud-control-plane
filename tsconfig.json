@@ -35,6 +35,12 @@
     },
     {
       "path": "./packages/provider-adapters"
+    },
+    {
+      "path": "./packages/observability"
+    },
+    {
+      "path": "./packages/messaging"
     }
   ]
 }

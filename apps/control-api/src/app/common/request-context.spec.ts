@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { correlationId, requestTraceparent } from './request-context.js';
+import { correlationId, requestTraceparent, requestTracestate } from './request-context.js';
 
 describe('request context', () => {
   it('accepts valid caller correlation and trace context', () => {
@@ -17,5 +17,15 @@ describe('request context', () => {
     '00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01',
   ])('rejects an invalid traceparent: %s', (value) => {
     expect(() => requestTraceparent(value)).toThrow('Traceparent is invalid.');
+  });
+
+  it('accepts bounded tracestate only when traceparent was supplied', () => {
+    expect(requestTracestate('vendor=value', 'valid-parent')).toBe('vendor=value');
+    expect(() => requestTracestate('vendor=value', undefined)).toThrow(
+      'Tracestate requires a traceparent header.',
+    );
+    expect(() => requestTracestate(`vendor=${'x'.repeat(513)}`, 'valid-parent')).toThrow(
+      'Tracestate is invalid.',
+    );
   });
 });

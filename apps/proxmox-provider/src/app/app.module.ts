@@ -10,17 +10,29 @@
  *
  * @see docs/architecture/lab-boundary.md
  */
-import { Module } from '@nestjs/common';
+import { Injectable, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { shutdownTelemetry } from '@private-cloud/observability';
 import { AppController } from './app.controller';
 import { createProvider } from './provider.factory';
 import { ProviderGrpcController } from './provider-grpc.controller';
 import { CREATE_INSTANCE_PROVIDER } from './tokens';
+
+/** Flushes provider spans and metrics before process exit. */
+@Injectable()
+class TelemetryLifecycle implements OnApplicationShutdown {
+  public async onApplicationShutdown(): Promise<void> {
+    await shutdownTelemetry();
+  }
+}
 
 /** Wires the health endpoint and the internal provider gRPC surface. */
 @Module({
   controllers: [AppController, ProviderGrpcController],
   // Resolved at startup, so a misconfigured Proxmox deployment fails to boot rather than
   // failing partway through provisioning a VM.
-  providers: [{ provide: CREATE_INSTANCE_PROVIDER, useFactory: createProvider }],
+  providers: [
+    { provide: CREATE_INSTANCE_PROVIDER, useFactory: createProvider },
+    TelemetryLifecycle,
+  ],
 })
 export class AppModule {}

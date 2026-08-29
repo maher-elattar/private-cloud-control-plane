@@ -3692,7 +3692,7 @@
       "Traceparent": {
         "name": "traceparent",
         "in": "header",
-        "description": "W3C Trace Context header. Invalid values are ignored and replaced, not echoed.",
+        "description": "W3C Trace Context header. Invalid supplied values are rejected.",
         "schema": {
           "type": "string",
           "maxLength": 55,

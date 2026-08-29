@@ -345,6 +345,7 @@ export interface PostgresDatabase {
   'projection.operations': ProjectionOperationTable;
   'projection.event_receipts': ProjectionReceiptTable;
   'projection.dead_letters': ProjectionDeadLetterTable;
+  'projection.poison_records': PoisonRecordTable;
 }
 
 /**

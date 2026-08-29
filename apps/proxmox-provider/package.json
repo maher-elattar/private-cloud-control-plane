@@ -10,6 +10,7 @@
     "@nestjs/microservices": "11.2.1",
     "@nestjs/platform-fastify": "11.2.1",
     "@private-cloud/contracts": "workspace:*",
+    "@private-cloud/observability": "workspace:*",
     "@private-cloud/provider-adapters": "workspace:*",
     "@private-cloud/provider-sdk": "workspace:*",
     "fastify": "5.11.3",

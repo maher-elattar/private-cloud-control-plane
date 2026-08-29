@@ -40,6 +40,7 @@ import {
   type CreateInstanceProviderPort,
 } from '@private-cloud/provider-sdk';
 import type { ClaimedCreateWorkflow, WorkflowStore } from './ports.js';
+import { NOOP_APPLICATION_TELEMETRY, type ApplicationTelemetry } from './telemetry.js';
 import type { WorkflowStage } from './workflow-stage.js';
 
 /** Default lease length for one claim. Must sit inside the store's permitted 5-300 seconds. */
@@ -115,11 +116,13 @@ export class CreateInstanceWorkflow {
    *   which in turn runs either the deterministic fake or the Proxmox adapter.
    * @param workerId Identity claimed on leases. Must be stable for one process and unique
    *   across processes, or two workers could mistake each other's leases for their own.
+   * @param telemetry Application telemetry used for durable-stage spans and metrics.
    */
   public constructor(
     private readonly store: WorkflowStore,
     private readonly provider: CreateInstanceProviderPort,
     private readonly workerId: string,
+    private readonly telemetry: ApplicationTelemetry = NOOP_APPLICATION_TELEMETRY,
   ) {}
 
   /**
@@ -136,14 +139,27 @@ export class CreateInstanceWorkflow {
   public async runOne(leaseSeconds = DEFAULT_LEASE_SECONDS): Promise<boolean> {
     const workflow = await this.store.claimNextCreate(this.workerId, leaseSeconds);
     if (!workflow) return false;
-    try {
-      await this.execute(workflow);
-    } catch (error: unknown) {
-      // Only transport failures are classified here. Anything else is a bug in this process
-      // and is rethrown so the worker logs it, rather than being recorded as a provider fault.
-      if (!(error instanceof ProviderTransportError)) throw error;
-      await this.handleProviderError(workflow, error);
-    }
+    await this.telemetry.trace(
+      'controlplane.workflow.stage',
+      {
+        'workflow.stage': workflow.stage,
+        'cloud.project.id': workflow.command.projectId,
+        'cloud.resource.id': workflow.command.aggregateId,
+        'controlplane.operation.id': workflow.command.operationId,
+        'workflow.attempt': workflow.attempt,
+      },
+      async () => {
+        try {
+          await this.execute(workflow);
+        } catch (error: unknown) {
+          // Only transport failures are classified here. Anything else is a bug in this process
+          // and is rethrown so the worker logs it, rather than being recorded as a provider fault.
+          if (!(error instanceof ProviderTransportError)) throw error;
+          await this.handleProviderError(workflow, error);
+        }
+      },
+      workflow.traceContext,
+    );
     return true;
   }
 
@@ -316,6 +332,7 @@ export class CreateInstanceWorkflow {
       status: 'succeeded',
       event,
     });
+    this.telemetry.workflowTransition(workflow.stage, 'completed');
   }
 
   /**
@@ -468,6 +485,7 @@ export class CreateInstanceWorkflow {
       return;
     }
     if (error.retryable) {
+      this.telemetry.workflowRetry(workflow.stage, error.code);
       await this.progress(workflow, workflow.stage, {
         nextAttemptAt: new Date(
           Date.now() + Math.min(RETRY_BACKOFF_CEILING_MS, workflow.attempt * RETRY_BACKOFF_STEP_MS),
@@ -530,6 +548,7 @@ export class CreateInstanceWorkflow {
       ...(options.nextAttemptAt ? { nextAttemptAt: options.nextAttemptAt } : {}),
       event,
     });
+    this.telemetry.workflowTransition(workflow.stage, stage);
   }
 
   /** Terminates the workflow as failed: nothing was built, or nothing can be. */
@@ -581,6 +600,7 @@ export class CreateInstanceWorkflow {
       status,
       event,
     });
+    this.telemetry.workflowTransition(workflow.stage, status);
   }
 
   /**
@@ -668,7 +688,7 @@ export class CreateInstanceWorkflow {
       correlationId: command.correlationId,
       causationId: command.eventId,
       occurredAt: new Date().toISOString(),
-      traceContext: command.traceContext,
+      traceContext: this.telemetry.currentTraceContext(workflow.traceContext),
       partitionKey: command.partitionKey,
     };
   }

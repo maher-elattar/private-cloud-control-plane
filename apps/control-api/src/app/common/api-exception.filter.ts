@@ -27,6 +27,8 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
  * well-formed and understood, but the system's current state cannot satisfy it.
  */
 const statusByCode: Readonly<Record<DomainErrorCode, number>> = {
+  ADMIN_REQUIRED: HttpStatus.FORBIDDEN,
+  DEAD_LETTER_NOT_FOUND: HttpStatus.NOT_FOUND,
   IDEMPOTENCY_CONFLICT: HttpStatus.CONFLICT,
   INSTANCE_BUSY: HttpStatus.CONFLICT,
   INSTANCE_NOT_FOUND: HttpStatus.NOT_FOUND,
@@ -35,6 +37,7 @@ const statusByCode: Readonly<Record<DomainErrorCode, number>> = {
   PROJECT_ACCESS_DENIED: HttpStatus.FORBIDDEN,
   PROJECT_NOT_FOUND: HttpStatus.NOT_FOUND,
   QUOTA_EXCEEDED: HttpStatus.UNPROCESSABLE_ENTITY,
+  REPLAY_NOT_ALLOWED: HttpStatus.CONFLICT,
   VALIDATION_FAILED: HttpStatus.UNPROCESSABLE_ENTITY,
 };
 

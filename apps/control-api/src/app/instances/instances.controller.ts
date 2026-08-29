@@ -30,7 +30,7 @@ import {
 import { ControlPlaneApplication, type Actor } from '@private-cloud/application';
 import { CurrentActor } from '../auth/actor.decorator';
 import { OidcAuthGuard } from '../auth/oidc-auth.guard';
-import { correlationId, requestTraceparent } from '../common/request-context';
+import { correlationId, requestTraceparent, requestTracestate } from '../common/request-context';
 import { CONTROL_PLANE_APPLICATION } from '../tokens';
 import { CreateInstanceDto } from './create-instance.dto';
 
@@ -58,16 +58,19 @@ export class InstancesController {
     @CurrentActor() actor: Actor,
     @Param('projectId', new ParseUUIDPipe()) projectId: string,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
-    @Headers('correlation-id') correlation: string | undefined,
+    @Headers('x-correlation-id') correlation: string | undefined,
     @Headers('traceparent') traceparent: string | undefined,
+    @Headers('tracestate') tracestate: string | undefined,
     @Body() body: CreateInstanceDto,
   ) {
+    const validatedTracestate = requestTracestate(tracestate, traceparent);
     return this.application.createInstance({
       actor,
       projectId,
       idempotencyKey: idempotencyKey ?? '',
       correlationId: correlationId(correlation),
       traceparent: requestTraceparent(traceparent),
+      ...(validatedTracestate ? { tracestate: validatedTracestate } : {}),
       imageId: body.imageId,
       flavorId: body.flavorId,
       networkId: body.networkId,

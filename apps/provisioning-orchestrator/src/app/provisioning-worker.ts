@@ -21,6 +21,7 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 import { CreateInstanceWorkflow, type WorkflowStore } from '@private-cloud/application';
+import { OpenTelemetryApplicationTelemetry } from '@private-cloud/observability';
 import type { CreateInstanceProviderPort } from '@private-cloud/provider-sdk';
 import { PROVIDER_CLIENT, WORKFLOW_STORE } from './tokens';
 
@@ -59,6 +60,7 @@ export class ProvisioningWorker implements OnApplicationBootstrap, OnApplication
       // same instance concurrently. `WORKER_ID` should be set from the pod name in a
       // multi-replica deployment; the PID only makes single-host local runs distinct.
       process.env.WORKER_ID?.trim() || `orchestrator-${process.pid}`,
+      new OpenTelemetryApplicationTelemetry(),
     );
   }
 

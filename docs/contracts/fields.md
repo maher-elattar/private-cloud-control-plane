@@ -320,6 +320,15 @@ Every field declared by the OpenAPI components, event JSON Schema definitions, a
 | JSON Schema | ProvisioningReplayRequested.data | replayRequestId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ProvisioningReplayRequested.data | originalEventId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ProvisioningReplayRequested.data | requestedAt | string | yes | format="date-time" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved | schemaName | const "provisioning.replay.resolved" | no | const="provisioning.replay.resolved" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved | data | object | yes | - | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved.data | replayRequestId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved.data | originalEventId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved.data | outcome | completed \| rejected | yes | enum=completed,rejected | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved.data | replayGeneration | integer | yes | minimum=0 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningReplayResolved.data | resolvedAt | string | yes | format="date-time" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | WorkflowProgressed | schemaName | const "workflow.progressed" | no | const="workflow.progressed" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | WorkflowProgressed | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | WorkflowProgressed | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
@@ -382,8 +391,10 @@ Every field declared by the OpenAPI components, event JSON Schema definitions, a
 | JSON Schema | ProvisioningDeadLettered | data | object | yes | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ProvisioningDeadLettered.data | originalEventId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ProvisioningDeadLettered.data | originalSchemaName | string | yes | minLength=1; maxLength=120 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningDeadLettered.data | originalSchemaVersion | integer | yes | minimum=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ProvisioningDeadLettered.data | failure | Failure | yes | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ProvisioningDeadLettered.data | attempts | integer | yes | minimum=1 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ProvisioningDeadLettered.data | replayAllowed | boolean | yes | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | ProvisioningDeadLettered.data | deadLetteredAt | string | yes | format="date-time" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | AuditRecorded | schemaName | const "audit.recorded" | no | const="audit.recorded" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | AuditRecorded | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |

@@ -22,6 +22,8 @@ import ipaddr from 'ipaddr.js';
  * silently fall through to a generic 500.
  */
 export type DomainErrorCode =
+  | 'ADMIN_REQUIRED'
+  | 'DEAD_LETTER_NOT_FOUND'
   | 'IDEMPOTENCY_CONFLICT'
   | 'INSTANCE_BUSY'
   | 'INSTANCE_NOT_FOUND'
@@ -30,6 +32,7 @@ export type DomainErrorCode =
   | 'PROJECT_ACCESS_DENIED'
   | 'PROJECT_NOT_FOUND'
   | 'QUOTA_EXCEEDED'
+  | 'REPLAY_NOT_ALLOWED'
   | 'VALIDATION_FAILED';
 
 /**

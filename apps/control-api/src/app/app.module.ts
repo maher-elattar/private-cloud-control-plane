@@ -13,15 +13,29 @@
  *
  * @see docs/architecture/glossary.md#ports-and-adapters-hexagonal-architecture
  */
-import { Module, type OnApplicationShutdown, Inject, Injectable } from '@nestjs/common';
+import {
+  Module,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import { ControlPlaneApplication } from '@private-cloud/application';
 import {
   createPostgresDatabase,
   PostgresControlPlaneStore,
   PostgresProjectionStore,
+  readOutboxBacklog,
   type PostgresClient,
 } from '@private-cloud/postgres-adapter';
+import {
+  OpenTelemetryApplicationTelemetry,
+  shutdownTelemetry,
+  structuredLog,
+  updateOutboxBacklog,
+} from '@private-cloud/observability';
 import { AppController } from './app.controller';
+import { DeadLettersController } from './administration/dead-letters.controller';
 import { OidcAuthGuard } from './auth/oidc-auth.guard';
 import { OidcAuthService } from './auth/oidc-auth.service';
 import { CatalogController } from './catalog/catalog.controller';
@@ -30,7 +44,7 @@ import { InstanceGrpcController } from './grpc/instance-grpc.controller';
 import { OperationGrpcController } from './grpc/operation-grpc.controller';
 import { InstancesController } from './instances/instances.controller';
 import { OperationsController } from './operations/operations.controller';
-import { ProjectionWorker } from './projections/projection-worker';
+import { ProjectionConsumer } from './projections/projection-consumer';
 import { CONTROL_PLANE_APPLICATION, POSTGRES_DATABASE, PROJECTION_STORE } from './tokens';
 
 /**
@@ -41,13 +55,42 @@ import { CONTROL_PLANE_APPLICATION, POSTGRES_DATABASE, PROJECTION_STORE } from '
  * off mid-transaction on redeploy instead of draining.
  */
 @Injectable()
-class DatabaseLifecycle implements OnApplicationShutdown {
+class DatabaseLifecycle implements OnApplicationBootstrap, OnApplicationShutdown {
+  private timer: NodeJS.Timeout | undefined;
+  private current: Promise<void> | undefined;
+  private stopping = false;
   /** @param database The shared connection pool. */
   public constructor(@Inject(POSTGRES_DATABASE) private readonly database: PostgresClient) {}
 
+  public onApplicationBootstrap(): void {
+    this.schedule(0);
+  }
+
   /** Drains and closes the pool. */
   public async onApplicationShutdown(): Promise<void> {
+    this.stopping = true;
+    if (this.timer) clearTimeout(this.timer);
+    await this.current;
     await this.database.destroy();
+    await shutdownTelemetry();
+  }
+
+  private schedule(delay: number): void {
+    if (this.stopping) return;
+    this.timer = setTimeout(() => {
+      this.current = this.refresh();
+    }, delay);
+  }
+
+  private async refresh(): Promise<void> {
+    try {
+      const backlog = await readOutboxBacklog(this.database, 'control');
+      updateOutboxBacklog('control', backlog.count, backlog.oldestAgeSeconds);
+    } catch {
+      structuredLog('warn', 'outbox_metrics_read_failed', { outbox_owner: 'control' });
+    } finally {
+      this.schedule(2_000);
+    }
   }
 }
 
@@ -73,6 +116,7 @@ function requiredDatabaseUrl(): string {
 @Module({
   controllers: [
     AppController,
+    DeadLettersController,
     // REST surface.
     CatalogController,
     InstancesController,
@@ -91,16 +135,17 @@ function requiredDatabaseUrl(): string {
       provide: CONTROL_PLANE_APPLICATION,
       inject: [POSTGRES_DATABASE],
       useFactory: (database: PostgresClient) =>
-        new ControlPlaneApplication(new PostgresControlPlaneStore(database)),
+        new ControlPlaneApplication(
+          new PostgresControlPlaneStore(database),
+          new OpenTelemetryApplicationTelemetry(),
+        ),
     },
     {
       provide: PROJECTION_STORE,
       inject: [POSTGRES_DATABASE],
       useFactory: (database: PostgresClient) => new PostgresProjectionStore(database),
     },
-    // The projection worker runs inside this process for Phase 3. It is a background poller,
-    // not a request handler; see `projections/projection-worker.ts`.
-    ProjectionWorker,
+    ProjectionConsumer,
     DatabaseLifecycle,
   ],
 })

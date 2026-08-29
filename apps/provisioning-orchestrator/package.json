@@ -11,6 +11,8 @@
     "@nestjs/platform-fastify": "11.2.1",
     "@private-cloud/application": "workspace:*",
     "@private-cloud/contracts": "workspace:*",
+    "@private-cloud/messaging": "workspace:*",
+    "@private-cloud/observability": "workspace:*",
     "@private-cloud/postgres-adapter": "workspace:*",
     "@private-cloud/provider-sdk": "workspace:*",
     "fastify": "5.11.3",

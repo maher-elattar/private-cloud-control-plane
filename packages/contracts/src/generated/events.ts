@@ -19,6 +19,7 @@ export type ControlPlaneEventV1 =
   | WorkflowProgressedV1
   | InstanceMutationCompletedV1
   | InstanceMutationFailedV1
+  | ProvisioningReplayResolvedV1
   | InstanceObservedV1
   | DriftDetectedV1
   | UnknownOutcomeResolvedV1
@@ -162,6 +163,18 @@ export type InstanceMutationFailedV1 = EventEnvelope & {
     compensationState: 'not_required' | 'pending' | 'succeeded' | 'failed' | 'unsafe';
   };
 };
+export type ProvisioningReplayResolvedV1 = EventEnvelope & {
+  schemaName?: 'provisioning.replay.resolved';
+  schemaVersion?: 1;
+  aggregateType?: 'instance';
+  data: {
+    replayRequestId: string;
+    originalEventId: string;
+    outcome: 'completed' | 'rejected';
+    replayGeneration: number;
+    resolvedAt: string;
+  };
+};
 export type InstanceObservedV1 = EventEnvelope & {
   schemaName?: 'instance.observed';
   schemaVersion?: 1;
@@ -225,8 +238,10 @@ export type ProvisioningDeadLetteredV1 = EventEnvelope & {
   data: {
     originalEventId: string;
     originalSchemaName: string;
+    originalSchemaVersion: number;
     failure: Failure;
     attempts: number;
+    replayAllowed: boolean;
     deadLetteredAt: string;
   };
 };

@@ -18,6 +18,7 @@ Sources: `packages/contracts/asyncapi/control-plane.v1.yaml` and `schemas/contro
 | provisioning.events.v1 | WorkflowProgressed | provisioning-orchestrator | control-api | partitionKey | at-least-once | WorkflowProgressed | SRS-FR-062, SRS-FR-063, SRS-FR-068 |
 | provisioning.events.v1 | InstanceMutationCompleted | provisioning-orchestrator | control-api | partitionKey | at-least-once | InstanceMutationCompleted | SRS-FR-033, SRS-FR-068 |
 | provisioning.events.v1 | InstanceMutationFailed | provisioning-orchestrator | control-api | partitionKey | at-least-once | InstanceMutationFailed | SRS-FR-034, SRS-FR-035, SRS-FR-036, SRS-FR-064, SRS-FR-068 |
+| provisioning.events.v1 | ProvisioningReplayResolved | provisioning-orchestrator | control-api | partitionKey | at-least-once | ProvisioningReplayResolved | SRS-FR-005, SRS-FR-067, SRS-FR-068, SRS-NFR-019 |
 | reconciliation.events.v1 | InstanceObserved | reconciler | control-api | partitionKey | at-least-once | InstanceObserved | SRS-FR-069, SRS-FR-071 |
 | reconciliation.events.v1 | DriftDetected | reconciler | control-api | partitionKey | at-least-once | DriftDetected | SRS-FR-070, SRS-FR-071, SRS-FR-073, SRS-FR-074 |
 | reconciliation.events.v1 | UnknownOutcomeResolved | reconciler | control-api, provisioning-orchestrator | partitionKey | at-least-once | UnknownOutcomeResolved | SRS-FR-036, SRS-FR-072 |

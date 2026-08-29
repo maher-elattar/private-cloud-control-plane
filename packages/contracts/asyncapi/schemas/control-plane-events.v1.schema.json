@@ -16,6 +16,7 @@
     { "$ref": "#/$defs/WorkflowProgressed" },
     { "$ref": "#/$defs/InstanceMutationCompleted" },
     { "$ref": "#/$defs/InstanceMutationFailed" },
+    { "$ref": "#/$defs/ProvisioningReplayResolved" },
     { "$ref": "#/$defs/InstanceObserved" },
     { "$ref": "#/$defs/DriftDetected" },
     { "$ref": "#/$defs/UnknownOutcomeResolved" },
@@ -400,6 +401,40 @@
       ],
       "unevaluatedProperties": false
     },
+    "ProvisioningReplayResolved": {
+      "title": "ProvisioningReplayResolvedV1",
+      "allOf": [
+        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "type": "object",
+          "required": ["data"],
+          "properties": {
+            "schemaName": { "const": "provisioning.replay.resolved" },
+            "schemaVersion": { "const": 1 },
+            "aggregateType": { "const": "instance" },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "replayRequestId",
+                "originalEventId",
+                "outcome",
+                "replayGeneration",
+                "resolvedAt"
+              ],
+              "properties": {
+                "replayRequestId": { "type": "string", "format": "uuid" },
+                "originalEventId": { "type": "string", "format": "uuid" },
+                "outcome": { "type": "string", "enum": ["completed", "rejected"] },
+                "replayGeneration": { "type": "integer", "minimum": 0 },
+                "resolvedAt": { "type": "string", "format": "date-time" }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
     "WorkflowProgressed": {
       "title": "WorkflowProgressedV1",
       "allOf": [
@@ -652,15 +687,19 @@
               "required": [
                 "originalEventId",
                 "originalSchemaName",
+                "originalSchemaVersion",
                 "failure",
                 "attempts",
+                "replayAllowed",
                 "deadLetteredAt"
               ],
               "properties": {
                 "originalEventId": { "type": "string", "format": "uuid" },
                 "originalSchemaName": { "type": "string", "minLength": 1, "maxLength": 120 },
+                "originalSchemaVersion": { "type": "integer", "minimum": 1 },
                 "failure": { "$ref": "#/$defs/Failure" },
                 "attempts": { "type": "integer", "minimum": 1 },
+                "replayAllowed": { "type": "boolean" },
                 "deadLetteredAt": { "type": "string", "format": "date-time" }
               }
             }

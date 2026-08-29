@@ -53,12 +53,29 @@ class MemoryWorkflowStore implements WorkflowStore {
 
   private checkpointFailed = false;
 
+  public admitCreateCommand(): Promise<'accepted' | 'duplicate'> {
+    return Promise.resolve('accepted');
+  }
+
+  public admitReplayRequest(): Promise<'accepted' | 'duplicate' | 'rejected'> {
+    return Promise.resolve('accepted');
+  }
+
+  public quarantineRecord(): Promise<'quarantined' | 'duplicate'> {
+    return Promise.resolve('quarantined');
+  }
+
+  public deadLetterCommand(): Promise<'dead_lettered' | 'duplicate'> {
+    return Promise.resolve('dead_lettered');
+  }
+
   public claimNextCreate(): Promise<ClaimedCreateWorkflow | null> {
     if (this.terminal) return Promise.resolve(null);
     this.attempt += 1;
     this.fencingToken += 1n;
     return Promise.resolve({
       command,
+      traceContext: command.traceContext,
       stage: this.stage,
       attempt: this.attempt,
       fencingToken: this.fencingToken,
