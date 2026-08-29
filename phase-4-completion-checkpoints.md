@@ -9,7 +9,7 @@ without recording concrete evidence.
 - Overall status: In progress
 - Current checkpoint: 3 - Complete event topology and audit publication
 - Last completed checkpoint: 2 - Complete telemetry semantics and application instrumentation
-- Last Phase 4 commit: pending checkpoint 2 commit
+- Last Phase 4 commit: `b9e9186 feat: complete phase 4 telemetry coverage`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -80,7 +80,7 @@ without recording concrete evidence.
   - All four migrations and the Phase 3 seed apply cleanly to disposable PostgreSQL 16.10; schema
     inspection confirms the projected dead-letter trace carrier column.
 - Review result: approved after removing one unnecessary non-null assertion; no blocking findings.
-- Planned commit: `feat: complete phase 4 telemetry coverage`
+- Completed commit: `b9e9186 feat: complete phase 4 telemetry coverage`
 
 ### Checkpoint 3 - Complete event topology and audit publication
 
