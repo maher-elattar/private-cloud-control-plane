@@ -9,7 +9,7 @@ without recording concrete evidence.
 - Overall status: In progress
 - Current checkpoint: 4 - Full containerized Phase 4 environment and infrastructure metrics
 - Last completed checkpoint: 3 - Complete event topology and audit publication
-- Last Phase 4 commit: `b9e9186 feat: complete phase 4 telemetry coverage`
+- Last Phase 4 commit: `d2a61eb feat: publish transactional audit facts`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -109,7 +109,7 @@ without recording concrete evidence.
     passed 43 tests in total.
 - Review result: approved; no blocking findings after transaction, duplicate, authorization-boundary,
   payload-minimization, causal-identity, and broker-coordinate review.
-- Planned commit: `feat: publish transactional audit facts`
+- Completed commit: `d2a61eb feat: publish transactional audit facts`
 
 ### Checkpoint 4 - Full containerized Phase 4 environment and infrastructure metrics
 
