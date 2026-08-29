@@ -7,7 +7,7 @@ without recording concrete evidence.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: 1 - Durable retry, exhaustion, and recovery policy
+- Current checkpoint: 1 - Durable retry, exhaustion, and recovery policy (ready to commit)
 - Last completed checkpoint: 0 - Gap audit and execution ledger
 - Last Phase 4 commit: `aa5ac87 docs: record phase 4 recovery and observability evidence`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
@@ -36,6 +36,16 @@ without recording concrete evidence.
     mutations to `manual_review`.
   - Add deterministic unit tests for delay bounds, budget exhaustion, and terminal routing.
 - Verification required: unit tests, typecheck, lint, and focused code review.
+- Evidence recorded 2026-08-30:
+  - Provider workflow suite passes 12 tests, including exact eighth-failure exhaustion, 15-minute
+    budget exhaustion, full-jitter delay bounds, reset after successful provider contact, ambiguous
+    mutation routing, and duplicate-effect protection.
+  - Application suite passes 9 tests.
+  - Uncached typecheck and lint pass for `application`, `postgres-adapter`, and
+    `provider-adapters` and their dependency builds.
+  - Focused review confirmed retry state is fenced and committed with each checkpoint; exhaustion
+    commits the terminal operation event, command completion, reopened dead letter, DLQ outbox event,
+    and lease release in one PostgreSQL transaction.
 - Planned commit: `feat: complete durable workflow recovery policy`
 
 ### Checkpoint 2 - Complete telemetry semantics and application instrumentation

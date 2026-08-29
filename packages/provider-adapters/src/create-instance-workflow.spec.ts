@@ -43,11 +43,15 @@ const command: InstanceCreateRequestedV1 = {
 class MemoryWorkflowStore implements WorkflowStore {
   public stage: WorkflowStage = 'accepted';
   public attempt = 0;
+  public stageAttempt = 0;
+  public retryStartedAt: Date | undefined;
   public fencingToken = 0n;
   public providerResourceId: string | undefined;
   public providerTaskReference: string | undefined;
   public terminal: 'failed' | 'manual_review' | 'succeeded' | undefined;
   public readonly events: WorkflowEvent[] = [];
+  public readonly retryTimes: Date[] = [];
+  public readonly deadLetters: Parameters<WorkflowStore['deadLetterWorkflow']>[0][] = [];
 
   public constructor(private readonly failCheckpointStage?: WorkflowStage) {}
 
@@ -78,6 +82,8 @@ class MemoryWorkflowStore implements WorkflowStore {
       traceContext: command.traceContext,
       stage: this.stage,
       attempt: this.attempt,
+      stageAttempt: this.stageAttempt,
+      ...(this.retryStartedAt ? { retryStartedAt: this.retryStartedAt } : {}),
       fencingToken: this.fencingToken,
       ...(this.providerResourceId ? { providerResourceId: this.providerResourceId } : {}),
       ...(this.providerTaskReference ? { providerTaskReference: this.providerTaskReference } : {}),
@@ -95,6 +101,20 @@ class MemoryWorkflowStore implements WorkflowStore {
     if ('providerTaskReference' in input) {
       this.providerTaskReference = input.providerTaskReference ?? undefined;
     }
+    this.stageAttempt = input.retry?.attempt ?? 0;
+    this.retryStartedAt = input.retry?.startedAt;
+    if (input.nextAttemptAt) this.retryTimes.push(input.nextAttemptAt);
+    this.events.push(input.event);
+    return Promise.resolve();
+  }
+
+  public deadLetterWorkflow(
+    input: Parameters<WorkflowStore['deadLetterWorkflow']>[0],
+  ): Promise<void> {
+    this.assertFence(input.fencingToken);
+    this.stageAttempt = input.attempts;
+    this.terminal = 'failed';
+    this.deadLetters.push(input);
     this.events.push(input.event);
     return Promise.resolve();
   }
@@ -147,5 +167,80 @@ describe('CreateInstanceWorkflow', () => {
     expect(submits[1]?.duplicate).toBe(true);
     expect(provider.resourceCount()).toBe(1);
     expect(store.terminal).toBe('succeeded');
+  });
+
+  it('uses persisted full-jitter delays and dead-letters the eighth safe failure', async () => {
+    const store = new MemoryWorkflowStore();
+    const provider = new FakeProvider({ script: { getTask: [{ mode: 'failure' }] } });
+    const now = new Date('2026-08-30T00:00:00.000Z');
+    const workflow = new CreateInstanceWorkflow(store, provider, 'worker-1', undefined, {
+      now: () => now,
+      random: () => 0.999,
+    });
+
+    await drain(workflow);
+
+    expect(provider.calls.filter((call) => call.method === 'getTask')).toHaveLength(8);
+    expect(store.retryTimes.map((value) => value.getTime() - now.getTime())).toEqual([
+      499, 999, 1_998, 3_996, 7_992, 15_984, 29_970,
+    ]);
+    expect(store.stageAttempt).toBe(8);
+    expect(store.terminal).toBe('failed');
+    expect(store.deadLetters).toHaveLength(1);
+    expect(store.deadLetters[0]?.failureCode).toBe('WORKFLOW_RETRY_EXHAUSTED');
+    expect(store.deadLetters[0]?.lastErrorCode).toBe('unavailable');
+  });
+
+  it('exhausts the persisted retry budget even before eight failures', async () => {
+    const store = new MemoryWorkflowStore();
+    const provider = new FakeProvider({ script: { getTask: [{ mode: 'timeout' }] } });
+    let now = new Date('2026-08-30T00:00:00.000Z');
+    const workflow = new CreateInstanceWorkflow(store, provider, 'worker-1', undefined, {
+      now: () => now,
+      random: () => 0,
+    });
+
+    await workflow.runOne();
+    await workflow.runOne();
+    await workflow.runOne();
+    expect(store.stageAttempt).toBe(1);
+
+    now = new Date(now.getTime() + 15 * 60 * 1_000);
+    await workflow.runOne();
+
+    expect(store.terminal).toBe('failed');
+    expect(store.deadLetters[0]?.attempts).toBe(2);
+  });
+
+  it('resets persisted retry state after a provider call succeeds', async () => {
+    const store = new MemoryWorkflowStore();
+    const provider = new FakeProvider({
+      script: { getTask: [{ mode: 'failure' }, { mode: 'success' }] },
+    });
+    const workflow = new CreateInstanceWorkflow(store, provider, 'worker-1', undefined, {
+      random: () => 0,
+    });
+
+    await workflow.runOne();
+    await workflow.runOne();
+    await workflow.runOne();
+    expect(store.stageAttempt).toBe(1);
+    await workflow.runOne();
+
+    expect(store.stage).toBe('configuring');
+    expect(store.stageAttempt).toBe(0);
+    expect(store.retryStartedAt).toBeUndefined();
+  });
+
+  it('routes an ambiguous mutation transport outcome directly to manual review', async () => {
+    const store = new MemoryWorkflowStore();
+    const provider = new FakeProvider({ script: { submitCreateInstance: [{ mode: 'timeout' }] } });
+    const workflow = new CreateInstanceWorkflow(store, provider, 'worker-1');
+
+    await workflow.runOne();
+    await workflow.runOne();
+
+    expect(store.terminal).toBe('manual_review');
+    expect(store.deadLetters).toHaveLength(0);
   });
 });

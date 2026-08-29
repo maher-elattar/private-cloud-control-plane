@@ -71,6 +71,8 @@ interface WorkflowRow {
   readonly command: unknown;
   readonly stage: string;
   readonly attempt: number;
+  readonly stage_attempt: number;
+  readonly retry_started_at: Date | null;
   readonly replay_generation: number;
   readonly trace_context: unknown;
   readonly fencing_token: string;
@@ -207,81 +209,20 @@ export class PostgresWorkflowStore implements WorkflowStore {
     input: Parameters<WorkflowStore['deadLetterCommand']>[0],
   ): Promise<'dead_lettered' | 'duplicate'> {
     return this.db.transaction().execute(async (tx) => {
-      const deadLetterEventId = randomUUID();
       const now = new Date();
       const receipt = await this.insertCommandReceipt(tx, input.event, input.delivery, now, true);
       if (!receipt) return 'duplicate';
-      const inserted = await tx
-        .insertInto('workflow.dead_letters')
-        .values({
-          original_event_id: input.event.eventId,
-          dead_letter_event_id: deadLetterEventId,
-          original_schema_name: input.event.schemaName,
-          original_schema_version: input.event.schemaVersion,
-          aggregate_id: input.event.aggregateId,
-          project_id: input.event.projectId,
-          operation_id: input.event.operationId,
-          original_payload: input.event,
-          failure_category: 'permanent',
-          failure_code: input.failureCode,
-          safe_message: input.safeMessage,
-          attempts: input.attempts,
-          replay_allowed: input.replayAllowed,
-          replay_generation: 0,
-          status: 'open',
-          dead_lettered_at: now,
-          last_replay_at: null,
-        })
-        .onConflict((conflict) => conflict.column('original_event_id').doNothing())
-        .returning('original_event_id')
-        .executeTakeFirst();
-      if (!inserted) return 'duplicate';
-
-      const event: ProvisioningDeadLetteredV1 = {
-        eventId: deadLetterEventId,
-        schemaName: 'provisioning.dead_lettered',
-        schemaVersion: 1,
-        aggregateType: 'instance',
-        aggregateId: input.event.aggregateId,
-        projectId: input.event.projectId,
-        operationId: input.event.operationId,
-        correlationId: input.event.correlationId,
-        causationId: input.event.eventId,
-        occurredAt: now.toISOString(),
+      await this.writeDeadLetter(tx, {
+        original: input.event,
         traceContext: input.event.traceContext,
-        partitionKey: input.event.partitionKey,
-        data: {
-          originalEventId: input.event.eventId,
-          originalSchemaName: input.event.schemaName,
-          originalSchemaVersion: input.event.schemaVersion,
-          failure: {
-            category: 'permanent',
-            code: input.failureCode,
-            safeMessage: input.safeMessage,
-          },
-          attempts: input.attempts,
-          replayAllowed: input.replayAllowed,
-          deadLetteredAt: now.toISOString(),
-        },
-      };
-      await tx
-        .insertInto('workflow.outbox')
-        .values({
-          outbox_id: randomUUID(),
-          event_id: event.eventId,
-          aggregate_id: event.aggregateId,
-          aggregate_type: event.aggregateType,
-          schema_name: event.schemaName,
-          schema_version: event.schemaVersion,
-          topic: 'provisioning.dlq.v1',
-          partition_key: event.partitionKey,
-          payload: event,
-          tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
-          replay_generation: 0,
-          occurred_at: now,
-          created_at: now,
-        })
-        .executeTakeFirstOrThrow();
+        failureCategory: 'permanent',
+        failureCode: input.failureCode,
+        safeMessage: input.safeMessage,
+        attempts: input.attempts,
+        replayAllowed: input.replayAllowed,
+        replayGeneration: input.delivery.replayGeneration,
+        now,
+      });
       return 'dead_lettered';
     });
   }
@@ -366,6 +307,8 @@ export class PostgresWorkflowStore implements WorkflowStore {
         ),
         stage: toWorkflowStage(claimed.stage),
         attempt: claimed.attempt,
+        stageAttempt: claimed.stage_attempt,
+        ...(claimed.retry_started_at ? { retryStartedAt: claimed.retry_started_at } : {}),
         // `bigint` because the token is a Postgres `bigint` and must not lose precision; the
         // driver hands it over as a string to avoid a lossy number conversion.
         fencingToken: BigInt(claimed.fencing_token),
@@ -406,6 +349,10 @@ export class PostgresWorkflowStore implements WorkflowStore {
             ? { provider_task_reference: input.providerTaskReference ?? null }
             : {}),
           next_attempt_at: nextAttemptAt,
+          stage_attempt: input.retry?.attempt ?? 0,
+          retry_started_at: input.retry?.startedAt ?? null,
+          last_error_category: input.retry?.errorCategory ?? null,
+          last_error_code: input.retry?.errorCode ?? null,
           trace_context: input.event.traceContext,
           updated_at: new Date(),
         })
@@ -415,6 +362,59 @@ export class PostgresWorkflowStore implements WorkflowStore {
         .where('fencing_token', '=', String(input.fencingToken))
         .executeTakeFirstOrThrow();
       await this.writeEvent(tx, input.event);
+      await this.releaseLease(tx, workflow.instance_id, input);
+    });
+  }
+
+  /** Terminates an exhausted safe retry and emits operation plus DLQ facts atomically. */
+  public deadLetterWorkflow(
+    input: Parameters<WorkflowStore['deadLetterWorkflow']>[0],
+  ): Promise<void> {
+    return this.db.transaction().execute(async (tx) => {
+      const workflow = await this.assertLease(tx, input);
+      const command = createCommand(workflow.command);
+      if (!command) throw new Error('Cannot dead-letter an invalid persisted workflow command.');
+      const now = new Date();
+      const failure = input.event.data.failure;
+
+      await tx
+        .updateTable('workflow.workflows')
+        .set({
+          status: 'failed',
+          stage: 'failed',
+          stage_attempt: input.attempts,
+          next_attempt_at: now,
+          failure_category: failure.category,
+          failure_code: failure.code,
+          failure_message: failure.safeMessage,
+          last_error_category: input.lastErrorCategory,
+          last_error_code: input.lastErrorCode,
+          trace_context: input.event.traceContext,
+          completed_at: now,
+          updated_at: now,
+        })
+        .where('operation_id', '=', input.operationId)
+        .where('fencing_token', '=', String(input.fencingToken))
+        .executeTakeFirstOrThrow();
+      await tx
+        .updateTable('workflow.command_receipts')
+        .set({ completed_at: now })
+        .where('event_id', '=', workflow.event_id)
+        .where('consumer_name', '=', CONSUMER_NAME)
+        .where('replay_generation', '=', workflow.replay_generation)
+        .executeTakeFirstOrThrow();
+      await this.writeEvent(tx, input.event);
+      await this.writeDeadLetter(tx, {
+        original: command,
+        traceContext: input.event.traceContext,
+        failureCategory: failure.category,
+        failureCode: input.failureCode,
+        safeMessage: input.safeMessage,
+        attempts: input.attempts,
+        replayAllowed: true,
+        replayGeneration: workflow.replay_generation,
+        now,
+      });
       await this.releaseLease(tx, workflow.instance_id, input);
     });
   }
@@ -652,6 +652,105 @@ export class PostgresWorkflowStore implements WorkflowStore {
       throw new Error('Workflow lease is missing, expired, or fenced.');
     }
     return workflow;
+  }
+
+  /** Writes or reopens governed dead-letter evidence and publishes its independent DLQ fact. */
+  private async writeDeadLetter(
+    tx: Tx,
+    input: {
+      readonly original: EventEnvelope;
+      readonly traceContext: EventEnvelope['traceContext'];
+      readonly failureCategory: ProvisioningDeadLetteredV1['data']['failure']['category'];
+      readonly failureCode: string;
+      readonly safeMessage: string;
+      readonly attempts: number;
+      readonly replayAllowed: boolean;
+      readonly replayGeneration: number;
+      readonly now: Date;
+    },
+  ): Promise<void> {
+    const deadLetterEventId = randomUUID();
+    await tx
+      .insertInto('workflow.dead_letters')
+      .values({
+        original_event_id: input.original.eventId,
+        dead_letter_event_id: deadLetterEventId,
+        original_schema_name: input.original.schemaName,
+        original_schema_version: input.original.schemaVersion,
+        aggregate_id: input.original.aggregateId,
+        project_id: input.original.projectId,
+        operation_id: input.original.operationId,
+        original_payload: input.original,
+        failure_category: input.failureCategory,
+        failure_code: input.failureCode,
+        safe_message: input.safeMessage,
+        attempts: input.attempts,
+        replay_allowed: input.replayAllowed,
+        replay_generation: input.replayGeneration,
+        status: 'open',
+        dead_lettered_at: input.now,
+        last_replay_at: null,
+      })
+      .onConflict((conflict) =>
+        conflict.column('original_event_id').doUpdateSet({
+          dead_letter_event_id: deadLetterEventId,
+          failure_category: input.failureCategory,
+          failure_code: input.failureCode,
+          safe_message: input.safeMessage,
+          attempts: input.attempts,
+          replay_allowed: input.replayAllowed,
+          replay_generation: input.replayGeneration,
+          status: 'open',
+          dead_lettered_at: input.now,
+        }),
+      )
+      .executeTakeFirstOrThrow();
+
+    const event: ProvisioningDeadLetteredV1 = {
+      eventId: deadLetterEventId,
+      schemaName: 'provisioning.dead_lettered',
+      schemaVersion: 1,
+      aggregateType: 'instance',
+      aggregateId: input.original.aggregateId,
+      projectId: input.original.projectId,
+      operationId: input.original.operationId,
+      correlationId: input.original.correlationId,
+      causationId: input.original.eventId,
+      occurredAt: input.now.toISOString(),
+      traceContext: input.traceContext,
+      partitionKey: input.original.partitionKey,
+      data: {
+        originalEventId: input.original.eventId,
+        originalSchemaName: input.original.schemaName,
+        originalSchemaVersion: input.original.schemaVersion,
+        failure: {
+          category: input.failureCategory,
+          code: input.failureCode,
+          safeMessage: input.safeMessage,
+        },
+        attempts: input.attempts,
+        replayAllowed: input.replayAllowed,
+        deadLetteredAt: input.now.toISOString(),
+      },
+    };
+    await tx
+      .insertInto('workflow.outbox')
+      .values({
+        outbox_id: randomUUID(),
+        event_id: event.eventId,
+        aggregate_id: event.aggregateId,
+        aggregate_type: event.aggregateType,
+        schema_name: event.schemaName,
+        schema_version: event.schemaVersion,
+        topic: 'provisioning.dlq.v1',
+        partition_key: event.partitionKey,
+        payload: event,
+        tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
+        replay_generation: 0,
+        occurred_at: input.now,
+        created_at: input.now,
+      })
+      .executeTakeFirstOrThrow();
   }
 
   /**

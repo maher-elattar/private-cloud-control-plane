@@ -49,17 +49,17 @@ const DEFAULT_LEASE_SECONDS = 30;
 /** Pause before re-polling a provider task that is still queued or running. */
 const TASK_POLL_DELAY_MS = 500;
 
-/** Backoff added per attempt after a retryable transport failure. */
-const RETRY_BACKOFF_STEP_MS = 500;
+/** Phase 4 workflow recovery policy. Attempts and time are both bounded. */
+const MAXIMUM_RETRY_ATTEMPTS = 8;
+const RETRY_BUDGET_MS = 15 * 60 * 1_000;
+const RETRY_BACKOFF_BASE_MS = 500;
+const RETRY_BACKOFF_CEILING_MS = 30_000;
 
-/**
- * Ceiling on retry backoff.
- *
- * Deliberately short: the orchestrator is the only thing driving provisioning forward, so a
- * long backoff stalls a create that would otherwise succeed. Provider rate limiting is
- * handled by the provider's own `retryAfterMilliseconds`, not by this value.
- */
-const RETRY_BACKOFF_CEILING_MS = 5_000;
+/** Injectable nondeterminism used to verify retry boundaries without real sleeps. */
+export interface WorkflowRecoveryOptions {
+  readonly now?: () => Date;
+  readonly random?: () => number;
+}
 
 /**
  * Stages whose provider call *changes* something on the provider.
@@ -123,6 +123,7 @@ export class CreateInstanceWorkflow {
     private readonly provider: CreateInstanceProviderPort,
     private readonly workerId: string,
     private readonly telemetry: ApplicationTelemetry = NOOP_APPLICATION_TELEMETRY,
+    private readonly recovery: WorkflowRecoveryOptions = {},
   ) {}
 
   /**
@@ -486,18 +487,73 @@ export class CreateInstanceWorkflow {
     }
     if (error.retryable) {
       this.telemetry.workflowRetry(workflow.stage, error.code);
-      await this.progress(workflow, workflow.stage, {
-        nextAttemptAt: new Date(
-          Date.now() + Math.min(RETRY_BACKOFF_CEILING_MS, workflow.attempt * RETRY_BACKOFF_STEP_MS),
-        ),
-        operationState: 'retry_wait',
-      });
+      await this.retryOrDeadLetter(workflow, error);
       return;
     }
     await this.fail(workflow, {
       category: 'permanent',
       code: 'PROVIDER_PROTOCOL_ERROR',
       safeMessage: 'The create workflow could not continue safely.',
+    });
+  }
+
+  /** Applies the persisted eight-attempt, 15-minute full-jitter recovery policy. */
+  private async retryOrDeadLetter(
+    workflow: ClaimedCreateWorkflow,
+    error: ProviderTransportError,
+  ): Promise<void> {
+    const now = this.recovery.now?.() ?? new Date();
+    const retryStartedAt = workflow.retryStartedAt ?? now;
+    const stageAttempt = workflow.stageAttempt + 1;
+    const remainingBudgetMs = retryStartedAt.getTime() + RETRY_BUDGET_MS - now.getTime();
+
+    if (stageAttempt >= MAXIMUM_RETRY_ATTEMPTS || remainingBudgetMs <= 0) {
+      const failure: InstanceMutationFailedV1['data']['failure'] = {
+        category: 'transient',
+        code: 'WORKFLOW_RETRY_EXHAUSTED',
+        safeMessage: 'The provider remained unavailable until the workflow retry policy expired.',
+      };
+      const event: InstanceMutationFailedV1 = {
+        ...this.envelope(workflow, 'instance.mutation.failed'),
+        data: {
+          action: 'create_instance',
+          failure,
+          compensationState: 'not_required',
+        },
+      };
+      await this.store.deadLetterWorkflow({
+        operationId: workflow.command.operationId,
+        workerId: this.workerId,
+        fencingToken: workflow.fencingToken,
+        attempts: stageAttempt,
+        failureCode: failure.code,
+        safeMessage: failure.safeMessage,
+        lastErrorCategory: 'provider_transport',
+        lastErrorCode: error.code,
+        event,
+      });
+      this.telemetry.workflowTransition(workflow.stage, 'failed');
+      return;
+    }
+
+    const exponentialCeiling = Math.min(
+      RETRY_BACKOFF_CEILING_MS,
+      RETRY_BACKOFF_BASE_MS * 2 ** (stageAttempt - 1),
+    );
+    const random = this.recovery.random?.() ?? Math.random();
+    if (!Number.isFinite(random) || random < 0 || random >= 1) {
+      throw new Error('Workflow retry random source must return a value in [0, 1).');
+    }
+    const delayMs = Math.min(Math.floor(random * exponentialCeiling), remainingBudgetMs);
+    await this.progress(workflow, workflow.stage, {
+      nextAttemptAt: new Date(now.getTime() + delayMs),
+      operationState: 'retry_wait',
+      retry: {
+        attempt: stageAttempt,
+        startedAt: retryStartedAt,
+        errorCategory: 'provider_transport',
+        errorCode: error.code,
+      },
     });
   }
 
@@ -516,6 +572,12 @@ export class CreateInstanceWorkflow {
       readonly providerTaskReference?: string | null;
       readonly nextAttemptAt?: Date;
       readonly operationState?: WorkflowProgressedV1['data']['operationState'];
+      readonly retry?: {
+        readonly attempt: number;
+        readonly startedAt: Date;
+        readonly errorCategory: string;
+        readonly errorCode: string;
+      };
     } = {},
   ): Promise<void> {
     const event: WorkflowProgressedV1 = {
@@ -546,6 +608,7 @@ export class CreateInstanceWorkflow {
         ? { providerTaskReference: options.providerTaskReference ?? null }
         : {}),
       ...(options.nextAttemptAt ? { nextAttemptAt: options.nextAttemptAt } : {}),
+      ...(options.retry ? { retry: options.retry } : {}),
       event,
     });
     this.telemetry.workflowTransition(workflow.stage, stage);

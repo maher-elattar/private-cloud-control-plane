@@ -203,8 +203,12 @@ export interface ClaimedCreateWorkflow {
   readonly traceContext: InstanceCreateRequestedV1['traceContext'];
   /** Persisted position in the state machine — where to resume. */
   readonly stage: WorkflowStage;
-  /** Claim counter, used to widen the retry backoff. Not a per-stage counter. */
+  /** Monotonic claim counter used for operational evidence. */
   readonly attempt: number;
+  /** Number of consecutive retryable provider failures at the current stage. */
+  readonly stageAttempt: number;
+  /** Start of the current persisted retry budget, absent after forward progress. */
+  readonly retryStartedAt?: Date;
   /**
    * Monotonic token proving this claim is the newest.
    *
@@ -293,7 +297,29 @@ export interface WorkflowStore {
     readonly providerTaskReference?: string | null;
     /** Delays the next claim. Its presence also marks the workflow as `retry_wait`. */
     readonly nextAttemptAt?: Date;
+    /** Persisted retry state. Omission resets retry state after a successful provider call. */
+    readonly retry?: {
+      readonly attempt: number;
+      readonly startedAt: Date;
+      readonly errorCategory: string;
+      readonly errorCode: string;
+    };
     readonly event: WorkflowEvent;
+  }): Promise<void>;
+  /**
+   * Atomically terminates a safely retryable workflow after policy exhaustion and publishes both
+   * its operation failure and governed dead-letter evidence.
+   */
+  deadLetterWorkflow(input: {
+    readonly operationId: string;
+    readonly workerId: string;
+    readonly fencingToken: bigint;
+    readonly attempts: number;
+    readonly failureCode: string;
+    readonly safeMessage: string;
+    readonly lastErrorCategory: string;
+    readonly lastErrorCode: string;
+    readonly event: InstanceMutationFailedV1;
   }): Promise<void>;
   /**
    * Terminates the workflow and marks its command receipt consumed.
