@@ -166,17 +166,24 @@ If you want to understand the system rather than trace one request:
 
 `db/migrations/0001_phase3.sql` is worth keeping open alongside items 6–8.
 
-## What changes in Phase 4
+## Phase 4 asynchronous path
 
-Only the transport between the outbox tables and their readers. Debezium and Kafka replace
-`receiveCommand` and the projection poller. The tables, the transaction boundaries, the command
-receipts, the fencing tokens, and the event contracts stay exactly as they are — which is the
-entire reason the outbox pattern was used rather than publishing directly.
+Debezium and Kafka now replace the temporary `receiveCommand` and projection polling transport.
+Start at `packages/messaging/src/kafka-consumer.ts`, then read
+`apps/provisioning-orchestrator/src/app/command-consumer.ts` and
+`apps/control-api/src/app/projections/projection-consumer.ts`. The owner tables, transaction
+boundaries, command receipts, fencing tokens, and event contracts remain unchanged; the consumers
+add explicit offset commits, bounded failure classification, quarantine, and governed replay.
+
+`packages/observability/src/runtime.ts` owns SDK lifecycle and context propagation. Each service's
+`main.ts` starts it before dynamically importing `bootstrap.ts`, so framework, HTTP, PostgreSQL, and
+gRPC auto-instrumentation register before their modules load.
 
 ## Related reading
 
 - [Comment Standard](comment-standard.md) — how this code is documented, and how to extend it
 - [Phase 3 Vertical Slice](phase-3-vertical-slice.md) — stages, recovery, configuration
 - [Phase 3 Persistence](phase-3-persistence.md) — schemas and the acceptance transaction
+- [Phase 4 Messaging and Observability](phase-4-messaging-and-observability.md) — Kafka, replay, and telemetry path
 - [Safety Invariants](safety-invariants.md) — the rules every pattern here protects
 - [Failure Sequences](failure-sequences.md) — timeout, duplicate delivery, and compensation

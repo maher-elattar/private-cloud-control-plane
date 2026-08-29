@@ -47,8 +47,17 @@ provider execution. `workflow.workflows` remains a leased and fenced durable sch
 - `trace_context` for the next short-lived transition span
 - `replay_generation` connecting an approved redelivery to its inbox receipt
 
-The logical command event ID remains unique on the workflow row. Replay reactivates that same
-checkpointed workflow rather than inventing a second aggregate.
+The logical command event ID remains unique on the workflow row. Governed replay preserves that event
+ID and admits a new generation only after the current deployment validates the stored original
+command. A compatible replay creates or resumes one checkpointed workflow for that generation. An
+incompatible replay request is durably marked `rejected` and consumed, while the original dead letter
+stays open at its current generation; an operator must deploy compatibility and submit a fresh
+attributed request. This prevents an accepted replay request from blocking its Kafka partition or
+injecting a command the active worker cannot execute.
+
+Outbox backlog gauges compare immutable producer rows with consumer-owned inbox or projection
+receipts. This is consumption evidence used by drills, not a CDC publisher acknowledgement, and it
+does not replace Kafka offsets. No consumer updates a producer-owned outbox row.
 
 ## Migration Safety
 
@@ -58,3 +67,6 @@ as its SQL. It can adopt the original untracked Phase 3 schema exactly once befo
 
 Local verification applies both migrations to a clean PostgreSQL 16 database, applies the runner a
 second time, and separately verifies adoption of an existing Phase 3 database.
+
+See [Phase 4 Messaging and Observability](phase-4-messaging-and-observability.md) for the full event
+path and [Phase 4 Failure Recovery](../runbooks/phase-4-failure-recovery.md) for operational use.

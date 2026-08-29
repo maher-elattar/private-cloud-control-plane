@@ -1,0 +1,57 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":38,"rankSpacing":62,"htmlLabels":true}}}%%
+flowchart LR
+  subgraph Runtime["Instrumented runtime"]
+    direction TB
+    API["Control API<br/>HTTP, NestJS, PostgreSQL<br/>command + projection instruments"]
+    Orch["Orchestrator<br/>Kafka consumer + workflow<br/>PostgreSQL + gRPC client"]
+    Provider["Provider service<br/>gRPC server + adapter<br/>provider operation instruments"]
+    CDC["Debezium Connect<br/>Java agent + outbox EventRouter"]
+  end
+
+  subgraph Context["Asynchronous context path"]
+    direction TB
+    Outbox[("PostgreSQL outbox<br/>tracingspancontext")]
+    Kafka["Kafka headers<br/>traceparent + tracestate"]
+    Checkpoint[("Workflow checkpoint<br/>latest parent context")]
+  end
+
+  subgraph Collection["Collection"]
+    direction TB
+    Collector["OpenTelemetry Collector<br/>OTLP gRPC + HTTP<br/>memory limiter + batch"]
+    Alloy["Grafana Alloy<br/>container stdout + service log files"]
+  end
+
+  subgraph Backends["Evidence backends"]
+    direction TB
+    Tempo[("Tempo<br/>distributed traces")]
+    Prometheus[("Prometheus<br/>Collector scrape endpoint")]
+    Loki[("Loki<br/>structured logs")]
+    Grafana["Grafana<br/>event-pipeline dashboard<br/>trace-to-log correlation"]
+  end
+
+  API -->|"persist W3C carrier"| Outbox
+  CDC -->|"restore relay parent"| Outbox
+  Outbox --> Kafka
+  Kafka -->|"extract consumer parent"| Orch
+  Orch -->|"persist after each stage"| Checkpoint
+  Checkpoint --> Orch
+  Orch -->|"gRPC context"| Provider
+
+  API & Orch & Provider -->|"OTLP traces + metrics"| Collector
+  CDC -->|"OTLP traces + JVM metrics"| Collector
+  API & Orch & Provider -.->|"JSON stdout / files"| Alloy
+  CDC -.->|"container stdout"| Alloy
+
+  Collector -->|"OTLP"| Tempo
+  Collector -->|"Prometheus exporter :8889"| Prometheus
+  Alloy --> Loki
+  Tempo & Prometheus & Loki --> Grafana
+
+  classDef app fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef context fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef collect fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef backend fill:#fce7f3,stroke:#be185d,color:#500724
+  class API,Orch,Provider,CDC app
+  class Outbox,Kafka,Checkpoint context
+  class Collector,Alloy collect
+  class Tempo,Prometheus,Loki,Grafana backend

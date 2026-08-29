@@ -1,5 +1,13 @@
 # Failure Sequences
 
+The consolidated Phase 4 decision flow covers broker recovery, poison quarantine, bounded permanent
+failure, governed replay, duplicates, and worker resumption:
+
+![Phase 4 failure recovery](../diagrams/rendered/phase-4-failure-recovery.mermaid.svg)
+
+[Open the Mermaid source](../diagrams/mermaid/phase-4-failure-recovery.mmd) or follow the
+[operator runbook](../runbooks/phase-4-failure-recovery.md).
+
 ## Kafka Unavailable After Command Acceptance
 
 ![Kafka unavailable after command acceptance](../diagrams/rendered/kafka-unavailable.mermaid.svg)

@@ -30,7 +30,40 @@ The application lifecycle is one pnpm/Nx workspace. Nx tags enforce dependency d
 | `contracts`                 | REST, gRPC, and event contract source and generated types | Contracts defined  |
 | `provider-sdk`              | Provider-neutral lifecycle port and transport semantics   | Port defined       |
 | `provider-adapters`         | Deterministic fake and allowlisted Proxmox implementations | Create slice active |
+| `postgres-adapter`          | Owner transactions, inbox/outbox, workflow, and projections | Phase 4 active     |
+| `messaging`                 | Kafka envelope validation and explicit-offset consumers     | Phase 4 active     |
+| `observability`             | OpenTelemetry SDK, propagation, metrics, and JSON logs       | Phase 4 active     |
 | `testing`                   | Deterministic provider adapter and conformance fixtures   | Test implementation |
+
+## Phase 4 Event Pipeline
+
+![Phase 4 event journey](docs/diagrams/rendered/phase-4-event-journey.mermaid.svg)
+
+The create-instance path now crosses a PostgreSQL transactional outbox, Debezium CDC, versioned
+Kafka commands, an inbox-deduplicated workflow, provider gRPC, and Kafka-backed read projections.
+Offsets advance only after durable consumer transactions. Bounded permanent failures enter a
+governed DLQ and replay path; infrastructure failures remain uncommitted for recovery.
+
+![Phase 4 telemetry pipeline](docs/diagrams/rendered/phase-4-telemetry-pipeline.mermaid.svg)
+
+OpenTelemetry context is preserved through HTTP/gRPC, PostgreSQL, Debezium, Kafka, workflow
+checkpoints, and provider calls. All services export traces and metrics through the Collector;
+Prometheus, Tempo, Loki, and Grafana provide correlated evidence without entering the correctness
+path.
+
+Start the local dependency and evidence stack with:
+
+```bash
+docker compose -f deploy/local/compose.phase4.yaml --profile cdc up -d --build
+DATABASE_URL=postgresql://private_cloud:private_cloud@127.0.0.1:55432/private_cloud \
+  pnpm run db:migrate
+```
+
+The Grafana event-pipeline dashboard is served at
+`http://127.0.0.1:3005/d/private-cloud-phase4-event-pipeline/private-cloud-event-pipeline`.
+Application process configuration and failure procedures are documented in the
+[Phase 4 architecture](docs/architecture/phase-4-messaging-and-observability.md) and
+[recovery runbook](docs/runbooks/phase-4-failure-recovery.md).
 
 ## Phase 3 Vertical Slice
 
@@ -53,8 +86,8 @@ The source specifications are authoritative and generate the TypeScript used by 
 | REST | OpenAPI 3.1 / API v1 | 39 operations | `packages/contracts/openapi` | [REST API](docs/contracts/rest-api.md) |
 | Public gRPC | protobuf package `v1` | 37 RPCs | `control_plane.proto` | [gRPC API](docs/contracts/grpc-api.md) |
 | Provider gRPC | protobuf package `v1` | 17 RPCs | `provider.proto` | [gRPC API](docs/contracts/grpc-api.md) |
-| Kafka | AsyncAPI 3.1 / topics `v1` | 5 topics, 18 messages | `packages/contracts/asyncapi` | [Kafka events](docs/contracts/events.md) |
-| Field catalog | Generated | 870 declared field rows | All contract sources | [Fields](docs/contracts/fields.md) |
+| Kafka | AsyncAPI 3.1 / topics `v1` | 5 topics, 20 messages | `packages/contracts/asyncapi` | [Kafka events](docs/contracts/events.md) |
+| Field catalog | Generated | 888 declared field rows | All contract sources | [Fields](docs/contracts/fields.md) |
 | Errors | RFC 9457 and canonical gRPC status | Stable automation codes | OpenAPI and RPC policy | [Errors](docs/contracts/errors.md) |
 
 REST mutation bodies are limited to 65,536 bytes and Kafka event payloads to 262,144 bytes. Mutation identities are mandatory. Contract fields explicitly identify values prohibited from telemetry.
@@ -146,6 +179,10 @@ Start here if you are new to the codebase. It is not a conventional `Controller 
 - [Data Ownership Map](docs/architecture/data-ownership.md): authoritative writers, schemas, topics, transactions, and AWS ownership
 - [Phase 3 Persistence](docs/architecture/phase-3-persistence.md): implemented schemas, records, locks, and acceptance transaction
 - [Phase 3 Vertical Slice](docs/architecture/phase-3-vertical-slice.md): runtime components, workflow stages, recovery semantics, provider selection, and evidence
+- [Phase 4 Messaging and Observability](docs/architecture/phase-4-messaging-and-observability.md): CDC/Kafka topology, delivery boundaries, replay, telemetry, and scope
+- [Phase 4 Persistence](docs/architecture/phase-4-persistence.md): outbox, inbox, replay-generation, workflow, and migration semantics
+- [Phase 4 Failure Recovery](docs/runbooks/phase-4-failure-recovery.md): broker, duplicate, worker-loss, poison, DLQ, replay, and telemetry procedures
+- [Phase 4 Local Verification](docs/verification/phase-4-local-verification.md): measured runtime, trace, log, and metric evidence
 - [Phase 3 API Implementation](docs/contracts/phase-3-api.md): active REST/gRPC subset, authentication, fields, and error behavior
 - [Contracts and Provider Port](docs/architecture/contracts-and-provider-port.md): wire authorities, compatibility rules, provider outcomes, and conformance behavior
 - [Quality Gates](docs/architecture/quality-gates.md): CI stages, failure policy, dependency audit, and container scanning
@@ -158,4 +195,10 @@ Start here if you are new to the codebase. It is not a conventional `Controller 
 
 ## Current State
 
-The Phase 3 synchronous vertical slice is complete in code. The control API authenticates OIDC callers and accepts create intent idempotently over REST and gRPC; PostgreSQL atomically commits desired state, operation, IPv4 reservation, audit, and outbox records; the orchestrator executes leased and fenced checkpoints through the provider gRPC service; and ordered projections expose terminal operation and instance state. The fake path is verified end to end. The Proxmox path is implemented behind strict allowlists and fixture-tested, but no live provider mutation has been run.
+The Phase 4 asynchronous create-instance slice is complete in code and verified locally. The control
+API accepts durable intent during a broker outage; Debezium and Kafka drain it after recovery;
+inboxes, replay generations, leases, and fencing prevent duplicate provider effects; and a restarted
+worker resumes the persisted provider task. Governed dead-letter and replay outcomes are projected for
+administrators. One trace crosses the API, database, CDC, Kafka, workflow, and provider boundary,
+while metrics and correlated logs reach the local evidence stack through OpenTelemetry. The Proxmox
+path remains behind strict allowlists and fixture tests; no live provider mutation has been run.

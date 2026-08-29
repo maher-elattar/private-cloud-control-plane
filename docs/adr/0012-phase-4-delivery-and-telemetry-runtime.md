@@ -73,7 +73,11 @@ batching, retry, filtering, and redaction controls.
 
 - Stop Kafka before and after command acceptance, then prove recovery from the committed outbox.
 - Stop consumers before database commit and after commit but before offset commit.
-- Inject ordinary duplicates and prove one provider resource; authorize a replay and prove a new
-  generation with the original event ID.
+- Inject ordinary duplicates and prove one provider resource; authorize a compatible replay and prove
+  a new generation with the original event ID; prove an incompatible replay is consumed and rejected
+  without closing the original dead letter.
 - Query Tempo for the known request trace and Prometheus for the expected counters and histograms.
 - Scan exported attributes and labels for prohibited fixture values.
+
+The measured local results are recorded in
+[Phase 4 Local Verification](../verification/phase-4-local-verification.md).

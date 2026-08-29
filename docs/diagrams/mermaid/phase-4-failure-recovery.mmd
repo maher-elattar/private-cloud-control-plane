@@ -1,0 +1,44 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":34,"rankSpacing":52,"htmlLabels":true}}}%%
+flowchart TB
+  Request["Tenant mutation"] --> Commit["Commit domain state + outbox"]
+  Commit --> Broker{"Kafka available?"}
+  Broker -- "No" --> Pending["Keep committed outbox pending<br/>API still returns 202"]
+  Pending --> Recover["Kafka and Connect recover"]
+  Recover --> Delivery["Publish original event identity"]
+  Broker -- "Yes" --> Delivery
+
+  Delivery --> Envelope{"Envelope and delivery<br/>metadata validate?"}
+  Envelope -- "No" --> Quarantine["Store payload hash + broker coordinates<br/>Never store raw poison bytes"]
+  Envelope -- "Yes" --> Receipt{"Inbox receipt exists?"}
+  Receipt -- "Yes" --> Duplicate["Record duplicate<br/>Commit offset<br/>No provider call"]
+  Receipt -- "No" --> Handle["Retry handler up to bounded maximum"]
+  Handle --> Outcome{"Handling outcome"}
+  Outcome -- "Durable success" --> Workflow["Commit inbox + workflow<br/>Then commit offset"]
+  Outcome -- "Infrastructure failure" --> Redeliver["Leave offset uncommitted<br/>Recover dependency and redeliver"]
+  Outcome -- "Permanent contract failure" --> DLQ["Commit sanitized dead letter<br/>Publish DLQ fact through outbox"]
+
+  Workflow --> Crash{"Worker crashes mid-task?"}
+  Crash -- "No" --> Complete["Continue checkpointed workflow"]
+  Crash -- "Yes" --> Lease["Lease expires<br/>new worker claims higher fence"]
+  Lease --> Resume["Resume persisted provider task reference<br/>do not create another resource"]
+  Resume --> Complete
+
+  DLQ --> Admin["Administrator supplies reason + idempotency key"]
+  Admin --> Allowed{"Replay policy allows it?"}
+  Allowed -- "No" --> Conflict["409 REPLAY_NOT_ALLOWED"]
+  Allowed -- "Yes" --> Supported{"Current deployment supports original contract?"}
+  Supported -- "No" --> Rejected["Record rejected decision<br/>leave dead letter open"]
+  Supported -- "Yes" --> Generation["Admit original event at generation + 1<br/>preserve event ID and new causation"]
+  Rejected --> Resolution["Commit replay resolution fact<br/>to workflow outbox"]
+  Generation --> Resolution
+  Resolution --> Project["Control API consumes fact<br/>updates request and admin projection"]
+  Generation --> Workflow
+
+  classDef normal fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef durable fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef warning fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef failure fill:#fee2e2,stroke:#b91c1c,color:#450a0a
+  class Commit,Delivery,Workflow,Complete,Generation,Resolution,Project durable
+  class Pending,Recover,Lease,Resume,Admin,Supported warning
+  class Quarantine,Redeliver,DLQ,Conflict,Rejected failure
+  class Request,Duplicate,Handle normal

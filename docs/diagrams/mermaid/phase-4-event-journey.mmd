@@ -1,0 +1,60 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":42,"width":148,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+sequenceDiagram
+  autonumber
+  actor Client
+  participant API as Control API
+  participant CDB as control schema
+  participant CDC as Debezium Connect
+  participant Kafka
+  participant Orch as Orchestrator
+  participant WDB as workflow schema
+  participant Provider as Provider gRPC
+  participant Projection as projection schema
+
+  Client->>API: POST instance + JWT + idempotency key + traceparent
+  API->>API: HTTP span + authorization + command-accept span
+  API->>CDB: One transaction: intent, operation, lease, audit, outbox
+  Note over API,CDB: Outbox stores the versioned envelope and serialized W3C context.
+  CDB-->>API: Commit
+  API-->>Client: 202 Accepted + operation ID
+
+  CDC->>CDB: Read committed WAL change
+  CDC->>CDC: db-log-write + outbox-relay spans
+  CDC-)Kafka: Publish keyed command with W3C headers
+  Kafka-)Orch: At-least-once delivery + broker append timestamp
+  Orch->>Orch: Restore context + consumer span + bounded handler retries
+  Orch->>WDB: Commit inbox receipt and initial workflow
+  Orch->>Kafka: Commit offset only after database commit
+
+  loop One leased and fenced transition per claim
+    Orch->>WDB: Claim checkpoint and restore persisted parent context
+    Orch->>Orch: workflow-stage span
+    Orch->>Provider: Provider gRPC with stable request ID
+    Provider-->>Orch: Task, result, or observed state
+    Orch->>WDB: Commit checkpoint and workflow outbox event
+  end
+
+  CDC->>WDB: Read committed workflow outbox
+  CDC-)Kafka: Publish progress or terminal fact
+  Kafka-)API: Projection consumer delivery
+  API->>Projection: Apply read model and receipt atomically
+  API->>Kafka: Commit offset
+
+  opt Governed dead-letter replay
+    Kafka-)Orch: Replay request with operator attribution
+    Orch->>WDB: Commit replay decision + resolution outbox fact
+    Note over Orch,WDB: The Orchestrator never updates the control schema.
+    CDC->>WDB: Read committed replay resolution
+    CDC-)Kafka: Publish provisioning.replay.resolved
+    Kafka-)API: Deliver replay resolution fact
+    API->>CDB: Update replay request in owner transaction
+    API->>Projection: Update admin projection + receipt atomically
+    API->>Kafka: Commit offset
+  end
+
+  Client->>API: GET operation and instance
+  API->>Projection: Read project-scoped documents
+  Projection-->>API: succeeded + active
+  API-->>Client: Desired and observed state
+
+  Note over API,Provider: One trace ID crosses HTTP, PostgreSQL, Debezium, Kafka, workflow restart, and gRPC.

@@ -40,6 +40,9 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | Phase 3 synchronous create      | `mermaid/phase-3-synchronous-create.mmd`     | `rendered/phase-3-synchronous-create.mermaid.svg`     |
 | Phase 3 checkpoint recovery     | `mermaid/phase-3-checkpoint-recovery.mmd`    | `rendered/phase-3-checkpoint-recovery.mermaid.svg`    |
 | Phase 3 workflow stages         | `mermaid/phase-3-workflow-stages.mmd`        | `rendered/phase-3-workflow-stages.mermaid.svg`        |
+| Phase 4 event journey           | `mermaid/phase-4-event-journey.mmd`          | `rendered/phase-4-event-journey.mermaid.svg`          |
+| Phase 4 failure recovery        | `mermaid/phase-4-failure-recovery.mmd`       | `rendered/phase-4-failure-recovery.mermaid.svg`       |
+| Phase 4 telemetry pipeline      | `mermaid/phase-4-telemetry-pipeline.mmd`     | `rendered/phase-4-telemetry-pipeline.mermaid.svg`     |
 
 ## Mermaid Editing And Validation
 
