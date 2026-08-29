@@ -7,9 +7,9 @@ without recording concrete evidence.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: 1 - Durable retry, exhaustion, and recovery policy (ready to commit)
-- Last completed checkpoint: 0 - Gap audit and execution ledger
-- Last Phase 4 commit: `aa5ac87 docs: record phase 4 recovery and observability evidence`
+- Current checkpoint: 2 - Complete telemetry semantics and application instrumentation
+- Last completed checkpoint: 1 - Durable retry, exhaustion, and recovery policy
+- Last Phase 4 commit: `a0bee75 feat: complete durable workflow recovery policy`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -26,7 +26,7 @@ without recording concrete evidence.
 
 ### Checkpoint 1 - Durable retry, exhaustion, and recovery policy
 
-- Status: In progress
+- Status: Complete
 - Required work:
   - Implement at most eight retryable workflow failures within a 15-minute budget.
   - Use full-jitter backoff with a 500 ms base and 30-second ceiling.
@@ -50,7 +50,7 @@ without recording concrete evidence.
 
 ### Checkpoint 2 - Complete telemetry semantics and application instrumentation
 
-- Status: Pending
+- Status: In progress
 - Required work:
   - Add administrative replay traces with a span link to the original failed trace.
   - Add injectable/in-memory trace and metric exporters for deterministic tests.
