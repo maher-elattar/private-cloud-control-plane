@@ -1,0 +1,24 @@
+{
+  "eventId": "70000000-0000-4000-8000-000000000001",
+  "schemaName": "audit.recorded",
+  "schemaVersion": 1,
+  "aggregateType": "audit",
+  "aggregateId": "70000000-0000-4000-8000-000000000001",
+  "projectId": "30000000-0000-4000-8000-000000000001",
+  "operationId": "40000000-0000-4000-8000-000000000001",
+  "correlationId": "50000000-0000-4000-8000-000000000001",
+  "causationId": "60000000-0000-4000-8000-000000000001",
+  "occurredAt": "2026-08-30T00:00:00.000Z",
+  "traceContext": {
+    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+  },
+  "partitionKey": "30000000-0000-4000-8000-000000000001",
+  "data": {
+    "actorId": "provisioning-orchestrator",
+    "actorRole": "service",
+    "action": "create_instance",
+    "targetType": "instance",
+    "targetId": "20000000-0000-4000-8000-000000000001",
+    "outcome": "succeeded"
+  }
+}

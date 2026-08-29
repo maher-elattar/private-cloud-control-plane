@@ -21,6 +21,7 @@
     "graph": "nx graph",
     "lint": "nx run-many -t lint",
     "test": "nx run-many -t test",
+    "verify:audit-topology": "nx run-many -t build --projects=application,postgres-adapter,provider-adapters && node tools/verification/verify-audit-topology.mjs",
     "typecheck": "nx run-many -t typecheck"
   },
   "devDependencies": {

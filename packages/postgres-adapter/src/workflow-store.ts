@@ -41,6 +41,7 @@ import { sql, type Transaction } from 'kysely';
 import { parseJsonColumn } from './column-codec.js';
 import type { PostgresClient, PostgresDatabase } from './database.js';
 import { serializeDebeziumTraceContext } from './trace-carrier.js';
+import { auditRecordedEvent } from './audit-event.js';
 
 /** Identifies this consumer in `workflow.command_receipts`. */
 const CONSUMER_NAME = 'provisioning-orchestrator.v1';
@@ -132,6 +133,9 @@ export class PostgresWorkflowStore implements WorkflowStore {
           deadLetter.replay_generation,
           now,
         );
+        await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'rejected', now, {
+          reasonReference: request.data.replayRequestId,
+        });
         return 'rejected';
       }
 
@@ -147,6 +151,9 @@ export class PostgresWorkflowStore implements WorkflowStore {
           deadLetter.replay_generation,
           now,
         );
+        await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'rejected', now, {
+          reasonReference: request.data.replayRequestId,
+        });
         return 'rejected';
       }
       const replayGeneration = deadLetter.replay_generation + 1;
@@ -173,9 +180,15 @@ export class PostgresWorkflowStore implements WorkflowStore {
           .where('original_event_id', '=', original.eventId)
           .executeTakeFirstOrThrow();
         await this.writeReplayResolution(tx, request, 'completed', replayGeneration, now);
+        await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'accepted', now, {
+          reasonReference: request.data.replayRequestId,
+        });
         return 'accepted';
       }
       await this.writeReplayResolution(tx, request, 'rejected', deadLetter.replay_generation, now);
+      await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'rejected', now, {
+        reasonReference: request.data.replayRequestId,
+      });
       return 'rejected';
     });
   }
@@ -228,6 +241,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         replayGeneration: input.delivery.replayGeneration,
         now,
       });
+      await this.writeServiceAudit(tx, input.event, 'dead_letter_command', 'failed', now);
       return 'dead_lettered';
     });
   }
@@ -420,6 +434,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         replayGeneration: workflow.replay_generation,
         now,
       });
+      await this.writeServiceAudit(tx, input.event, 'provisioning_retry_exhausted', 'failed', now);
       await this.releaseLease(tx, workflow.instance_id, input);
     });
   }
@@ -465,6 +480,13 @@ export class PostgresWorkflowStore implements WorkflowStore {
         .where('replay_generation', '=', workflow.replay_generation)
         .executeTakeFirstOrThrow();
       await this.writeEvent(tx, input.event);
+      await this.writeServiceAudit(
+        tx,
+        input.event,
+        'create_instance',
+        input.status === 'succeeded' ? 'succeeded' : 'failed',
+        now,
+      );
       await this.releaseLease(tx, workflow.instance_id, input);
     });
   }
@@ -738,29 +760,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         deadLetteredAt: input.now.toISOString(),
       },
     };
-    await this.telemetry.trace(
-      'controlplane.outbox.write',
-      { 'outbox.owner': 'workflow', 'event.schema.name': event.schemaName },
-      () =>
-        tx
-          .insertInto('workflow.outbox')
-          .values({
-            outbox_id: randomUUID(),
-            event_id: event.eventId,
-            aggregate_id: event.aggregateId,
-            aggregate_type: event.aggregateType,
-            schema_name: event.schemaName,
-            schema_version: event.schemaVersion,
-            topic: 'provisioning.dlq.v1',
-            partition_key: event.partitionKey,
-            payload: event,
-            tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
-            replay_generation: 0,
-            occurred_at: input.now,
-            created_at: input.now,
-          })
-          .executeTakeFirstOrThrow(),
-    );
+    await this.writeWorkflowOutbox(tx, event, 'provisioning.dlq.v1', input.now);
   }
 
   /**
@@ -772,6 +772,64 @@ export class PostgresWorkflowStore implements WorkflowStore {
    * @see docs/architecture/glossary.md#transactional-outbox
    */
   private writeEvent(tx: Tx, event: WorkflowEvent): Promise<unknown> {
+    return this.writeWorkflowOutbox(
+      tx,
+      event,
+      'provisioning.events.v1',
+      new Date(event.occurredAt),
+    );
+  }
+
+  /** Writes one service audit row and its archive fact without Kafka delivery coordinates. */
+  private async writeServiceAudit(
+    tx: Tx,
+    cause: EventEnvelope,
+    action: string,
+    outcome: 'accepted' | 'succeeded' | 'rejected' | 'failed',
+    occurredAt: Date,
+    options: { readonly reasonReference?: string } = {},
+  ): Promise<void> {
+    const event = auditRecordedEvent({
+      eventId: randomUUID(),
+      projectId: cause.projectId,
+      operationId: cause.operationId,
+      correlationId: cause.correlationId,
+      causationId: cause.eventId,
+      occurredAt,
+      traceContext: cause.traceContext,
+      actorId: 'provisioning-orchestrator',
+      actorRole: 'service',
+      action,
+      targetType: cause.aggregateType,
+      targetId: cause.aggregateId,
+      outcome,
+      ...(options.reasonReference ? { reasonReference: options.reasonReference } : {}),
+    });
+    await tx
+      .insertInto('audit.entries')
+      .values({
+        id: event.eventId,
+        project_id: event.projectId,
+        actor_id: event.data.actorId,
+        actor_role: event.data.actorRole,
+        action: event.data.action,
+        target_type: event.data.targetType,
+        target_id: event.data.targetId,
+        outcome: event.data.outcome,
+        operation_id: event.operationId,
+        occurred_at: occurredAt,
+      })
+      .executeTakeFirstOrThrow();
+    await this.writeWorkflowOutbox(tx, event, 'audit.events.v1', occurredAt);
+  }
+
+  /** Appends an owner event to its explicitly allowlisted topic. */
+  private writeWorkflowOutbox(
+    tx: Tx,
+    event: EventEnvelope,
+    topic: 'provisioning.events.v1' | 'provisioning.dlq.v1' | 'audit.events.v1',
+    occurredAt: Date,
+  ): Promise<unknown> {
     return this.telemetry.trace(
       'controlplane.outbox.write',
       { 'outbox.owner': 'workflow', 'event.schema.name': event.schemaName },
@@ -785,12 +843,12 @@ export class PostgresWorkflowStore implements WorkflowStore {
             aggregate_type: event.aggregateType,
             schema_name: event.schemaName,
             schema_version: event.schemaVersion,
-            topic: 'provisioning.events.v1',
+            topic,
             partition_key: event.partitionKey,
             payload: event,
             tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
             replay_generation: 0,
-            occurred_at: new Date(event.occurredAt),
+            occurred_at: occurredAt,
             created_at: new Date(),
           })
           .executeTakeFirst(),

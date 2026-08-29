@@ -22,6 +22,7 @@
 | Duplicate replay request | Redelivering request event `c2000000-0000-4000-8000-000000000002` left one physical receipt and one resolution event; no second replay decision or workflow was created |
 | Invalid delivery metadata | A valid envelope with replay generation `-1` was attempted three times, quarantined as a 64-character payload hash at partition 1 offset 6, and committed with zero consumer lag |
 | Port collision | A second Orchestrator failed startup and closed cleanly rather than remaining as a hidden Kafka consumer |
+| Transactional audit CDC | A clean PostgreSQL run produced two Control API and three Orchestrator audit facts; Debezium routed all five to `audit.events.v1` with project keys, contract headers, trace context, and generation zero |
 
 The Kafka outage drill began with two existing pending poison fixtures. The accepted outage command
 increased that backlog and later received a matching workflow receipt; one intentionally retained
@@ -33,6 +34,13 @@ receipt with Kafka coordinates. A compatible request also creates a logical orig
 at generation one with null broker coordinates, because the replay decision and command admission
 occur in one Orchestrator transaction rather than through a fabricated Kafka delivery. Producer
 outboxes remained immutable throughout these drills.
+
+The audit topology drill is repeatable with `pnpm run verify:audit-topology` after migrations and
+seed are applied. It exercises create acceptance, an idempotent duplicate, terminal fake-provider
+provisioning, governed command dead-lettering, dead-letter projection, authorized replay, and replay
+admission. The inspected generation-one original-event receipt retained null source topic,
+partition, and offset, while the physical replay-request receipt retained its real Kafka delivery
+coordinates. The five audit outbox rows matched the five append-only relational audit entries.
 
 ## Trace Evidence
 

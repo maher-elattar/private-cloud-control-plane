@@ -143,6 +143,9 @@ const validateEvent = ajv.compile(eventSchema);
 const validEvent = JSON.parse(
   await readFile('packages/contracts/fixtures/events/instance-create-requested.valid.json', 'utf8'),
 );
+const validAuditEvent = JSON.parse(
+  await readFile('packages/contracts/fixtures/events/audit-recorded.valid.json', 'utf8'),
+);
 const invalidEvent = JSON.parse(
   await readFile('packages/contracts/fixtures/events/missing-identity.invalid.json', 'utf8'),
 );
@@ -150,10 +153,18 @@ invariant(
   validateEvent(validEvent),
   `Valid event fixture failed: ${ajv.errorsText(validateEvent.errors)}`,
 );
+invariant(
+  validateEvent(validAuditEvent),
+  `Valid audit fixture failed: ${ajv.errorsText(validateEvent.errors)}`,
+);
 invariant(!validateEvent(invalidEvent), 'Invalid event fixture unexpectedly passed.');
 invariant(
   Buffer.byteLength(JSON.stringify(validEvent)) <= 262_144,
   'Valid event exceeds the 262,144-byte event limit.',
+);
+invariant(
+  Buffer.byteLength(JSON.stringify(validAuditEvent)) <= 262_144,
+  'Valid audit event exceeds the 262,144-byte event limit.',
 );
 
 const asyncApi = parseYaml(

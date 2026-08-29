@@ -24,4 +24,4 @@ Sources: `packages/contracts/asyncapi/control-plane.v1.yaml` and `schemas/contro
 | reconciliation.events.v1 | UnknownOutcomeResolved | reconciler | control-api, provisioning-orchestrator | partitionKey | at-least-once | UnknownOutcomeResolved | SRS-FR-036, SRS-FR-072 |
 | reconciliation.events.v1 | ManualReviewCreated | reconciler | control-api | partitionKey | at-least-once | ManualReviewCreated | SRS-FR-056, SRS-FR-074 |
 | provisioning.dlq.v1 | ProvisioningDeadLettered | provisioning-orchestrator | control-api | partitionKey | at-least-once | ProvisioningDeadLettered | SRS-FR-066, SRS-FR-067 |
-| audit.events.v1 | AuditRecorded | control-api, provisioning-orchestrator, reconciler | audit-archive | partitionKey | at-least-once | AuditRecorded | SRS-FR-005, SRS-FR-067, SRS-FR-089, SRS-NFR-019 |
+| audit.events.v1 | AuditRecorded | control-api, provisioning-orchestrator | audit-archive | partitionKey | at-least-once | AuditRecorded | SRS-FR-005, SRS-FR-067, SRS-FR-089, SRS-NFR-019 |

@@ -43,6 +43,8 @@ The create-instance path now crosses a PostgreSQL transactional outbox, Debezium
 Kafka commands, an inbox-deduplicated workflow, provider gRPC, and Kafka-backed read projections.
 Offsets advance only after durable consumer transactions. Bounded permanent failures enter a
 governed DLQ and replay path; infrastructure failures remain uncommitted for recovery.
+Control API and Orchestrator state changes also publish append-only `audit.recorded` facts from their
+own transactions, partitioned by project for the future audit archive.
 
 ![Phase 4 telemetry pipeline](docs/diagrams/rendered/phase-4-telemetry-pipeline.mermaid.svg)
 
@@ -199,6 +201,6 @@ The Phase 4 asynchronous create-instance slice is complete in code and verified 
 API accepts durable intent during a broker outage; Debezium and Kafka drain it after recovery;
 inboxes, replay generations, leases, and fencing prevent duplicate provider effects; and a restarted
 worker resumes the persisted provider task. Governed dead-letter and replay outcomes are projected for
-administrators. One trace crosses the API, database, CDC, Kafka, workflow, and provider boundary,
+administrators, while attributed audit facts cross CDC into their dedicated Kafka topic. One trace crosses the API, database, CDC, Kafka, workflow, and provider boundary,
 while metrics and correlated logs reach the local evidence stack through OpenTelemetry. The Proxmox
 path remains behind strict allowlists and fixture tests; no live provider mutation has been run.

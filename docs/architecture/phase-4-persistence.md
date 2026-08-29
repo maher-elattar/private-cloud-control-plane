@@ -15,7 +15,7 @@ configuration can route both tables safely.
 | `outbox_id` | Unique physical CDC row; a replay always receives a new value |
 | `event_id` | Stable logical event identity used by domain deduplication |
 | `topic` | Explicit allowlisted destination rather than a name derived from payload data |
-| `partition_key` | Instance identity that preserves same-instance ordering |
+| `partition_key` | Instance identity for provisioning or project identity for audit ordering |
 | `schema_name`, `schema_version` | Consumer compatibility decision |
 | `payload` | Complete validated versioned envelope |
 | `tracingspancontext` | Serialized W3C carrier restored by Debezium tracing |
@@ -24,6 +24,19 @@ configuration can route both tables safely.
 
 Outbox updates are forbidden by convention. Debezium filters deletes, and cleanup remains disabled
 until connector lag and the recovery horizon can be measured safely.
+
+## Transactional Audit Facts
+
+The service that performs a state change writes both its append-only `audit.entries` row and an
+`audit.recorded` envelope to its own outbox before commit. Control API facts retain the authenticated
+actor and role. Orchestrator facts use the fixed service identity `provisioning-orchestrator`; they do
+not pretend to know the original actor after the command boundary. Replay facts carry the replay
+request UUID as `reasonReference`, while the reason text remains in restricted owner storage.
+
+Audit facts use new event IDs and generation zero because they are new facts, not replays of the
+provisioning command. Their causation ID points to the command, terminal event, or replay request
+that produced the decision. This gives the archive a walkable causal chain without high-cardinality
+metric labels or fabricated broker metadata.
 
 ## Inbox and Offset Boundary
 
@@ -65,7 +78,7 @@ does not replace Kafka offsets. No consumer updates a producer-owned outbox row.
 checksums, and records each successful migration in `public.schema_migrations` in the same transaction
 as its SQL. It can adopt the original untracked Phase 3 schema exactly once before applying Phase 4.
 
-Local verification applies both migrations to a clean PostgreSQL 16 database, applies the runner a
+Local verification applies all numbered migrations to a clean PostgreSQL 16 database, applies the runner a
 second time, and separately verifies adoption of an existing Phase 3 database.
 
 See [Phase 4 Messaging and Observability](phase-4-messaging-and-observability.md) for the full event

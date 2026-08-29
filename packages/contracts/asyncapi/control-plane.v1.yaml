@@ -169,7 +169,7 @@ operations:
     channel: { $ref: '#/channels/auditEvents' }
     messages:
       - { $ref: '#/channels/auditEvents/messages/auditRecorded' }
-    x-service: control-api,provisioning-orchestrator,reconciler
+    x-service: control-api,provisioning-orchestrator
   auditArchiveReceivesAuditEvents:
     action: receive
     summary: The audit projection and archive path consume attributed facts idempotently.

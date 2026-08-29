@@ -32,7 +32,7 @@ consumer:
 | `provisioning.events.v1` | Provisioning Orchestrator to Control API projection | Instance ID |
 | `provisioning.dlq.v1` | Provisioning Orchestrator to Control API administrator projection | Instance ID |
 | `reconciliation.events.v1` | Contract reserved for the Reconciler and Control API | Instance ID |
-| `audit.events.v1` | Contract reserved for the audit archive | Aggregate partition key |
+| `audit.events.v1` | Control API and Provisioning Orchestrator owner outboxes to the future audit archive | Project ID |
 
 Kafka topic names and message schemas are versioned independently. A topic version is not permission
 to accept every schema version carried on it; each consumer rejects contracts it does not understand.
@@ -72,6 +72,18 @@ modules are composition roots: they bind application ports to adapters and own r
 7. Debezium publishes progress and terminal facts. The Control API atomically applies each fact and
    records its projection receipt before committing the Kafka offset.
 8. Reads return only project-scoped projection documents.
+
+Audit facts follow the same commit rule without joining the command authority path. The Control API
+publishes attributed create acceptance and replay-request facts from `control.outbox`. The
+Orchestrator publishes service-attributed terminal provisioning, retry-exhaustion, command-DLQ, and
+replay-decision facts from `workflow.outbox`. Each owner inserts `audit.entries` and the matching
+`audit.recorded` envelope in the transaction that owns the state change. The event ID is also the
+audit aggregate ID, the project ID is the partition key, and replay facts reference the durable
+replay request rather than copying its reason into Kafka.
+
+A normal replay request receipt retains its real Kafka topic, partition, and offset. The restored
+original command is admitted as generation `n+1` inside the replay transaction and therefore stores
+null source coordinates; no code invents a Kafka location for a record the broker never delivered.
 
 The two durable identities serve different failure domains. `outbox_id` identifies one physical CDC
 row. `(consumer_name, event_id, replay_generation)` identifies one permitted logical delivery. A

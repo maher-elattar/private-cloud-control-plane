@@ -31,6 +31,8 @@ import type {
   ReplayDeadLetterCommand,
 } from '@private-cloud/application';
 import type {
+  AuditRecordedV1,
+  EventEnvelope,
   InstanceCreateRequestedV1,
   ProvisioningReplayRequestedV1,
 } from '@private-cloud/contracts';
@@ -39,6 +41,7 @@ import { sql, type Transaction } from 'kysely';
 import { parseJsonColumn, toIsoTimestamp } from './column-codec.js';
 import type { PostgresClient, PostgresDatabase } from './database.js';
 import { serializeDebeziumTraceContext } from './trace-carrier.js';
+import { auditRecordedEvent } from './audit-event.js';
 
 /**
  * How long an idempotency record stays replayable (24 hours).
@@ -302,7 +305,23 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
               updated_at: now,
             })
             .executeTakeFirstOrThrow();
-          await this.writeControlOutbox(tx, event, now);
+          await this.writeControlOutbox(tx, event, 'provisioning.commands.v1', now);
+          await this.writeControlAudit(tx, {
+            eventId: randomUUID(),
+            projectId: deadLetter.projectId,
+            operationId: deadLetter.operationId,
+            correlationId: command.correlationId,
+            causationId: event.eventId,
+            occurredAt: now,
+            traceContext: event.traceContext,
+            actorId: command.actor.subject,
+            actorRole: 'platform_administrator',
+            action: 'replay_dead_letter',
+            targetType: 'event',
+            targetId: command.originalEventId,
+            outcome: 'accepted',
+            reasonReference: replayRequestId,
+          });
           return {
             operationId: deadLetter.operationId,
             targetId: deadLetter.aggregateId,
@@ -748,22 +767,22 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         expires_at: new Date(now.getTime() + IDEMPOTENCY_RECORD_TTL_MS),
       })
       .execute();
-    await this.writeControlOutbox(tx, records.event, now);
-    await tx
-      .insertInto('audit.entries')
-      .values({
-        id: randomUUID(),
-        project_id: command.projectId,
-        actor_id: command.actor.subject,
-        actor_role: 'tenant_developer',
-        action: CREATE_INSTANCE_ACTION,
-        target_type: 'instance',
-        target_id: instanceId,
-        outcome: 'accepted',
-        operation_id: operationId,
-        occurred_at: now,
-      })
-      .execute();
+    await this.writeControlOutbox(tx, records.event, 'provisioning.commands.v1', now);
+    await this.writeControlAudit(tx, {
+      eventId: randomUUID(),
+      projectId: command.projectId,
+      operationId,
+      correlationId: command.correlationId,
+      causationId: operationId,
+      occurredAt: now,
+      traceContext: records.event.traceContext,
+      actorId: command.actor.subject,
+      actorRole: 'tenant_developer',
+      action: CREATE_INSTANCE_ACTION,
+      targetType: 'instance',
+      targetId: instanceId,
+      outcome: 'accepted',
+    });
 
     // --- Read projections ---------------------------------------------------------------
     // Seeded here rather than by the projection worker so a client that polls immediately
@@ -1004,7 +1023,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   /** Appends a command under a dedicated child span inside its owning transaction. */
   private writeControlOutbox(
     tx: Tx,
-    event: InstanceCreateRequestedV1 | ProvisioningReplayRequestedV1,
+    event: EventEnvelope,
+    topic: 'provisioning.commands.v1' | 'audit.events.v1',
     now: Date,
   ): Promise<unknown> {
     return this.telemetry.trace(
@@ -1020,7 +1040,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
             aggregate_type: event.aggregateType,
             schema_name: event.schemaName,
             schema_version: event.schemaVersion,
-            topic: 'provisioning.commands.v1',
+            topic,
             partition_key: event.partitionKey,
             payload: event,
             tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
@@ -1030,5 +1050,29 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
           })
           .executeTakeFirstOrThrow(),
     );
+  }
+
+  /** Appends the relational audit row and its archive event in the same owner transaction. */
+  private async writeControlAudit(
+    tx: Tx,
+    input: Parameters<typeof auditRecordedEvent>[0],
+  ): Promise<void> {
+    const event: AuditRecordedV1 = auditRecordedEvent(input);
+    await tx
+      .insertInto('audit.entries')
+      .values({
+        id: event.eventId,
+        project_id: event.projectId,
+        actor_id: event.data.actorId,
+        actor_role: event.data.actorRole,
+        action: event.data.action,
+        target_type: event.data.targetType,
+        target_id: event.data.targetId,
+        outcome: event.data.outcome,
+        operation_id: event.operationId,
+        occurred_at: input.occurredAt,
+      })
+      .executeTakeFirstOrThrow();
+    await this.writeControlOutbox(tx, event, 'audit.events.v1', input.occurredAt);
   }
 }

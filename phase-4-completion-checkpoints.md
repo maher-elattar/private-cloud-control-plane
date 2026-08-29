@@ -7,8 +7,8 @@ without recording concrete evidence.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: 3 - Complete event topology and audit publication
-- Last completed checkpoint: 2 - Complete telemetry semantics and application instrumentation
+- Current checkpoint: 4 - Full containerized Phase 4 environment and infrastructure metrics
+- Last completed checkpoint: 3 - Complete event topology and audit publication
 - Last Phase 4 commit: `b9e9186 feat: complete phase 4 telemetry coverage`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
@@ -84,17 +84,36 @@ without recording concrete evidence.
 
 ### Checkpoint 3 - Complete event topology and audit publication
 
-- Status: In progress
+- Status: Complete
 - Required work:
   - Publish `audit.recorded` facts transactionally from Control API and Orchestrator owner outboxes.
   - Preserve replay identity and trace semantics without fabricating Kafka coordinates.
   - Align AsyncAPI producer claims, topic routing, and implemented messages.
 - Verification required: contract checks, transaction tests, CDC routing test, and topic inspection.
+- Evidence recorded 2026-08-30:
+  - Control API create acceptance and administrative replay requests write an attributed relational
+    audit row plus an `audit.recorded` fact to `control.outbox` in the owner transaction.
+  - Orchestrator terminal provisioning, retry exhaustion, command dead-lettering, and replay
+    decisions write service-attributed relational audit rows plus matching `workflow.outbox` facts.
+  - Idempotent duplicate commands produce no duplicate audit fact. Audit event IDs match relational
+    row IDs, facts are partitioned by project, and restricted replay reasons remain in owner storage.
+  - A clean PostgreSQL 16.10 transaction drill produced two Control API and three Orchestrator audit
+    facts with matching relational entries. The restored generation-one original command receipt
+    retained null topic, partition, and offset.
+  - A live Debezium and Kafka drill routed exactly five records to `audit.events.v1`; topic inspection
+    confirmed project keys, schema headers, generation zero, and W3C trace context on every record.
+  - Contract validation passed 39 REST operations, 54 gRPC methods, 20 event messages, and all
+    invariants. Documentation validation passed 48 Markdown files and required diagram artifacts.
+  - Uncached typecheck, lint, and builds passed for contracts, PostgreSQL adapter, Control API, and
+    Orchestrator. Application, messaging, observability, provider-adapter, and Control API suites
+    passed 43 tests in total.
+- Review result: approved; no blocking findings after transaction, duplicate, authorization-boundary,
+  payload-minimization, causal-identity, and broker-coordinate review.
 - Planned commit: `feat: publish transactional audit facts`
 
 ### Checkpoint 4 - Full containerized Phase 4 environment and infrastructure metrics
 
-- Status: Pending
+- Status: In progress
 - Required work:
   - Add Control API, Orchestrator, Provider, Reconciler, migrations, seed, and deterministic OIDC to
     Compose using the shared production service image.
