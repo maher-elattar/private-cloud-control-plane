@@ -49,20 +49,21 @@ own transactions, partitioned by project for the future audit archive.
 ![Phase 4 telemetry pipeline](docs/diagrams/rendered/phase-4-telemetry-pipeline.mermaid.svg)
 
 OpenTelemetry context is preserved through HTTP/gRPC, PostgreSQL, Debezium, Kafka, workflow
-checkpoints, and provider calls. All services export traces and metrics through the Collector;
-Prometheus, Tempo, Loki, and Grafana provide correlated evidence without entering the correctness
-path.
+checkpoints, and provider calls. Applications and Java agents push OTLP telemetry to the Collector;
+the Collector gathers PostgreSQL and self-metrics, exports traces to Tempo, and presents the only
+endpoint Prometheus scrapes. Grafana queries those backends without entering the correctness path.
 
-Start the local dependency and evidence stack with:
+Build and start the complete local Phase 4 environment with:
 
 ```bash
-docker compose -f deploy/local/compose.phase4.yaml --profile cdc up -d --build
-DATABASE_URL=postgresql://private_cloud:private_cloud@127.0.0.1:55432/private_cloud \
-  pnpm run db:migrate
+docker compose -f deploy/local/compose.phase4.yaml up -d --build
+docker compose -f deploy/local/compose.phase4.yaml ps -a
 ```
 
 The Grafana event-pipeline dashboard is served at
-`http://127.0.0.1:3005/d/private-cloud-phase4-event-pipeline/private-cloud-event-pipeline`.
+`http://127.0.0.1:3101/d/private-cloud-phase4-event-pipeline/private-cloud-event-pipeline`.
+The API is on `http://127.0.0.1:3100`; Prometheus is on `http://127.0.0.1:9090`; Tempo is on
+`http://127.0.0.1:3200`; and Kafka Connect is on `http://127.0.0.1:8083`.
 Application process configuration and failure procedures are documented in the
 [Phase 4 architecture](docs/architecture/phase-4-messaging-and-observability.md) and
 [recovery runbook](docs/runbooks/phase-4-failure-recovery.md).
@@ -202,5 +203,5 @@ API accepts durable intent during a broker outage; Debezium and Kafka drain it a
 inboxes, replay generations, leases, and fencing prevent duplicate provider effects; and a restarted
 worker resumes the persisted provider task. Governed dead-letter and replay outcomes are projected for
 administrators, while attributed audit facts cross CDC into their dedicated Kafka topic. One trace crosses the API, database, CDC, Kafka, workflow, and provider boundary,
-while metrics and correlated logs reach the local evidence stack through OpenTelemetry. The Proxmox
+while metrics and traces reach the local evidence stack through OpenTelemetry. The Proxmox
 path remains behind strict allowlists and fixture tests; no live provider mutation has been run.

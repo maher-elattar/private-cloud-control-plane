@@ -1,9 +1,42 @@
 name: private-cloud-phase4
 
+x-service-build: &service-build
+  context: ../..
+  dockerfile: tools/docker/service.Dockerfile
+  target: runtime
+
+x-runtime-environment: &runtime-environment
+  NODE_ENV: production
+  DEPLOYMENT_ENVIRONMENT: local
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_METRIC_EXPORT_INTERVAL: '5000'
+  OTEL_METRIC_EXPORT_TIMEOUT: '4000'
+  OTEL_SDK_DISABLED: 'false'
+
+x-database-environment: &database-environment
+  DATABASE_URL: postgresql://private_cloud:private_cloud@postgres:5432/private_cloud
+
+x-worker-environment: &worker-environment
+  KAFKA_BROKERS: kafka:29092
+  KAFKA_HANDLER_MAX_ATTEMPTS: '3'
+
+x-service-healthcheck: &service-healthcheck
+  interval: 3s
+  timeout: 3s
+  retries: 30
+  start_period: 10s
+
 services:
   postgres:
     image: postgres:16.10-alpine
-    command: ['postgres', '-c', 'wal_level=logical', '-c', 'max_replication_slots=4']
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=4
+      - -c
+      - max_wal_senders=4
     environment:
       POSTGRES_DB: private_cloud
       POSTGRES_USER: private_cloud
@@ -16,8 +49,79 @@ services:
       retries: 30
     volumes: ['postgres-data:/var/lib/postgresql/data']
 
+  migrate:
+    image: private-cloud/local-runner:phase4
+    build:
+      <<: *service-build
+      args: { APP: control-api }
+      target: local-runtime
+    command: ['node', 'tools/db/migrate.mjs']
+    environment: *database-environment
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: 'no'
+
+  seed:
+    image: private-cloud/local-runner:phase4
+    command: ['node', 'tools/db/seed.mjs']
+    environment: *database-environment
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: 'no'
+
+  local-oidc:
+    image: private-cloud/local-runner:phase4
+    command: ['node', 'local-oidc.mjs']
+    environment:
+      LOCAL_OIDC_HOST: 0.0.0.0
+      LOCAL_OIDC_PORT: '18080'
+      LOCAL_OIDC_ISSUER: http://local-oidc:18080
+      LOCAL_OIDC_AUDIENCE: private-cloud-control-plane
+    ports: ['18080:18080']
+    healthcheck:
+      <<: *service-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:18080/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.10.7
+    command: ['-config.file=/etc/tempo.yaml']
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports: ['3200:3200']
+    restart: unless-stopped
+
+  otel-collector:
+    build:
+      context: ../..
+      dockerfile: tools/docker/otel-collector.Dockerfile
+    command: ['--config=/etc/otelcol/config.yaml']
+    environment:
+      POSTGRES_PASSWORD: private_cloud
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports: ['4317:4317', '4318:4318', '8889:8889', '13133:13133']
+    depends_on:
+      postgres: { condition: service_healthy }
+      tempo: { condition: service_started }
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:13133/']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
   kafka:
-    image: apache/kafka:4.1.2
+    build:
+      context: ../..
+      dockerfile: tools/docker/kafka.Dockerfile
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -32,17 +136,22 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports: ['9092:9092']
+    depends_on:
+      otel-collector: { condition: service_healthy }
     healthcheck:
       test:
         [
           'CMD-SHELL',
-          '/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1',
+          "KAFKA_OPTS='' /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1",
         ]
       interval: 3s
       timeout: 5s
       retries: 30
-    volumes: ['kafka-data:/tmp/kraft-combined-logs']
+      start_period: 10s
+    volumes: ['kafka-data:/var/lib/kafka/data']
+    restart: unless-stopped
 
   kafka-init:
     image: apache/kafka:4.1.2
@@ -54,14 +163,13 @@ services:
     restart: 'no'
 
   debezium-connect:
-    profiles: ['cdc']
     build:
       context: ../..
       dockerfile: tools/docker/debezium-connect.Dockerfile
     depends_on:
       kafka: { condition: service_healthy }
       postgres: { condition: service_healthy }
-      otel-collector: { condition: service_started }
+      otel-collector: { condition: service_healthy }
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
       GROUP_ID: private-cloud-connect
@@ -77,17 +185,22 @@ services:
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_SERVICE_NAME: debezium-connect
       OTEL_PROPAGATORS: tracecontext
-      # EventRouter owns outbox context propagation; producer auto-instrumentation would overwrite it.
       OTEL_INSTRUMENTATION_KAFKA_ENABLED: 'false'
       OTEL_METRICS_EXPORTER: otlp
       OTEL_LOGS_EXPORTER: none
     ports: ['8083:8083']
+    healthcheck:
+      test: ['CMD-SHELL', 'curl --fail --silent http://127.0.0.1:8083/connectors >/dev/null']
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 15s
+    restart: unless-stopped
 
   debezium-init:
-    profiles: ['cdc']
     image: curlimages/curl:8.16.0
     depends_on:
-      debezium-connect: { condition: service_started }
+      debezium-connect: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
     entrypoint: ['/bin/sh', '/config/register-connector.sh']
     volumes:
@@ -95,22 +208,106 @@ services:
       - ./debezium/outbox-connector.json:/config/outbox-connector.json:ro
     restart: 'no'
 
-  tempo:
-    image: grafana/tempo:2.10.7
-    command: ['-config.file=/etc/tempo.yaml']
-    volumes:
-      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
-      - tempo-data:/var/tempo
-    ports: ['3200:3200']
-
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.158.0
-    command: ['--config=/etc/otelcol/config.yaml']
-    volumes:
-      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
-    ports: ['4317:4317', '4318:4318', '8888:8888', '8889:8889', '13133:13133']
+  proxmox-provider:
+    image: private-cloud/proxmox-provider:phase4
+    build:
+      <<: *service-build
+      args: { APP: proxmox-provider }
+    environment:
+      <<: *runtime-environment
+      PORT: '3002'
+      GRPC_LISTEN_URL: 0.0.0.0:50052
+      PROVIDER_ADAPTER: fake
+      FAKE_PROVIDER_LATENCY_MS: '20'
+      FAKE_PROVIDER_TASK_POLLS: '1'
+    ports: ['50052:50052']
     depends_on:
-      tempo: { condition: service_started }
+      otel-collector: { condition: service_healthy }
+    healthcheck:
+      <<: *service-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3002/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+    restart: unless-stopped
+
+  provisioning-orchestrator:
+    image: private-cloud/provisioning-orchestrator:phase4
+    build:
+      <<: *service-build
+      args: { APP: provisioning-orchestrator }
+    environment:
+      <<: [*runtime-environment, *database-environment, *worker-environment]
+      PORT: '3001'
+      PROVIDER_GRPC_URL: proxmox-provider:50052
+      PROVIDER_GRPC_DEADLINE_MS: '10000'
+      WORKER_ID: phase4-orchestrator-1
+    depends_on:
+      seed: { condition: service_completed_successfully }
+      debezium-init: { condition: service_completed_successfully }
+      proxmox-provider: { condition: service_healthy }
+    healthcheck:
+      <<: *service-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+    restart: unless-stopped
+
+  control-api:
+    image: private-cloud/control-api:phase4
+    build:
+      <<: *service-build
+      args: { APP: control-api }
+    environment:
+      <<: [*runtime-environment, *database-environment, *worker-environment]
+      PORT: '3000'
+      GRPC_LISTEN_URL: 0.0.0.0:50051
+      OIDC_ISSUER: http://local-oidc:18080
+      OIDC_AUDIENCE: private-cloud-control-plane
+      OIDC_JWKS_URI: http://local-oidc:18080/.well-known/jwks.json
+    ports: ['3100:3000', '50051:50051']
+    depends_on:
+      seed: { condition: service_completed_successfully }
+      debezium-init: { condition: service_completed_successfully }
+      local-oidc: { condition: service_healthy }
+    healthcheck:
+      <<: *service-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+    restart: unless-stopped
+
+  reconciler:
+    image: private-cloud/reconciler:phase4
+    build:
+      <<: *service-build
+      args: { APP: reconciler }
+    environment:
+      <<: *runtime-environment
+      PORT: '3003'
+    depends_on:
+      otel-collector: { condition: service_healthy }
+    healthcheck:
+      <<: *service-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3003/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+    restart: unless-stopped
 
   prometheus:
     image: prom/prometheus:v3.12.0
@@ -120,27 +317,13 @@ services:
       - prometheus-data:/prometheus
     ports: ['9090:9090']
     depends_on:
-      otel-collector: { condition: service_started }
-
-  loki:
-    image: grafana/loki:3.7.6
-    command: ['-config.file=/etc/loki/local-config.yaml']
-    volumes:
-      - ./observability/loki.yaml:/etc/loki/local-config.yaml:ro
-      - loki-data:/loki
-    ports: ['3100:3100']
-
-  alloy:
-    image: grafana/alloy:v1.18.0
-    command: ['run', '/etc/alloy/config.alloy', '--server.http.listen-addr=0.0.0.0:12345']
-    user: root
-    volumes:
-      - ./observability/config.alloy:/etc/alloy/config.alloy:ro
-      - ./runtime-logs:/var/log/private-cloud:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    ports: ['12345:12345']
-    depends_on:
-      loki: { condition: service_started }
+      otel-collector: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:9090/-/ready']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana:13.1.0
@@ -152,16 +335,20 @@ services:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
-    ports: ['3005:3000']
+    ports: ['3101:3000']
     depends_on:
-      prometheus: { condition: service_started }
+      prometheus: { condition: service_healthy }
       tempo: { condition: service_started }
-      loki: { condition: service_started }
+    healthcheck:
+      test: ['CMD-SHELL', 'wget --quiet --spider http://127.0.0.1:3000/api/health']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
 
 volumes:
   postgres-data:
   kafka-data:
   tempo-data:
   prometheus-data:
-  loki-data:
   grafana-data:

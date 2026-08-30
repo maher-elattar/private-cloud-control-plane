@@ -1,0 +1,40 @@
+---
+openTelemetry:
+  endpoint: http://otel-collector:4317
+  protocol: grpc
+  interval: 5
+  timeoutSeconds: 4
+  serviceName: kafka-broker
+  serviceNamespace: private-cloud
+  serviceVersion: '4.1.2'
+  resourceAttributes:
+    deployment.environment.name: local
+
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=(.+)PerSec\w*, topic=(.+)><>Count'
+    name: kafka_server_brokertopicmetrics_$1_total
+    type: COUNTER
+    labels:
+      topic: '$2'
+  - pattern: 'kafka.network<type=RequestMetrics, name=(.+), request=(.+)><>Count'
+    name: kafka_network_requestmetrics_$1_total
+    type: COUNTER
+    labels:
+      request: '$2'
+  - pattern: 'kafka.cluster<type=Partition, name=(.+), topic=(.+), partition=(.+)><>Value'
+    name: kafka_cluster_partition_$1
+    type: GAUGE
+    labels:
+      topic: '$2'
+      partition: '$3'
+  - pattern: 'kafka.(\w+)<type=([^,]+), name=([^,]+)PerSec\w*><>Count'
+    name: kafka_$1_$2_$3_total
+    type: COUNTER
+  - pattern: 'kafka.(\w+)<type=([^,]+), name=([^,]+)><>Value'
+    name: kafka_$1_$2_$3
+    type: GAUGE
+  - pattern: 'kafka.(\w+)<type=([^,]+), name=([^,]+)><>Count'
+    name: kafka_$1_$2_$3_count
+    type: COUNTER

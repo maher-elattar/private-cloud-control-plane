@@ -6,26 +6,19 @@ contract failure and requires durable evidence before an operator requests repla
 ## Start and Inspect
 
 ```bash
-docker compose -f deploy/local/compose.phase4.yaml --profile cdc up -d --build
-docker compose -f deploy/local/compose.phase4.yaml --profile cdc ps
+docker compose -f deploy/local/compose.phase4.yaml up -d --build
+docker compose -f deploy/local/compose.phase4.yaml ps -a
 curl --fail http://127.0.0.1:13133/
 curl --fail http://127.0.0.1:8083/connectors/private-cloud-outbox/status
 curl --fail http://127.0.0.1:9090/-/ready
-curl --fail http://127.0.0.1:3100/ready
-curl --fail http://127.0.0.1:3200/ready
+curl --fail http://127.0.0.1:3100/health/ready
+curl --fail http://127.0.0.1:3101/api/health
 ```
 
-Run database migrations before starting application processes:
-
-```bash
-DATABASE_URL=postgresql://private_cloud:private_cloud@127.0.0.1:55432/private_cloud \
-  pnpm run db:migrate
-```
-
-The services expect `DATABASE_URL`, `KAFKA_BROKERS=127.0.0.1:9092`, and
-`OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317`. Use the local OIDC issuer only for this test
-environment. Runtime logs can be redirected to the service-specific files under
-`deploy/local/runtime-logs/` so Alloy assigns the correct `service_name` label.
+Compose runs migrations and seed data before admitting CDC or application traffic. It also starts a
+deterministic local-only OIDC issuer, all four services, PostgreSQL, Kafka, Debezium Connect, the
+Collector, Tempo, Prometheus, and Grafana. The service containers use internal DNS names; host ports
+exist for verification only. Never reuse the embedded signing key outside this isolated environment.
 
 ## Kafka or Connect Unavailable
 
@@ -76,7 +69,7 @@ outbox.
 ```bash
 curl --fail \
   -H 'Authorization: Bearer <platform-admin-token>' \
-  'http://127.0.0.1:3102/v1/admin/dead-letters?limit=50'
+  'http://127.0.0.1:3100/v1/admin/dead-letters?limit=50'
 ```
 
 Before replay, verify the original schema/version, failure code, `replayAllowed`, current deployment
@@ -91,7 +84,7 @@ curl --fail-with-body -X POST \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: <unique-operator-request-id>' \
   -d '{"reason":"Compatibility deployed; retry approved under incident INC-1234."}' \
-  'http://127.0.0.1:3102/v1/admin/dead-letters/<original-event-id>/replays'
+  'http://127.0.0.1:3100/v1/admin/dead-letters/<original-event-id>/replays'
 ```
 
 Expected outcomes:
@@ -127,10 +120,11 @@ histogram_quantile(0.95,
 sum(increase(controlplane_dead_letter_total[1h]))
 ```
 
-Search Loki with `{service_name="control-api"} | json | trace_id="<trace-id>"`, then follow the
-derived trace link into Tempo. A single successful journey should contain Control API, Debezium,
-Orchestrator, and Provider service spans. Telemetry absence is not permission to mutate durable
-state; use database and provider evidence while restoring the Collector or backend.
+A single successful journey in Tempo should contain Control API, Debezium, Orchestrator, and
+Provider service spans. Prometheus should report one healthy scrape target named
+`otel-collector-consolidated`; Kafka, Connect, Debezium, PostgreSQL, and Collector series must all
+arrive through that target. Telemetry absence is not permission to mutate durable state; use
+database and provider evidence while restoring the Collector or backend.
 
 Grafana provisions the dashboard at
-`http://127.0.0.1:3005/d/private-cloud-phase4-event-pipeline/private-cloud-event-pipeline`.
+`http://127.0.0.1:3101/d/private-cloud-phase4-event-pipeline/private-cloud-event-pipeline`.

@@ -1,0 +1,55 @@
+---
+openTelemetry:
+  endpoint: http://otel-collector:4317
+  protocol: grpc
+  interval: 5
+  timeoutSeconds: 4
+  serviceName: debezium-connect
+  serviceNamespace: private-cloud
+  serviceVersion: '3.4.3.Final'
+  resourceAttributes:
+    deployment.environment.name: local
+
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+  - pattern: 'kafka.connect<type=connect-worker-metrics><>([^:]+)'
+    name: kafka_connect_worker_$1
+    type: GAUGE
+  - pattern: 'kafka.connect<type=connector-metrics, connector=(.+)><>([^:]+)'
+    name: kafka_connect_connector_$2
+    type: GAUGE
+    labels:
+      connector: '$1'
+  - pattern: 'kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>([^:]+)'
+    name: kafka_connect_task_$3
+    type: GAUGE
+    labels:
+      connector: '$1'
+      task: '$2'
+  - pattern: 'debezium.postgres<type=connector-metrics, context=(.+), server=(.+), pipeline=(.+)><>([^:]+)'
+    name: debezium_postgres_$4
+    type: GAUGE
+    labels:
+      context: '$1'
+      server: '$2'
+      pipeline: '$3'
+  - pattern: 'debezium.postgresql<type=connector-metrics, context=(.+), server=(.+), pipeline=(.+)><>([^:]+)'
+    name: debezium_postgresql_$4
+    type: GAUGE
+    labels:
+      context: '$1'
+      server: '$2'
+      pipeline: '$3'
+  - pattern: 'debezium.postgres<type=connector-metrics, context=(.+), server=(.+)><>([^:]+)'
+    name: debezium_postgres_$3
+    type: GAUGE
+    labels:
+      context: '$1'
+      server: '$2'
+  - pattern: 'debezium.postgresql<type=connector-metrics, context=(.+), server=(.+)><>([^:]+)'
+    name: debezium_postgresql_$3
+    type: GAUGE
+    labels:
+      context: '$1'
+      server: '$2'

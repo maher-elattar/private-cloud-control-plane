@@ -11,6 +11,7 @@
   "publication.name": "private_cloud_outbox",
   "publication.autocreate.mode": "filtered",
   "snapshot.mode": "initial",
+  "custom.metric.tags": "pipeline=private-cloud-outbox",
   "table.include.list": "control.outbox,workflow.outbox",
   "tombstones.on.delete": "false",
   "key.converter": "org.apache.kafka.connect.storage.StringConverter",

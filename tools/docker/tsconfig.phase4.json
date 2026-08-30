@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compileOnSave": false,
+  "files": [],
+  "references": [
+    { "path": "./apps/control-api" },
+    { "path": "./apps/provisioning-orchestrator" },
+    { "path": "./apps/proxmox-provider" },
+    { "path": "./apps/reconciler" },
+    { "path": "./packages/domain" },
+    { "path": "./packages/contracts" },
+    { "path": "./packages/provider-sdk" },
+    { "path": "./packages/testing" },
+    { "path": "./packages/postgres-adapter" },
+    { "path": "./packages/application" },
+    { "path": "./packages/provider-adapters" },
+    { "path": "./packages/observability" },
+    { "path": "./packages/messaging" }
+  ]
+}

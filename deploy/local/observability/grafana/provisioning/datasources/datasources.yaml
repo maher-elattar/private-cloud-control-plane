@@ -19,21 +19,7 @@ datasources:
     url: http://tempo:3200
     editable: false
     jsonData:
-      tracesToLogsV2:
-        datasourceUid: loki
-        spanStartTimeShift: -2m
-        spanEndTimeShift: 2m
-        tags: [service.name]
-        filterByTraceID: true
-  - name: Loki
-    uid: loki
-    type: loki
-    access: proxy
-    url: http://loki:3100
-    editable: false
-    jsonData:
-      derivedFields:
-        - name: TraceID
-          matcherRegex: '"trace_id":"([0-9a-f]{32})"'
-          datasourceUid: tempo
-          url: '$${__value.raw}'
+      nodeGraph:
+        enabled: true
+      serviceMap:
+        datasourceUid: prometheus

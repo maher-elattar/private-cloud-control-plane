@@ -7,8 +7,8 @@ without recording concrete evidence.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: 4 - Full containerized Phase 4 environment and infrastructure metrics
-- Last completed checkpoint: 3 - Complete event topology and audit publication
+- Current checkpoint: 5 - Automated laptop verification and evidence
+- Last completed checkpoint: 4 - Full containerized Phase 4 environment and infrastructure metrics
 - Last Phase 4 commit: `d2a61eb feat: publish transactional audit facts`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
@@ -113,7 +113,7 @@ without recording concrete evidence.
 
 ### Checkpoint 4 - Full containerized Phase 4 environment and infrastructure metrics
 
-- Status: In progress
+- Status: Complete
 - Required work:
   - Add Control API, Orchestrator, Provider, Reconciler, migrations, seed, and deterministic OIDC to
     Compose using the shared production service image.
@@ -125,6 +125,30 @@ without recording concrete evidence.
   - Add health checks and deterministic dependency ordering.
 - Verification required: Compose validation, image builds, health checks, `promtool`, and Collector
   configuration validation.
+- Evidence recorded 2026-08-30:
+  - A clean-volume Compose start ran migrations, seed, topic creation, and connector registration
+    before starting all four production service images. Twelve long-running services are healthy,
+    and the four one-shot jobs exit zero.
+  - Production images run as the non-root Node user, import the shared OpenTelemetry package with
+    production dependencies only, and exclude the local issuer key and database tooling. The
+    separate local-runner target contains only the deterministic test issuer and migration assets.
+  - Kafka 4.1.2, Debezium Connect 3.4.3, OpenTelemetry Collector Contrib 0.158.0, Tempo 2.10.7,
+    Prometheus 3.12.0, and Grafana 13.1.0 are pinned. Remote Java agents are checksum verified.
+  - Kafka persists KRaft data in the named `/var/lib/kafka/data` volume. A forced broker container
+    replacement retained all five contract topics and the four broker/Connect internal topics;
+    Connect then returned its connector and task to `RUNNING`.
+  - Kafka broker, Connect task, Debezium streaming/lag, PostgreSQL transaction/lock, logical
+    replication-slot, and Collector accepted/refused/export metrics are present at the consolidated
+    Collector endpoint. Prometheus reports exactly one healthy scrape target.
+  - Collector resource sanitization removes hostnames, container IDs, process command details,
+    PIDs, and service instance IDs. Curated JMX rules keep topic and partition values as labels rather
+    than metric-name suffixes; redundant Java runtime instruments are dropped to avoid descriptor
+    conflicts.
+  - Compose configuration, Collector validation, `promtool`, shell syntax, targeted Prettier,
+    documentation validation for 48 Markdown files, and `git diff --check` pass.
+- Review result: approved after fixing runtime workspace installation, JMX directory permissions,
+  Kafka data persistence, bounded connector readiness, dynamic metric names, restricted resource
+  labels, and duplicate JVM descriptors; no blocking findings remain.
 - Planned commit: `build: complete phase 4 integration environment`
 
 ### Checkpoint 5 - Automated laptop verification and evidence

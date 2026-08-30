@@ -21,7 +21,7 @@ projection.
 | Proxmox Provider | Isolate provider credentials and implement the provider-neutral lifecycle port | Internal gRPC; deterministic fake or allowlisted Proxmox adapter |
 | Reconciler | Reserved owner of observation and drift facts | Instrumented process shell in this phase |
 | OpenTelemetry Collector | Receive OTLP traces and metrics, batch them, and expose backend-specific outputs | OTLP gRPC/HTTP, Tempo exporter, Prometheus exporter |
-| Alloy, Loki, Tempo, Prometheus, Grafana | Collect logs and retain/query operational evidence | Structured logs, traces, metrics, correlated dashboard views |
+| Tempo, Prometheus, Grafana | Retain and query Phase 4 traces and metrics | Traces, metrics, correlated dashboard views |
 
 The local stack creates the complete contract topology even where later phases have not activated a
 consumer:
@@ -142,10 +142,13 @@ Manual spans identify the business boundaries that driver instrumentation cannot
 `controlplane.workflow.compensation_decision`. HTTP, gRPC, PostgreSQL, Undici, host, Node.js runtime,
 and event-loop signals remain enabled through standard OpenTelemetry instrumentations.
 
-Services export traces and metrics through OTLP to the Collector. The Collector batches traces into
-Tempo and exposes one Prometheus scrape endpoint. Applications do not push to Prometheus and do not
-depend on a telemetry backend for correctness. Alloy sends one-line JSON service logs to Loki;
-`trace_id` and `span_id` support trace-to-log navigation in Grafana.
+Services and the Kafka/Connect Java agents export traces and metrics through OTLP to the Collector.
+The Collector also gathers PostgreSQL transaction, lock, and logical-slot metrics plus its own
+pipeline metrics. It batches traces into Tempo and exposes one consolidated Prometheus endpoint;
+Prometheus has exactly one scrape target. Restricted resource values and process command details are
+removed before export. Applications do not push to Prometheus and do not depend on a telemetry
+backend for correctness. Loki and Alloy remain outside this phase and return with the Kubernetes
+logging work.
 
 The custom metric surface is deliberately low-cardinality:
 

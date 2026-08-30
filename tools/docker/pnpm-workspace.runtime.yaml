@@ -1,0 +1,2 @@
+packages:
+  - 'workspace_modules/@private-cloud/*'
