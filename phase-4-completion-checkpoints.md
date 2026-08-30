@@ -9,7 +9,7 @@ without recording concrete evidence.
 - Overall status: In progress
 - Current checkpoint: 5 - Automated laptop verification and evidence
 - Last completed checkpoint: 4 - Full containerized Phase 4 environment and infrastructure metrics
-- Last Phase 4 commit: `d2a61eb feat: publish transactional audit facts`
+- Last Phase 4 commit: `f5a91c8 build: complete phase 4 integration environment`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -149,11 +149,11 @@ without recording concrete evidence.
 - Review result: approved after fixing runtime workspace installation, JMX directory permissions,
   Kafka data persistence, bounded connector readiness, dynamic metric names, restricted resource
   labels, and duplicate JVM descriptors; no blocking findings remain.
-- Planned commit: `build: complete phase 4 integration environment`
+- Completed commit: `f5a91c8 build: complete phase 4 integration environment`
 
 ### Checkpoint 5 - Automated laptop verification and evidence
 
-- Status: Pending
+- Status: In progress
 - Required work:
   - Automate migration, seed, JWT issue, known-trace create, projection and receipt assertions.
   - Assert the required Tempo spans and Prometheus application/infrastructure samples.
