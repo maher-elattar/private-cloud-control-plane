@@ -17,6 +17,13 @@ if (!databaseUrl) throw new Error('DATABASE_URL is required. Run migrations and 
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000001';
 const TRACEPARENT = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+const startedAt = new Date();
+const runId = randomUUID();
+
+// Direct adapter tests still need realistic, run-unique source coordinates because the durable
+// receipt constraint intentionally rejects two different events claiming the same Kafka record.
+const syntheticOffsetBase = BigInt(`0x${runId.replaceAll('-', '').slice(0, 15)}`);
+const syntheticOffset = (delta) => (syntheticOffsetBase + BigInt(delta)).toString();
 
 function json(value) {
   return typeof value === 'string' ? JSON.parse(value) : value;
@@ -62,7 +69,7 @@ try {
   const request = {
     actor: { subject: 'audit-verifier', roles: ['tenant_developer'], projects: [PROJECT_ID] },
     projectId: PROJECT_ID,
-    idempotencyKey: 'audit-create-01',
+    idempotencyKey: `audit-create-${runId}`,
     correlationId: randomUUID(),
     traceparent: TRACEPARENT,
     imageId: 'ubuntu-24-04-cloud',
@@ -87,7 +94,7 @@ try {
     await workflowStore.admitCreateCommand(command, {
       topic: 'provisioning.commands.v1',
       partition: 0,
-      offset: '1',
+      offset: syntheticOffset(0),
       replayGeneration: 0,
     }),
     'accepted',
@@ -96,7 +103,7 @@ try {
     await workflowStore.admitCreateCommand(command, {
       topic: 'provisioning.commands.v1',
       partition: 0,
-      offset: '1',
+      offset: syntheticOffset(0),
       replayGeneration: 0,
     }),
     'duplicate',
@@ -124,7 +131,7 @@ try {
       delivery: {
         topic: 'provisioning.commands.v1',
         partition: 1,
-        offset: '10',
+        offset: syntheticOffset(1),
         replayGeneration: 0,
       },
       attempts: 3,
@@ -144,14 +151,14 @@ try {
   await new PostgresProjectionStore(db).applyDeadLetterEvent(json(dlqRow.payload), {
     topic: 'provisioning.dlq.v1',
     partition: 1,
-    offset: '11',
+    offset: syntheticOffset(2),
     replayGeneration: 0,
   });
 
   await control.requestDeadLetterReplay({
     actor: { subject: 'platform-admin', roles: ['platform_administrator'], projects: [] },
     originalEventId: replayable.eventId,
-    idempotencyKey: 'audit-replay-01',
+    idempotencyKey: `audit-replay-${runId}`,
     correlationId: randomUUID(),
     traceparent: TRACEPARENT,
     reason: 'Compatibility was deployed and the provider is healthy.',
@@ -167,7 +174,7 @@ try {
     await workflowStore.admitReplayRequest(replayRequest, {
       topic: 'provisioning.commands.v1',
       partition: 1,
-      offset: '12',
+      offset: syntheticOffset(3),
       replayGeneration: 0,
     }),
     'accepted',
@@ -191,14 +198,35 @@ try {
     .selectFrom('control.outbox')
     .select(['payload', 'partition_key'])
     .where('topic', '=', 'audit.events.v1')
+    .where('created_at', '>=', startedAt)
     .orderBy('created_at')
-    .execute();
+    .execute()
+    .then((rows) =>
+      rows.filter((row) => {
+        const data = json(row.payload).data;
+        return (
+          (data.targetId === accepted.targetId && data.action === 'create_instance') ||
+          (data.targetId === replayable.eventId && data.action === 'replay_dead_letter')
+        );
+      }),
+    );
   const workflowAudit = await db
     .selectFrom('workflow.outbox')
     .select(['payload', 'partition_key'])
     .where('topic', '=', 'audit.events.v1')
+    .where('created_at', '>=', startedAt)
     .orderBy('created_at')
-    .execute();
+    .execute()
+    .then((rows) =>
+      rows.filter((row) => {
+        const data = json(row.payload).data;
+        return (
+          (data.targetId === accepted.targetId && data.action === 'create_instance') ||
+          (data.targetId === replayable.aggregateId &&
+            (data.action === 'dead_letter_command' || data.action === 'replay_dead_letter'))
+        );
+      }),
+    );
   assert.equal(controlAudit.length, 2);
   assert.equal(workflowAudit.length, 3);
   for (const row of [...controlAudit, ...workflowAudit]) {
@@ -209,8 +237,13 @@ try {
     assert.equal(row.partition_key, PROJECT_ID);
   }
 
-  const auditEntries = await db.selectFrom('audit.entries').select('id').execute();
-  assert.equal(auditEntries.length, controlAudit.length + workflowAudit.length);
+  const auditEventIds = [...controlAudit, ...workflowAudit].map((row) => json(row.payload).eventId);
+  const auditEntries = await db
+    .selectFrom('audit.entries')
+    .select('id')
+    .where('id', 'in', auditEventIds)
+    .execute();
+  assert.equal(auditEntries.length, auditEventIds.length);
 
   process.stdout.write(
     `${JSON.stringify({
