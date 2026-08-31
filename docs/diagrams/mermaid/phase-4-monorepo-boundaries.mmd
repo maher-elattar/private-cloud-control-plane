@@ -1,0 +1,60 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":34,"rankSpacing":54,"htmlLabels":true}}}%%
+flowchart LR
+  subgraph Apps["Deployable composition roots"]
+    direction TB
+    API["apps/control-api"]
+    Orch["apps/provisioning-orchestrator"]
+    Provider["apps/proxmox-provider"]
+    Reconciler["apps/reconciler"]
+    Composition["NestJS composition<br/>bind ports to adapters"]
+
+    API & Orch & Provider & Reconciler --> Composition
+  end
+
+  subgraph UseCases["Provider-neutral policy"]
+    direction TB
+    Application["packages/application<br/>use cases + workflow ports<br/>telemetry interface"]
+    Domain["packages/domain<br/>types + invariants"]
+    Contracts["packages/contracts<br/>OpenAPI + protobuf + AsyncAPI<br/>generated wire types"]
+    ProviderSDK["packages/provider-sdk<br/>provider lifecycle port"]
+
+    Application --> Domain
+    Application --> Contracts
+    Application --> ProviderSDK
+  end
+
+  subgraph Adapters["Runtime adapters"]
+    direction TB
+    Postgres["packages/postgres-adapter<br/>owner transactions + projections"]
+    Messaging["packages/messaging<br/>Kafka validation + offsets"]
+    ProviderAdapters["packages/provider-adapters<br/>fake + Proxmox"]
+    Observability["packages/observability<br/>OpenTelemetry runtime"]
+  end
+
+  subgraph Support["Verification and deployment support"]
+    direction TB
+    Testing["packages/testing<br/>fixtures + conformance"]
+    Local["deploy/local<br/>Compose evidence stack"]
+    Rule["Nx tag constraints<br/>domain cannot depend on frameworks or adapters"]
+  end
+
+  Composition --> Application
+  Composition --> Postgres & Messaging & ProviderAdapters & Observability
+
+  Postgres -. "implements persistence ports" .-> Application
+  Messaging -. "uses generated messages" .-> Contracts
+  ProviderAdapters -. "implements provider port" .-> ProviderSDK
+  Observability -. "implements telemetry port" .-> Application
+
+  Local -.-> Apps
+  Testing -. "provider conformance" .-> ProviderSDK
+  Rule -. "checked by lint + project graph" .-> UseCases
+
+  classDef app fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef policy fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef adapter fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef support fill:#fce7f3,stroke:#be185d,color:#500724
+  class API,Orch,Provider,Reconciler app
+  class Application,Domain,Contracts,ProviderSDK policy
+  class Postgres,Messaging,ProviderAdapters,Observability adapter
+  class Testing,Local,Rule support

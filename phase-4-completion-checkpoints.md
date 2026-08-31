@@ -221,6 +221,13 @@ without recording concrete evidence.
   - Run contract generation/checks, migrations, tests, lint, typecheck, builds, formatting,
     documentation validation, `promtool`, Mermaid rendering, dependency audit, and code review.
 - Verification required: all gates pass or an explicit external limitation is recorded.
+- Progress recorded 2026-08-31:
+  - Added dedicated Phase 4 component, monorepo, CDC-routing, checkpoint-recovery, retry-exhaustion,
+    dead-letter, replay, metric-flow, and trace-hierarchy views. Updated the telemetry, Kafka-outage,
+    and duplicate-delivery views to match the implemented topology and delivery identities.
+  - Validated all 14 Phase 4 Mermaid sources with Mermaid CLI 11.16.0 and parsed every generated
+    SVG. Full-size and contact-sheet inspection confirmed nonblank, unclipped output; the monorepo
+    view was simplified around composition roots after its first render exposed excessive crossing.
 - Planned commit: `docs: complete phase 4 operational evidence`
 
 ## Resume Instructions

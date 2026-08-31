@@ -1,0 +1,48 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":30,"rankSpacing":48,"htmlLabels":true}}}%%
+flowchart TB
+  Root["HTTP server span<br/>POST /v1/projects/:projectId/instances"]
+  Controller["InstancesController.create"]
+  Accept["controlplane.command.accept"]
+  AcceptTxn["controlplane.transaction.accept_create"]
+  Outbox["controlplane.outbox.write"]
+
+  DBLog["db-log-write<br/>Debezium restores persisted carrier"]
+  Relay["private-cloud-outbox-relay<br/>Kafka producer span"]
+  CommandConsumer["provisioning.commands.v1 process<br/>Kafka consumer span"]
+  Admission["controlplane.transaction.command_admission"]
+
+  Stage["controlplane.workflow.stage<br/>one short span per durable claim"]
+  Retry["controlplane.workflow.retry_decision"]
+  GRPC["gRPC client/server<br/>SubmitCreateInstance / GetTask / ObserveResource"]
+  Adapter["controlplane.provider.adapter"]
+  HTTP["Undici client span<br/>allowlisted Proxmox HTTPS call"]
+  Checkpoint["controlplane.transaction.workflow_checkpoint"]
+
+  EventRelay["db-log-write + outbox relay<br/>workflow event"]
+  EventConsumer["provisioning.events.v1 process"]
+  Projection["controlplane.projection.apply<br/>projection transaction"]
+
+  Replay["controlplane.replay.request<br/>new administrative trace"]
+  Failed["Original failed trace"]
+
+  Root --> Controller --> Accept --> AcceptTxn --> Outbox
+  Outbox -. "serialized W3C context" .-> DBLog
+  DBLog --> Relay --> CommandConsumer --> Admission
+  Admission --> Stage
+  Stage --> GRPC --> Adapter --> HTTP
+  Stage --> Retry
+  Stage --> Checkpoint
+  Checkpoint -. "persist next parent; close current span" .-> Stage
+  Checkpoint --> EventRelay --> EventConsumer --> Projection
+
+  Failed -. "span link, never parent" .-> Replay
+  Replay -. "new trace context in replay outbox" .-> CommandConsumer
+
+  classDef sync fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef async fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef durable fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef replay fill:#fce7f3,stroke:#be185d,color:#500724
+  class Root,Controller,Accept,GRPC,Adapter,HTTP sync
+  class DBLog,Relay,CommandConsumer,EventRelay,EventConsumer async
+  class AcceptTxn,Outbox,Admission,Stage,Retry,Checkpoint,Projection durable
+  class Failed,Replay replay

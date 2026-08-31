@@ -6,7 +6,8 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant CDC as Debezium
     participant Kafka
-    participant Alert as Alerting
+    participant View as Prometheus and Grafana
+    actor Operator
     participant Orch as Orchestrator
 
     Client->>API: Submit mutation with idempotency key
@@ -15,11 +16,13 @@ sequenceDiagram
     CDC->>DB: Read committed outbox change
     CDC-xKafka: Publication unavailable
     CDC->>CDC: Retain source offset and retry
-    Alert->>DB: Observe old outbox age
-    Alert-)Client: Operator alert is active
+    View->>DB: Collector observes pending count and oldest age
     Client->>API: Read operation
     API-->>Client: Accepted and awaiting publication
-    Kafka-)CDC: Broker recovers
+    Operator->>Kafka: Restore broker
+    Kafka-->>CDC: Connect worker rejoins within bounded rebalance delay
     CDC-)Kafka: Publish original event ID
     Kafka-)Orch: Deliver command
-    Orch->>DB: Claim inbox and continue workflow
+    Orch->>DB: Commit inbox receipt and workflow admission
+    Orch->>Kafka: Commit offset after database commit
+    View->>View: Publication delay and queue residence increase

@@ -1,0 +1,46 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":42,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+sequenceDiagram
+  autonumber
+  actor Admin
+  participant API as Control API
+  participant CDB as control schema
+  participant CDC as Debezium
+  participant Kafka
+  participant Orch as Orchestrator
+  participant WDB as workflow schema
+
+  Admin->>API: POST replay + admin JWT + reason + idempotency key
+  API->>API: Authorize platform administrator
+  API->>CDB: Lock dead-letter projection and replay identity
+
+  alt Replay policy prohibits the original failure
+    CDB-->>API: replayAllowed = false
+    API-->>Admin: 409 REPLAY_NOT_ALLOWED
+  else Replay request is admissible
+    API->>API: Start new administrative trace
+    Note over API,CDB: Link to the original failed trace and never make it the parent.
+    API->>CDB: Commit request + command outbox + audit fact
+    CDB-->>API: Commit
+    API-->>Admin: 202 Accepted + replay request ID
+
+    CDC->>CDB: Read committed replay request outbox
+    CDC-)Kafka: Publish provisioning.replay.requested
+    Kafka-)Orch: Deliver physical request at generation 0
+    Orch->>WDB: Validate stored original contract and lock dead letter
+
+    alt Current deployment is incompatible
+      Orch->>WDB: Commit rejected decision + resolution outbox
+    else Compatible and safe to replay
+      Orch->>WDB: Insert request receipt with Kafka coordinates
+      Orch->>WDB: Admit original event at generation n+1
+      Note over Orch,WDB: Logical original receipt has null broker coordinates and none are fabricated.
+      Orch->>WDB: Reopen failed workflow + resolution outbox atomically
+    end
+
+    CDC->>WDB: Read committed replay resolution
+    CDC-)Kafka: Publish provisioning.replay.resolved
+    Kafka-)API: Deliver resolution fact
+    API->>CDB: Update replay request + owner receipt
+    API->>Kafka: Commit offset after owner transaction
+    API-->>Admin: GET replay shows completed or rejected
+  end

@@ -40,9 +40,18 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | Phase 3 synchronous create      | `mermaid/phase-3-synchronous-create.mmd`     | `rendered/phase-3-synchronous-create.mermaid.svg`     |
 | Phase 3 checkpoint recovery     | `mermaid/phase-3-checkpoint-recovery.mmd`    | `rendered/phase-3-checkpoint-recovery.mermaid.svg`    |
 | Phase 3 workflow stages         | `mermaid/phase-3-workflow-stages.mmd`        | `rendered/phase-3-workflow-stages.mermaid.svg`        |
+| Phase 4 runtime components      | `mermaid/phase-4-components.mmd`             | `rendered/phase-4-components.mermaid.svg`             |
+| Phase 4 monorepo boundaries     | `mermaid/phase-4-monorepo-boundaries.mmd`    | `rendered/phase-4-monorepo-boundaries.mermaid.svg`    |
 | Phase 4 event journey           | `mermaid/phase-4-event-journey.mmd`          | `rendered/phase-4-event-journey.mermaid.svg`          |
+| Phase 4 CDC routing             | `mermaid/phase-4-cdc-routing.mmd`            | `rendered/phase-4-cdc-routing.mermaid.svg`            |
+| Phase 4 checkpoint recovery     | `mermaid/phase-4-checkpoint-recovery.mmd`    | `rendered/phase-4-checkpoint-recovery.mermaid.svg`    |
 | Phase 4 failure recovery        | `mermaid/phase-4-failure-recovery.mmd`       | `rendered/phase-4-failure-recovery.mermaid.svg`       |
+| Phase 4 retry exhaustion        | `mermaid/phase-4-retry-exhaustion.mmd`       | `rendered/phase-4-retry-exhaustion.mermaid.svg`       |
+| Phase 4 dead-letter path        | `mermaid/phase-4-dead-letter.mmd`            | `rendered/phase-4-dead-letter.mermaid.svg`            |
+| Phase 4 governed replay         | `mermaid/phase-4-replay.mmd`                 | `rendered/phase-4-replay.mermaid.svg`                 |
 | Phase 4 telemetry pipeline      | `mermaid/phase-4-telemetry-pipeline.mmd`     | `rendered/phase-4-telemetry-pipeline.mermaid.svg`     |
+| Phase 4 metric flow             | `mermaid/phase-4-metric-flow.mmd`            | `rendered/phase-4-metric-flow.mermaid.svg`            |
+| Phase 4 trace hierarchy         | `mermaid/phase-4-trace-hierarchy.mmd`        | `rendered/phase-4-trace-hierarchy.mermaid.svg`        |
 
 ## Mermaid Editing And Validation
 

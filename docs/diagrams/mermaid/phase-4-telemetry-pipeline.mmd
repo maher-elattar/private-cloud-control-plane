@@ -6,6 +6,8 @@ flowchart LR
     Orch["Orchestrator<br/>Kafka consumer + workflow<br/>PostgreSQL + gRPC client"]
     Provider["Provider service<br/>gRPC server + adapter<br/>provider operation instruments"]
     CDC["Debezium Connect<br/>Java agent + outbox EventRouter"]
+    Reconciler["Reconciler<br/>instrumented runtime shell"]
+    Broker["Kafka broker<br/>JMX OpenTelemetry exporter"]
   end
 
   subgraph Context["Asynchronous context path"]
@@ -17,16 +19,14 @@ flowchart LR
 
   subgraph Collection["Collection"]
     direction TB
-    Collector["OpenTelemetry Collector<br/>OTLP gRPC + HTTP<br/>memory limiter + batch"]
-    Alloy["Grafana Alloy<br/>container stdout + service log files"]
+    Collector["OpenTelemetry Collector<br/>OTLP + PostgreSQL + SQL receivers<br/>sanitize + batch"]
   end
 
   subgraph Backends["Evidence backends"]
     direction TB
     Tempo[("Tempo<br/>distributed traces")]
     Prometheus[("Prometheus<br/>Collector scrape endpoint")]
-    Loki[("Loki<br/>structured logs")]
-    Grafana["Grafana<br/>event-pipeline dashboard<br/>trace-to-log correlation"]
+    Grafana["Grafana<br/>event-pipeline dashboard<br/>trace exemplars"]
   end
 
   API -->|"persist W3C carrier"| Outbox
@@ -37,21 +37,20 @@ flowchart LR
   Checkpoint --> Orch
   Orch -->|"gRPC context"| Provider
 
-  API & Orch & Provider -->|"OTLP traces + metrics"| Collector
-  CDC -->|"OTLP traces + JVM metrics"| Collector
-  API & Orch & Provider -.->|"JSON stdout / files"| Alloy
-  CDC -.->|"container stdout"| Alloy
+  API & Orch & Provider & Reconciler -->|"OTLP traces + metrics"| Collector
+  CDC -->|"OTLP traces + JMX metrics"| Collector
+  Broker -->|"JMX metrics over OTLP"| Collector
+  Outbox -.->|"PostgreSQL + replication-slot metrics"| Collector
 
   Collector -->|"OTLP"| Tempo
   Collector -->|"Prometheus exporter :8889"| Prometheus
-  Alloy --> Loki
-  Tempo & Prometheus & Loki --> Grafana
+  Tempo & Prometheus --> Grafana
 
   classDef app fill:#e0f2fe,stroke:#0369a1,color:#172554
   classDef context fill:#fef3c7,stroke:#b45309,color:#451a03
   classDef collect fill:#dcfce7,stroke:#15803d,color:#14532d
   classDef backend fill:#fce7f3,stroke:#be185d,color:#500724
-  class API,Orch,Provider,CDC app
+  class API,Orch,Provider,CDC,Reconciler,Broker app
   class Outbox,Kafka,Checkpoint context
-  class Collector,Alloy collect
-  class Tempo,Prometheus,Loki,Grafana backend
+  class Collector collect
+  class Tempo,Prometheus,Grafana backend

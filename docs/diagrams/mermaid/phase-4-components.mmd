@@ -1,0 +1,63 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":38,"rankSpacing":58,"htmlLabels":true}}}%%
+flowchart LR
+  subgraph Clients["Callers"]
+    Tenant["Tenant client"]
+    Admin["Platform administrator"]
+  end
+
+  subgraph Services["NestJS control-plane services"]
+    API["Control API<br/>REST + public gRPC<br/>commands + projections"]
+    Orch["Provisioning Orchestrator<br/>Kafka admission<br/>leased workflow scheduler"]
+    Provider["Proxmox Provider<br/>internal gRPC<br/>provider-neutral adapter"]
+    Reconciler["Reconciler<br/>instrumented shell<br/>active loop deferred"]
+  end
+
+  subgraph Durable["Durable state and delivery"]
+    Control[("control schema<br/>intent + operations + outbox")]
+    Workflow[("workflow schema<br/>inbox + checkpoints + DLQ")]
+    Projection[("projection schema<br/>tenant + admin read models")]
+    CDC["Debezium Connect<br/>logical decoding + EventRouter"]
+    Kafka["Kafka<br/>five versioned topics<br/>at-least-once delivery"]
+  end
+
+  subgraph ProviderBoundary["Provider boundary"]
+    Proxmox["Proxmox-compatible HTTPS API<br/>allowlisted create calls"]
+  end
+
+  subgraph Evidence["Non-blocking evidence plane"]
+    Collector["OpenTelemetry Collector<br/>OTLP + infrastructure receivers"]
+    Tempo[("Tempo")]
+    Prometheus[("Prometheus")]
+    Grafana["Grafana"]
+  end
+
+  Tenant -->|"JWT + idempotency key"| API
+  Admin -->|"authorized replay"| API
+  API --> Control
+  API --> Projection
+  Control --> CDC
+  Workflow --> CDC
+  CDC --> Kafka
+  Kafka --> Orch
+  Kafka --> API
+  Orch --> Workflow
+  Orch -->|"gRPC"| Provider
+  Provider -->|"HTTPS"| Proxmox
+  Reconciler -.->|"reserved reconciliation facts"| Kafka
+
+  API & Orch & Provider & Reconciler & CDC & Kafka -->|"OTLP telemetry"| Collector
+  Control -.->|"PostgreSQL metrics"| Collector
+  Collector --> Tempo
+  Collector -->|"consolidated :8889"| Prometheus
+  Tempo & Prometheus --> Grafana
+
+  classDef client fill:#f8fafc,stroke:#64748b,color:#0f172a
+  classDef app fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef durable fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef provider fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef evidence fill:#fce7f3,stroke:#be185d,color:#500724
+  class Tenant,Admin client
+  class API,Orch,Provider,Reconciler app
+  class Control,Workflow,Projection,CDC,Kafka durable
+  class Proxmox provider
+  class Collector,Tempo,Prometheus,Grafana evidence

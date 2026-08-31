@@ -1,0 +1,48 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":34,"rankSpacing":54,"htmlLabels":true}}}%%
+flowchart LR
+  subgraph Owners["Owner transactions"]
+    COut[("control.outbox<br/>commands + audit facts")]
+    WOut[("workflow.outbox<br/>events + DLQ + audit facts")]
+  end
+
+  WAL["PostgreSQL WAL<br/>logical replication slot"]
+  Connector["Debezium PostgreSQL connector<br/>outbox EventRouter + tracing"]
+  Validate{"Allowlisted topic<br/>and route fields?"}
+
+  subgraph Mapping["Outbox field mapping"]
+    Identity["outbox_id -> physical row<br/>event_id -> logical identity"]
+    Routing["topic + partition_key<br/>schema_name + schema_version"]
+    Carrier["replay_generation + occurred_at<br/>traceparent + tracestate"]
+  end
+
+  subgraph Topics["Versioned Kafka topics"]
+    Commands["provisioning.commands.v1"]
+    Events["provisioning.events.v1"]
+    DLQ["provisioning.dlq.v1"]
+    Audit["audit.events.v1"]
+    Reconciliation["reconciliation.events.v1<br/>reserved"]
+  end
+
+  Orch["Orchestrator consumers"]
+  API["Control API projection consumers"]
+  Future["Future audit archive"]
+
+  COut & WOut --> WAL
+  WAL -->|"committed rows only"| Connector
+  Connector --> Identity & Routing & Carrier
+  Identity & Routing & Carrier --> Validate
+  Validate -- "No" --> Reject["Connector task fails closed<br/>operator corrects route"]
+  Validate -- "Yes" --> Commands & Events & DLQ & Audit & Reconciliation
+  Commands --> Orch
+  Events & DLQ --> API
+  Audit -.-> Future
+  Reconciliation -.-> API
+
+  classDef owner fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef route fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef topic fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef failure fill:#fee2e2,stroke:#b91c1c,color:#450a0a
+  class COut,WOut,WAL owner
+  class Connector,Validate,Identity,Routing,Carrier route
+  class Commands,Events,DLQ,Audit,Reconciliation,Orch,API,Future topic
+  class Reject failure

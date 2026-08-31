@@ -1,0 +1,47 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":34,"rankSpacing":58,"htmlLabels":true}}}%%
+flowchart LR
+  subgraph Push["OTLP metric producers - 5 second interval"]
+    Apps["Four Node.js services<br/>custom + HTTP/gRPC/PostgreSQL<br/>runtime + event-loop metrics"]
+    KafkaJMX["Kafka JMX exporter<br/>broker + topic + partition metrics"]
+    ConnectJMX["Connect JMX exporter<br/>worker + task + Debezium metrics"]
+  end
+
+  subgraph Pull["Collector-owned infrastructure collection"]
+    Postgres["PostgreSQL receiver<br/>connections + transactions + locks"]
+    Slots["SQL query receiver<br/>logical slot active + retained bytes"]
+    Self["Collector self scrape<br/>accepted + refused + export failures"]
+  end
+
+  subgraph Collector["OpenTelemetry Collector metric pipeline"]
+    OTLP["OTLP gRPC/HTTP receiver"]
+    Infra["PostgreSQL + SQL + self receivers"]
+    Guard["Memory limiter<br/>drop duplicate JVM series<br/>sanitize resource attributes"]
+    Batch["Batch processor"]
+    Export["Prometheus exporter :8889<br/>OpenMetrics + exemplars"]
+  end
+
+  Prometheus[("Prometheus<br/>one scrape target")]
+  Grafana["Grafana<br/>five-panel event dashboard"]
+  Tempo[("Tempo traces")]
+
+  Apps & KafkaJMX & ConnectJMX -->|"push OTLP"| OTLP
+  Postgres & Slots & Self --> Infra
+  OTLP & Infra --> Guard
+  Guard --> Batch --> Export
+  Prometheus -->|"pull /metrics"| Export
+  Prometheus --> Grafana
+  Export -. "trace_id exemplars" .-> Tempo
+  Tempo --> Grafana
+
+  Cardinality["Enforced metric rules<br/>allowlisted labels<br/>128 series per custom instrument<br/>no tenant or resource IDs"]
+  Cardinality -.-> Apps
+  Cardinality -.-> Guard
+
+  classDef source fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef collect fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef pipeline fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef backend fill:#fce7f3,stroke:#be185d,color:#500724
+  class Apps,KafkaJMX,ConnectJMX,Postgres,Slots,Self source
+  class OTLP,Infra collect
+  class Guard,Batch,Export,Cardinality pipeline
+  class Prometheus,Grafana,Tempo backend

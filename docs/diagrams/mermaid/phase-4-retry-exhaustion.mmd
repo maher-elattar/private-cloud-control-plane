@@ -1,0 +1,39 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","primaryTextColor":"#172554","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","clusterBkg":"#f8fafc","clusterBorder":"#94a3b8"},"flowchart":{"curve":"basis","nodeSpacing":34,"rankSpacing":52,"htmlLabels":true}}}%%
+flowchart TB
+  Failure["Provider step returns a classified failure"]
+  Ambiguous{"Mutation may have<br/>committed remotely?"}
+  Category{"Failure category"}
+  Budget{"Attempt below 8 and<br/>elapsed budget below 15 min?"}
+  Delay["Draw full-jitter delay<br/>0 to min(30 s, 500 ms x 2^attempt)"]
+  Persist["Fenced transaction<br/>stage_attempt + retry_started_at<br/>last error + next_attempt_at"]
+  Release["Release lease and close span<br/>Kafka offset was already committed"]
+  Reclaim["Scheduler reclaims ready workflow<br/>restore persisted trace context"]
+  Progress["Provider step succeeds<br/>reset stage retry state"]
+  Permanent["Commit terminal failed event<br/>no automatic replay"]
+  Manual["Commit MANUAL_REVIEW<br/>never blind-retry mutation"]
+  Exhausted["Commit failed operation + receipt<br/>dead letter + DLQ outbox atomically"]
+
+  Failure --> Ambiguous
+  Ambiguous -- "Yes" --> Manual
+  Ambiguous -- "No" --> Category
+  Category -- "Validation / permanent" --> Permanent
+  Category -- "Transient / unavailable" --> Budget
+  Budget -- "Yes" --> Delay --> Persist --> Release --> Reclaim
+  Reclaim -->|"retry provider step"| Failure
+  Reclaim -->|"forward progress"| Progress
+  Budget -- "No" --> Exhausted
+
+  Metrics["Evidence per decision<br/>workflow.retry counter<br/>retry-decision span<br/>workflow oldest-ready gauge"]
+  Delay -.-> Metrics
+  Permanent -.-> Metrics
+  Manual -.-> Metrics
+  Exhausted -.-> Metrics
+
+  classDef normal fill:#e0f2fe,stroke:#0369a1,color:#172554
+  classDef durable fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef warning fill:#fef3c7,stroke:#b45309,color:#451a03
+  classDef failure fill:#fee2e2,stroke:#b91c1c,color:#450a0a
+  class Failure,Category,Ambiguous,Budget normal
+  class Persist,Release,Reclaim,Progress,Metrics durable
+  class Delay warning
+  class Permanent,Manual,Exhausted failure

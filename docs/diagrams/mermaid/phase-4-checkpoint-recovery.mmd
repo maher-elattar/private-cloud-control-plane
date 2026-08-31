@@ -1,0 +1,32 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+sequenceDiagram
+  autonumber
+  participant A as Orchestrator A
+  participant DB as workflow schema
+  participant P as Provider gRPC
+  participant B as Orchestrator B
+
+  A->>DB: Claim submitting_create with fence 7
+  DB-->>A: Lease + persisted trace context
+  A->>P: SubmitCreateInstance with stable request ID
+  P-->>A: Resource ID + provider task reference
+  A->>DB: Commit polling_create + task reference + next trace context
+
+  A->>DB: Claim polling_create with fence 8
+  A->>P: GetTask(task reference)
+  Note over A,DB: Process terminates before the next checkpoint commits.
+  A-xDB: Connection closes and lease remains until expiry
+
+  DB->>DB: Lease expires
+  B->>DB: Claim polling_create with fence 9
+  DB-->>B: Existing resource + task + trace context
+  B->>P: GetTask(same task reference)
+  P-->>B: Succeeded
+  B->>DB: Commit observing_ownership under fence 9
+
+  A-xDB: Late fence 8 write is rejected
+  B->>P: ObserveResource(resource ID)
+  P-->>B: Owned + active
+  B->>DB: Commit completed + terminal outbox facts
+
+  Note over A,B: Recovery resumes durable work and never holds a Kafka record or creates a second VM.

@@ -6,15 +6,18 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant Provider as Proxmox Provider
 
-    Kafka-)Orch: Deliver event E for instance I
-    Orch->>DB: Insert inbox receipt E and claim workflow lease I
+    Kafka-)Orch: Deliver event E at generation 0 for instance I
+    Orch->>DB: Insert unique receipt (consumer, E, 0) and admit workflow I
     Orch->>Provider: Execute provider step once
     Provider-->>Orch: Provider task reference and result
     Orch->>DB: Complete checkpoint, inbox receipt E, and result outbox
     Orch-->>Kafka: Commit consumed offset
 
-    Kafka-)Orch: Redeliver event E
-    Orch->>DB: Read completed inbox receipt E
-    DB-->>Orch: Existing completed outcome
+    Kafka-)Orch: Redeliver event E at generation 0
+    Orch->>DB: Insert unique receipt (consumer, E, 0)
+    DB-->>Orch: Unique conflict identifies ordinary duplicate
+    Orch->>DB: Read completed receipt and recorded outcome
     Orch->>Orch: Reuse recorded outcome and skip side effects
     Orch-->>Kafka: Commit duplicate offset
+
+    Note over Kafka,Provider: Only governed replay can use generation n+1 and a broker duplicate cannot allocate it.
