@@ -51,13 +51,15 @@ describe('observability runtime without a registered SDK', () => {
     });
 
     const linkedTraceId = '11111111111111111111111111111111';
-    await new OpenTelemetryApplicationTelemetry().trace(
+    const applicationTelemetry = new OpenTelemetryApplicationTelemetry();
+    await applicationTelemetry.trace(
       'controlplane.replay.request',
       { 'command.type': 'replay_dead_letter' },
       async () => undefined,
       undefined,
       [{ traceparent: `00-${linkedTraceId}-2222222222222222-01` }],
     );
+    applicationTelemetry.deadLetter('instance.mutation.failed', 'unavailable', true);
     recordMessageProcessed({
       topic: 'provisioning.commands.v1',
       consumerGroup: 'provisioning-orchestrator.v1',
@@ -106,6 +108,14 @@ describe('observability runtime without a registered SDK', () => {
     expect(oldest?.dataPoints[0]?.value).toBe(7);
     const replay = exported.find((metric) => metric.descriptor.name === 'controlplane.replay');
     expect(replay?.dataPoints[0]?.attributes).toEqual({ outcome: 'accepted' });
+    const deadLetter = exported.find(
+      (metric) => metric.descriptor.name === 'controlplane.dead_letter',
+    );
+    expect(deadLetter?.dataPoints[0]?.attributes).toEqual({
+      'event.schema.name': 'instance.mutation.failed',
+      'error.category': 'unavailable',
+      'replay.allowed': true,
+    });
     expect(JSON.stringify(exported)).not.toContain('must-not-be-exported');
     await shutdownTelemetry();
   });

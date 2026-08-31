@@ -68,6 +68,7 @@ processors:
     attributes:
       - { key: host.name, action: delete }
       - { key: container.id, action: delete }
+      - { key: process.command, action: delete }
       - { key: process.command_line, action: delete }
       - { key: process.command_args, action: delete }
       - { key: process.executable.path, action: delete }

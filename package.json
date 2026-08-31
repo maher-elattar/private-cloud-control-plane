@@ -22,6 +22,7 @@
     "lint": "nx run-many -t lint",
     "test": "nx run-many -t test",
     "verify:audit-topology": "nx run-many -t build --projects=application,postgres-adapter,provider-adapters && node tools/verification/verify-audit-topology.mjs",
+    "verify:phase4-runtime": "node tools/verification/verify-phase4-runtime.mjs",
     "typecheck": "nx run-many -t typecheck"
   },
   "dependencies": {

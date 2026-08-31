@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import pg from 'pg';
+import { connectWhenReady } from './postgres-ready.mjs';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error('DATABASE_URL is required.');
@@ -13,7 +14,7 @@ const migrationNames = (await readdir(migrationDirectory))
 if (migrationNames.length === 0) throw new Error('No database migrations were found.');
 
 const pool = new pg.Pool({ connectionString, max: 1 });
-const client = await pool.connect();
+const client = await connectWhenReady(pool);
 try {
   await client.query("SELECT pg_advisory_lock(hashtext('private-cloud-control-plane:migrations'))");
   await client.query(`

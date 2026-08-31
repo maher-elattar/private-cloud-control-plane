@@ -89,6 +89,49 @@ services:
         ]
     restart: unless-stopped
 
+  local-proxmox-tls:
+    image: private-cloud/local-runner:phase4
+    user: root
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - |
+        if [ ! -s /tls/local-proxmox.crt ] || [ ! -s /tls/local-proxmox.key ]; then
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+            -subj '/CN=local-proxmox' \
+            -addext 'subjectAltName=DNS:local-proxmox,IP:127.0.0.1' \
+            -keyout /tls/local-proxmox.key \
+            -out /tls/local-proxmox.crt
+        fi
+        chown 1000:1000 /tls/local-proxmox.crt /tls/local-proxmox.key
+        chmod 0444 /tls/local-proxmox.crt
+        chmod 0400 /tls/local-proxmox.key
+    volumes: ['proxmox-tls:/tls']
+    restart: 'no'
+
+  local-proxmox:
+    image: private-cloud/local-runner:phase4
+    command: ['node', 'local-proxmox.mjs']
+    environment:
+      LOCAL_PROXMOX_HOST: 0.0.0.0
+      LOCAL_PROXMOX_PORT: '8443'
+      LOCAL_PROXMOX_CERTIFICATE: /tls/local-proxmox.crt
+      LOCAL_PROXMOX_PRIVATE_KEY: /tls/local-proxmox.key
+      NODE_EXTRA_CA_CERTS: /tls/local-proxmox.crt
+    ports: ['18443:8443']
+    depends_on:
+      local-proxmox-tls: { condition: service_completed_successfully }
+    volumes: ['proxmox-tls:/tls:ro']
+    healthcheck:
+      <<: *service-healthcheck
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('https://127.0.0.1:8443/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+    restart: unless-stopped
+
   tempo:
     image: grafana/tempo:2.10.7
     command: ['-config.file=/etc/tempo.yaml']
@@ -141,13 +184,11 @@ services:
     depends_on:
       otel-collector: { condition: service_healthy }
     healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          "KAFKA_OPTS='' /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1",
-        ]
-      interval: 3s
-      timeout: 5s
+      # Avoid launching a competing JVM for every liveness probe. The dependent topic job
+      # performs the protocol-level readiness check before Connect or applications can start.
+      test: ['CMD', 'nc', '-z', '127.0.0.1', '29092']
+      interval: 5s
+      timeout: 2s
       retries: 30
       start_period: 10s
     volumes: ['kafka-data:/var/lib/kafka/data']
@@ -179,6 +220,8 @@ services:
       CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_PLUGIN_DISCOVERY: service_load
+      CONNECT_SCHEDULED_REBALANCE_MAX_DELAY_MS: '5000'
       ENABLE_OTEL: 'true'
       OTEL_SDK_DISABLED: 'false'
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -193,8 +236,8 @@ services:
       test: ['CMD-SHELL', 'curl --fail --silent http://127.0.0.1:8083/connectors >/dev/null']
       interval: 3s
       timeout: 3s
-      retries: 40
-      start_period: 15s
+      retries: 60
+      start_period: 120s
     restart: unless-stopped
 
   debezium-init:
@@ -217,12 +260,32 @@ services:
       <<: *runtime-environment
       PORT: '3002'
       GRPC_LISTEN_URL: 0.0.0.0:50052
-      PROVIDER_ADAPTER: fake
-      FAKE_PROVIDER_LATENCY_MS: '20'
-      FAKE_PROVIDER_TASK_POLLS: '1'
+      PROVIDER_ADAPTER: ${PHASE4_PROVIDER_ADAPTER:-fake}
+      FAKE_PROVIDER_SCENARIO: ${PHASE4_FAKE_PROVIDER_SCENARIO:-success}
+      FAKE_PROVIDER_LATENCY_MS: ${PHASE4_FAKE_PROVIDER_LATENCY_MS:-20}
+      FAKE_PROVIDER_TASK_POLLS: ${PHASE4_FAKE_PROVIDER_TASK_POLLS:-1}
+      NODE_EXTRA_CA_CERTS: /etc/private-cloud/tls/local-proxmox.crt
+      PROXMOX_ENDPOINT: https://local-proxmox:8443
+      PROXMOX_API_TOKEN_ID: local@pve!phase4
+      PROXMOX_API_TOKEN_SECRET: local-secret
+      PROXMOX_PROVIDER_PROFILE_ID: fake-lab
+      PROXMOX_CLUSTER_ALIAS: local-proxmox
+      PROXMOX_NODE: pve-lab-1
+      PROXMOX_TEMPLATE_VMID: '9000'
+      PROXMOX_IMAGE_ID: ubuntu-24-04-cloud
+      PROXMOX_STORAGE: lab-storage
+      PROXMOX_BRIDGE: vmbr1
+      PROXMOX_NETWORK_ID: lab-primary
+      PROXMOX_IPV4_CIDR: 192.0.2.0/27
+      PROXMOX_IPV4_GATEWAY: 192.0.2.1
+      PROXMOX_VMID_MINIMUM: '910000'
+      PROXMOX_VMID_MAXIMUM: '910099'
+      PROXMOX_PROJECT_ID: 00000000-0000-4000-8000-000000000001
     ports: ['50052:50052']
     depends_on:
       otel-collector: { condition: service_healthy }
+      local-proxmox: { condition: service_healthy }
+    volumes: ['proxmox-tls:/etc/private-cloud/tls:ro']
     healthcheck:
       <<: *service-healthcheck
       test:
@@ -331,6 +394,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: 'true'
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      GF_USERS_VIEWERS_CAN_EDIT: 'true'
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -349,6 +413,7 @@ services:
 volumes:
   postgres-data:
   kafka-data:
+  proxmox-tls:
   tempo-data:
   prometheus-data:
   grafana-data:

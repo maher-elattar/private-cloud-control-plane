@@ -30,6 +30,8 @@ export interface ApplicationTelemetry {
   workflowTransition(from: string, to: string): void;
   /** Records one classified workflow retry. */
   workflowRetry(stage: string, category: string): void;
+  /** Counts one governed dead-letter decision after its owner transaction commits. */
+  deadLetter(schemaName: string, category: string, replayAllowed: boolean): void;
 }
 
 /** Default used by unit tests and by runtimes that deliberately disable telemetry. */
@@ -43,4 +45,5 @@ export const NOOP_APPLICATION_TELEMETRY: ApplicationTelemetry = {
   commandAccepted: () => undefined,
   workflowTransition: () => undefined,
   workflowRetry: () => undefined,
+  deadLetter: () => undefined,
 };

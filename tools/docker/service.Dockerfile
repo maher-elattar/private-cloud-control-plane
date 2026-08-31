@@ -41,9 +41,15 @@ EXPOSE 3000
 CMD ["node", "main.js"]
 
 FROM runtime-common AS local-runtime
+USER root
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /workspace/apps/control-api/tools/local-oidc.mjs ./local-oidc.mjs
+COPY --from=build --chown=node:node /workspace/apps/proxmox-provider/tools/local-proxmox.mjs ./local-proxmox.mjs
 COPY --chown=node:node db ./db
 COPY --chown=node:node tools/db ./tools/db
+USER node
 
 # The default target is the production service image and contains no local signing key or DB tools.
 FROM runtime-common AS runtime

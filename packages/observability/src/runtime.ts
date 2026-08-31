@@ -512,6 +512,11 @@ export class OpenTelemetryApplicationTelemetry implements ApplicationTelemetry {
   public workflowRetry(stage: string, category: string): void {
     instruments?.workflowRetries.add(1, { 'workflow.stage': stage, 'error.category': category });
   }
+
+  /** Counts a governed workflow dead letter after durable owner storage succeeds. */
+  public deadLetter(schemaName: string, category: string, replayAllowed: boolean): void {
+    recordDeadLetter(schemaName, category, replayAllowed);
+  }
 }
 
 /** Records a handled Kafka delivery and both asynchronous latency components. */

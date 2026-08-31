@@ -524,10 +524,46 @@ export class PostgresWorkflowStore implements WorkflowStore {
     const now = new Date();
     const existing = await tx
       .selectFrom('workflow.workflows')
-      .select('operation_id')
+      .select(['operation_id', 'status', 'replay_generation'])
       .where('operation_id', '=', command.operationId)
       .executeTakeFirst();
     if (existing) {
+      const reopensFailedWorkflow =
+        !sourceCoordinates &&
+        existing.status === 'failed' &&
+        delivery.replayGeneration === existing.replay_generation + 1;
+      if (reopensFailedWorkflow) {
+        const receipt = await this.insertCommandReceipt(tx, command, delivery, null, false);
+        if (!receipt) return 'duplicate';
+        // A governed generation is a fresh attempt with the original logical identity. Clearing
+        // provider handles makes the workflow replay its idempotent create request instead of
+        // trusting stale task state retained before exhaustion.
+        await tx
+          .updateTable('workflow.workflows')
+          .set({
+            command,
+            status: 'running',
+            stage: 'accepted',
+            attempt: 0,
+            stage_attempt: 0,
+            retry_started_at: null,
+            replay_generation: delivery.replayGeneration,
+            trace_context: command.traceContext,
+            provider_resource_id: null,
+            provider_task_reference: null,
+            next_attempt_at: now,
+            failure_category: null,
+            failure_code: null,
+            failure_message: null,
+            last_error_category: null,
+            last_error_code: null,
+            updated_at: now,
+            completed_at: null,
+          })
+          .where('operation_id', '=', command.operationId)
+          .executeTakeFirstOrThrow();
+        return 'accepted';
+      }
       await this.insertCommandReceipt(tx, command, delivery, now, sourceCoordinates);
       return 'duplicate';
     }

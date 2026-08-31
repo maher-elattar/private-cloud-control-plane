@@ -13,8 +13,28 @@
  * @see docs/architecture/lab-boundary.md
  * @see docs/architecture/phase-3-vertical-slice.md
  */
-import { FakeProvider, ProxmoxProvider } from '@private-cloud/provider-adapters';
+import { FailureCategory } from '@private-cloud/contracts';
+import {
+  FakeProvider,
+  ProxmoxProvider,
+  type FakeProviderConfiguration,
+} from '@private-cloud/provider-adapters';
 import type { CreateInstanceProviderPort } from '@private-cloud/provider-sdk';
+
+export type LocalFakeProviderScenario =
+  | 'ambiguous'
+  | 'permanent'
+  | 'retry'
+  | 'retry-exhaustion'
+  | 'success';
+
+const localFakeProviderScenarios: readonly LocalFakeProviderScenario[] = [
+  'ambiguous',
+  'permanent',
+  'retry',
+  'retry-exhaustion',
+  'success',
+];
 
 /** Reads a required Proxmox setting, refusing to start if it is absent. */
 function requiredEnvironment(name: string): string {
@@ -30,6 +50,56 @@ function requiredInteger(name: string): number {
   return value;
 }
 
+/** Builds the bounded deterministic behavior used by local failure drills. */
+export function fakeProviderConfiguration(
+  environment: NodeJS.ProcessEnv = process.env,
+): FakeProviderConfiguration {
+  const latencyMs = Number(environment.FAKE_PROVIDER_LATENCY_MS ?? 0);
+  const taskPolls = Number(environment.FAKE_PROVIDER_TASK_POLLS ?? 1);
+  const scenario = (environment.FAKE_PROVIDER_SCENARIO?.trim() ||
+    'success') as LocalFakeProviderScenario;
+  if (
+    !Number.isInteger(latencyMs) ||
+    latencyMs < 0 ||
+    !Number.isInteger(taskPolls) ||
+    taskPolls < 0
+  ) {
+    throw new Error('Fake-provider latency and task polls must be non-negative integers.');
+  }
+  if (!localFakeProviderScenarios.includes(scenario)) {
+    throw new Error(
+      `FAKE_PROVIDER_SCENARIO must be one of: ${localFakeProviderScenarios.join(', ')}.`,
+    );
+  }
+
+  const script: FakeProviderConfiguration['script'] =
+    scenario === 'retry'
+      ? { getTask: [{ mode: 'failure' }, { mode: 'success' }] }
+      : scenario === 'retry-exhaustion'
+        ? { getTask: [{ mode: 'failure' }] }
+        : scenario === 'permanent'
+          ? {
+              submitCreateInstance: [
+                {
+                  mode: 'failure',
+                  failureCode: 'FAKE_IMAGE_REJECTED',
+                  failureCategory: FailureCategory.FAILURE_CATEGORY_VALIDATION,
+                },
+              ],
+            }
+          : scenario === 'ambiguous'
+            ? {
+                submitCreateInstance: [{ mode: 'timeout', applyBeforeResponse: true }],
+              }
+            : undefined;
+
+  return {
+    defaultLatencyMs: latencyMs,
+    defaultTaskPollsBeforeSuccess: taskPolls,
+    ...(script ? { script } : {}),
+  };
+}
+
 /**
  * Builds the configured provider adapter.
  *
@@ -40,22 +110,7 @@ export function createProvider(): CreateInstanceProviderPort {
   // Defaults to `fake`: selecting a live provider must always be a deliberate act.
   const adapter = process.env.PROVIDER_ADAPTER?.trim() || 'fake';
   if (adapter === 'fake') {
-    // Latency and poll count let tests reproduce asynchronous provider behaviour
-    // deterministically, without waiting on anything real.
-    const latencyMs = Number(process.env.FAKE_PROVIDER_LATENCY_MS ?? 0);
-    const taskPolls = Number(process.env.FAKE_PROVIDER_TASK_POLLS ?? 1);
-    if (
-      !Number.isInteger(latencyMs) ||
-      latencyMs < 0 ||
-      !Number.isInteger(taskPolls) ||
-      taskPolls < 0
-    ) {
-      throw new Error('Fake-provider latency and task polls must be non-negative integers.');
-    }
-    return new FakeProvider({
-      defaultLatencyMs: latencyMs,
-      defaultTaskPollsBeforeSuccess: taskPolls,
-    });
+    return new FakeProvider(fakeProviderConfiguration());
   }
   if (adapter !== 'proxmox') throw new Error('PROVIDER_ADAPTER must be fake or proxmox.');
 

@@ -163,6 +163,50 @@ without recording concrete evidence.
   - Validate Grafana panels and trace links with browser screenshots.
   - Leave the healthy persistent stack running and record its URLs.
 - Verification required: one repeatable script exits zero and stores bounded evidence artifacts.
+- Evidence recorded 2026-08-31:
+  - `pnpm run verify:phase4-runtime -- --reset --skip-build` completed from clean named volumes in
+    465.4 seconds and wrote a `passed` evidence record with a delayed full-stack stability check.
+  - The actual Proxmox adapter traversed gRPC and a local TLS Proxmox-compatible API: 290 spans,
+    14 Proxmox HTTP spans, one provider resource, one projection, one receipt, and no duplicate
+    business effect.
+  - Kafka outage, consumer buffering, and leased-checkpoint restart recovered with a stable
+    provider resource. Retry success, permanent rejection, ambiguous mutation, exact eight-attempt
+    DLQ exhaustion, replay denial, generation-one replay success, and one original-trace link passed.
+  - Poison input produced one quarantined record without raw payload storage. All 23 required
+    application and infrastructure metric families were present; restricted metric labels and
+    restricted fixture values in metrics and traces were both zero.
+  - Grafana provisioned five dashboard panels, Prometheus and Tempo data sources, and the exemplar
+    trace destination. Thirteen long-running containers remain up, all 12 health-checked services
+    are healthy, and all five initialization jobs exited zero.
+  - Headless Chrome screenshots were inspected at 1920x1200. The dashboard renders all five live
+    panels; the Tempo trace renders a 3.42-second waterfall with 290 spans across four services,
+    rooted at the `202 Accepted` Control API request.
+  - The uncached affected-project matrix completed 29 of 30 targets; the sole failure was typed
+    ESLint treating the project-local Vitest config as application source. Applying the existing
+    app-level tooling ignore and rerunning the target passed, making all 30 tests, type checks,
+    lints, and builds green. Compose, Collector, `promtool`, JavaScript syntax, and diff checks pass.
+  - A second clean-volume run exposed Kafka Connect retaining its five-minute default scheduled
+    rebalance delay after a broker outage. The Compose variable lacked the image's required
+    `CONNECT_` prefix; the corrected worker property bounds reassignment at five seconds. The same
+    run proved the named-volume TLS initializer and actual HTTPS Proxmox path before reaching this
+    recovery gate.
+  - The following clean reset caught PostgreSQL briefly returning SQLSTATE `57P03` after its
+    readiness probe passed. Migration and seed jobs now use a bounded 60-second connection retry
+    for startup and network-transient error codes, while immediately surfacing non-transient SQL
+    failures.
+  - Post-run health inspection then caught repeated Compose reconciliation rerunning the TLS job
+    and replacing certificate files beneath the live HTTPS simulator. TLS initialization is now
+    idempotent within its named volume. Final verification covers all 12 health-checked services,
+    Tempo, all five one-shot jobs, and a 10-second delayed stability check.
+  - An uncached six-project Nx matrix passed every test, typecheck, lint, and build target plus its
+    dependencies; 38 focused tests passed. The database readiness helper passed transient retry,
+    non-transient fail-fast, and budget-exhaustion tests.
+  - Compose rendering, Collector validation, `promtool`, targeted formatting, documentation
+    validation for 48 Markdown files, JavaScript syntax, and staged diff checks all pass.
+- Review result: approved after correcting Kafka/Connect readiness and recovery, PostgreSQL startup
+  retry, idempotent ephemeral TLS initialization, full-stack delayed health verification, provider
+  gRPC cutover probing, generation-aware replay polling, Tempo partial-trace polling, scrape-label
+  redaction semantics, and typed lint scope; no blocking findings remain.
 - Planned commit: `test: verify complete phase 4 runtime`
 
 ### Checkpoint 6 - Mermaid coverage, documentation, and final review

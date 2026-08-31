@@ -90,6 +90,8 @@ export interface FakeProviderStep {
   /** Models the dangerous case where the provider committed before the caller lost the response. */
   readonly applyBeforeResponse?: boolean;
   readonly failureCode?: string;
+  /** Selects the provider-neutral classification returned by a scripted rejection. */
+  readonly failureCategory?: FailureCategory;
   readonly taskPollsBeforeSuccess?: number;
 }
 
@@ -741,7 +743,7 @@ export class FakeProvider implements ProviderPort {
     if (step.mode === 'failure') {
       const result = this.#rejected(
         step.failureCode ?? 'FAKE_PROVIDER_REJECTED',
-        FailureCategory.FAILURE_CATEGORY_TRANSIENT,
+        step.failureCategory ?? FailureCategory.FAILURE_CATEGORY_TRANSIENT,
       );
       this.#mutationCache.set(key, { canonicalRequest, result });
       return result;

@@ -108,6 +108,7 @@ describe('ControlPlaneApplication', () => {
       commandAccepted: vi.fn(),
       workflowTransition: vi.fn(),
       workflowRetry: vi.fn(),
+      deadLetter: vi.fn(),
     };
     const application = new ControlPlaneApplication(repository, telemetry);
 

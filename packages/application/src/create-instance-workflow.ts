@@ -542,6 +542,7 @@ export class CreateInstanceWorkflow {
                 event,
               }),
           );
+          this.telemetry.deadLetter(event.schemaName, error.code, true);
           this.telemetry.workflowTransition(workflow.stage, 'failed');
           return;
         }
