@@ -29,9 +29,18 @@ ordinary broker duplicate.
   consumed by Debezium's tracing transformation.
 - A workflow checkpoint stores the span context that explains it. The next short-lived transition
   restores that context instead of keeping one span open through an asynchronous wait.
+- Administrative replay starts a new trace linked to the failed trace. It never makes a completed
+  failure span the parent of a later operator action.
+- Retry state is part of the fenced workflow checkpoint. A stage receives at most eight retryable
+  attempts inside a 15-minute budget, using full jitter from a 500 ms base to a 30-second ceiling.
+  Safe exhaustion enters governed dead-letter recovery, permanent failure terminates, and an
+  ambiguous mutation enters `manual_review`.
 - All Node.js services send traces and metrics over OTLP to the OpenTelemetry Collector. Prometheus
   scrapes only the Collector's consolidated endpoint, and applications never depend on telemetry
   availability for correctness.
+- Kafka and Connect Java processes export JMX-derived OTLP metrics to the Collector. Collector
+  receivers collect PostgreSQL, logical replication-slot, and Collector self-metrics. Centralized
+  log storage remains outside Phase 4.
 - Metric labels are bounded operational classifications. Resource, project, event, operation,
   provider-task, address, credential, and tenant-configuration identities are prohibited labels.
 
@@ -43,6 +52,8 @@ ordinary broker duplicate.
 - Long-running provider work cannot stall a Kafka partition or lose its retry schedule on rebalance.
 - A trace can cross database CDC and resume after process restarts without fabricating a continuous
   long-lived span.
+- Recovery decisions are queryable as trace spans and low-cardinality metrics without exposing
+  dead-letter payloads or operator reasons.
 - Trace exemplars can explain a latency histogram without putting high-cardinality IDs in metrics.
 
 ### Negative
@@ -50,7 +61,8 @@ ordinary broker duplicate.
 - Outbox, inbox, and workflow schemas carry additional delivery and trace metadata.
 - The application owns custom Kafka span boundaries because KafkaJS has no transaction spanning the
   database and provider effects.
-- Local verification requires Kafka, Connect, Collector, Tempo, Prometheus, and Grafana containers.
+- Local verification requires all four services, PostgreSQL, Kafka, Connect, a deterministic issuer,
+  a TLS Proxmox-compatible simulator, Collector, Tempo, Prometheus, and Grafana containers.
 
 ## Rejected Alternatives
 
@@ -78,6 +90,8 @@ batching, retry, filtering, and redaction controls.
   without closing the original dead letter.
 - Query Tempo for the known request trace and Prometheus for the expected counters and histograms.
 - Scan exported attributes and labels for prohibited fixture values.
+- Exercise retry success, permanent failure, ambiguous outcome, exact-attempt exhaustion, denied
+  replay, linked successful replay, and poison quarantine.
 
 The measured local results are recorded in
 [Phase 4 Local Verification](../verification/phase-4-local-verification.md).

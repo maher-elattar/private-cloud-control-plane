@@ -6,11 +6,11 @@ retained at-least-once delivery, and consumers commit offsets only after durable
 request trace crosses HTTP or gRPC, PostgreSQL, CDC, Kafka, the workflow, provider gRPC, and the read
 projection.
 
-![Phase 4 event journey](../diagrams/rendered/phase-4-event-journey.mermaid.svg)
-
-[Open the Mermaid source](../diagrams/mermaid/phase-4-event-journey.mmd).
-
 ## Runtime Topology
+
+![Phase 4 runtime components](../diagrams/rendered/phase-4-components.mermaid.svg)
+
+[Open the runtime-component source](../diagrams/mermaid/phase-4-components.mmd).
 
 | Component | Responsibility | State or protocol |
 | --- | --- | --- |
@@ -39,6 +39,10 @@ to accept every schema version carried on it; each consumer rejects contracts it
 
 ## Monorepo Boundaries
 
+![Phase 4 monorepo boundaries](../diagrams/rendered/phase-4-monorepo-boundaries.mermaid.svg)
+
+[Open the monorepo-boundary source](../diagrams/mermaid/phase-4-monorepo-boundaries.mmd).
+
 | Project | Phase 4 ownership |
 | --- | --- |
 | `packages/contracts` | AsyncAPI source, JSON Schema, generated event types, and delivery metadata |
@@ -57,6 +61,10 @@ modules are composition roots: they bind application ports to adapters and own r
 
 ## Command and Event Flow
 
+![Phase 4 event journey](../diagrams/rendered/phase-4-event-journey.mermaid.svg)
+
+[Open the event-journey source](../diagrams/mermaid/phase-4-event-journey.mmd).
+
 1. The Control API validates authentication, project scope, request identity, and payload.
 2. One `control` transaction commits intent, operation state, resource lease, audit evidence, and a
    versioned outbox envelope. Only then does the API return `202 Accepted`.
@@ -72,6 +80,10 @@ modules are composition roots: they bind application ports to adapters and own r
 7. Debezium publishes progress and terminal facts. The Control API atomically applies each fact and
    records its projection receipt before committing the Kafka offset.
 8. Reads return only project-scoped projection documents.
+
+![Transactional outbox CDC routing](../diagrams/rendered/phase-4-cdc-routing.mermaid.svg)
+
+[Open the CDC-routing source](../diagrams/mermaid/phase-4-cdc-routing.mmd).
 
 Audit facts follow the same commit rule without joining the command authority path. The Control API
 publishes attributed create acceptance and replay-request facts from `control.outbox`. The
@@ -116,6 +128,29 @@ replay request and administrator projection. Neither component writes the other 
 A worker crash cannot erase its last provider task reference. After the lease expires, another worker
 claims a higher fence and resumes the persisted task instead of creating a second resource.
 
+![Leased checkpoint recovery](../diagrams/rendered/phase-4-checkpoint-recovery.mermaid.svg)
+
+[Open the checkpoint-recovery source](../diagrams/mermaid/phase-4-checkpoint-recovery.mmd).
+
+Retryable provider failures use full-jitter delay from a 500 ms base to a 30-second ceiling. A stage
+may make at most eight attempts and may not exceed its persisted 15-minute retry budget. Successful
+forward progress resets stage retry state. Permanent failures terminate without a DLQ, mutations
+whose provider outcome cannot be established enter `manual_review`, and safely replayable exhaustion
+commits the failed operation, closed command receipt, sanitized dead letter, DLQ outbox fact, audit
+fact, and lease release in one fenced transaction.
+
+![Retry exhaustion decisions](../diagrams/rendered/phase-4-retry-exhaustion.mermaid.svg)
+
+![Dead-letter publication](../diagrams/rendered/phase-4-dead-letter.mermaid.svg)
+
+![Governed replay](../diagrams/rendered/phase-4-replay.mermaid.svg)
+
+Detailed broker sequences are available for
+[Kafka unavailability](../diagrams/rendered/kafka-unavailable.mermaid.svg) and
+[duplicate delivery](../diagrams/rendered/duplicate-message.mermaid.svg). Their canonical sources,
+along with every recovery-diagram source, are indexed in the
+[diagram workflow](../diagrams/README.md).
+
 ## End-to-End Telemetry
 
 ![Phase 4 telemetry pipeline](../diagrams/rendered/phase-4-telemetry-pipeline.mermaid.svg)
@@ -142,6 +177,10 @@ Manual spans identify the business boundaries that driver instrumentation cannot
 `controlplane.workflow.compensation_decision`. HTTP, gRPC, PostgreSQL, Undici, host, Node.js runtime,
 and event-loop signals remain enabled through standard OpenTelemetry instrumentations.
 
+![Phase 4 trace hierarchy](../diagrams/rendered/phase-4-trace-hierarchy.mermaid.svg)
+
+[Open the trace-hierarchy source](../diagrams/mermaid/phase-4-trace-hierarchy.mmd).
+
 Services and the Kafka/Connect Java agents export traces and metrics through OTLP to the Collector.
 The Collector also gathers PostgreSQL transaction, lock, and logical-slot metrics plus its own
 pipeline metrics. It batches traces into Tempo and exposes one consolidated Prometheus endpoint;
@@ -149,6 +188,10 @@ Prometheus has exactly one scrape target. Restricted resource values and process
 removed before export. Applications do not push to Prometheus and do not depend on a telemetry
 backend for correctness. Loki and Alloy remain outside this phase and return with the Kubernetes
 logging work.
+
+![Phase 4 metric flow](../diagrams/rendered/phase-4-metric-flow.mermaid.svg)
+
+[Open the metric-flow source](../diagrams/mermaid/phase-4-metric-flow.mmd).
 
 The custom metric surface is deliberately low-cardinality:
 
@@ -175,12 +218,18 @@ histograms use explicit boundaries from 5 ms through 15 minutes; provider and pr
 histograms use boundaries from 5 ms through 60 seconds. These second-based boundaries are stable
 across OTLP export and Prometheus translation.
 
+The [Phase 4 metric catalog](../observability/phase-4-metric-catalog.md) defines instrument types,
+units, allowed attributes, explicit buckets, infrastructure series, and dashboard queries.
+
 ## Scope Boundary
 
-This phase proves the asynchronous create-instance path with the deterministic provider and a local
-single-broker evidence stack. It does not claim production Kafka replication, Kubernetes or KEDA
-deployment, SLOs and alerts, load-test capacity, database failover, an active reconciliation loop, or
-a live Proxmox mutation. Those require their own deployment and measured verification phases.
+This phase proves the asynchronous create-instance path with both the deterministic fake and the real
+Proxmox adapter against a local TLS Proxmox-compatible simulator. The simulator verifies allowlisted
+HTTP calls, provider task polling, gRPC boundaries, and trace continuity without contacting or
+mutating a hypervisor. The single-broker evidence stack does not claim production Kafka replication,
+Kubernetes or KEDA deployment, SLOs and alerts, load-test capacity, database failover, an active
+reconciliation loop, centralized logs, or a live Proxmox mutation. Those require their own deployment
+and measured verification phases.
 
 See [Phase 4 Persistence and Delivery Identity](phase-4-persistence.md), the
 [failure recovery runbook](../runbooks/phase-4-failure-recovery.md), and the

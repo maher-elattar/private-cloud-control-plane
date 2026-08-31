@@ -9,7 +9,7 @@ without recording concrete evidence.
 - Overall status: In progress
 - Current checkpoint: 6 - Mermaid coverage, documentation, and final review
 - Last completed checkpoint: 5 - Automated laptop verification and evidence
-- Last Phase 4 commit: `06928e2 test: verify complete phase 4 runtime`
+- Last Phase 4 commit: `e22b074 docs: add phase 4 operational diagrams`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -228,6 +228,11 @@ without recording concrete evidence.
   - Validated all 14 Phase 4 Mermaid sources with Mermaid CLI 11.16.0 and parsed every generated
     SVG. Full-size and contact-sheet inspection confirmed nonblank, unclipped output; the monorepo
     view was simplified around composition roots after its first render exposed excessive crossing.
+  - Updated the README, Phase 4 architecture, delivery and telemetry ADR, recovery runbook, and
+    measured verification report. Added an exact metric catalog with types, units, attribute
+    allowlists, histogram boundaries, infrastructure sources, and dashboard queries.
+  - Documentation validation now requires every Mermaid source to have a nontrivial rendered SVG;
+    the expanded gate passes for 49 Markdown files and 28 Mermaid artifacts.
 - Planned commit: `docs: complete phase 4 operational evidence`
 
 ## Resume Instructions

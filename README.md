@@ -1,6 +1,6 @@
 # Private Cloud Control Plane
 
-A provider-neutral control plane for asynchronous virtual-machine lifecycle management. The system accepts REST commands, coordinates provider work over an internal gRPC boundary, persists desired state, publishes work through a transactional outbox, reconciles provider state, and exposes correlated traces, metrics, and logs.
+A provider-neutral control plane for asynchronous virtual-machine lifecycle management. The system accepts REST commands, coordinates provider work over an internal gRPC boundary, persists desired state, publishes work through a transactional outbox, reconciles provider state, and exposes correlated traces and metrics. Centralized logs are reserved for the Kubernetes deployment phase.
 
 The primary runtime target is an existing Kubernetes cluster. Proxmox is the first provider adapter, not a domain dependency. A bounded AWS serverless path will implement the same command and event contracts with DynamoDB, Lambda, and SQS.
 
@@ -8,7 +8,7 @@ The primary runtime target is an existing Kubernetes cluster. Proxmox is the fir
 
 ![Create-instance request journey](docs/diagrams/rendered/create-instance-request-journey.drawio.png)
 
-A create request returns `202 Accepted` only after the control plane commits durable intent and its outbox record. Debezium then publishes the command to Kafka for leased, idempotent orchestration; provider results are persisted as observed state, while OpenTelemetry carries non-blocking metrics, traces, and logs to the evidence plane.
+A create request returns `202 Accepted` only after the control plane commits durable intent and its outbox record. Debezium then publishes the command to Kafka for leased, idempotent orchestration; provider results are persisted as observed state, while OpenTelemetry carries non-blocking traces and metrics to the evidence plane.
 
 [Open the editable Draw.io source](docs/diagrams/src/create-instance-request-journey.drawio).
 
@@ -16,14 +16,14 @@ A create request returns `202 Accepted` only after the control plane commits dur
 
 The application lifecycle is one pnpm/Nx workspace. Nx tags enforce dependency direction between production applications, provider-neutral contracts, ports, and test-only adapters.
 
-![Control-plane monorepo boundaries](docs/diagrams/rendered/monorepo-boundaries.drawio.svg)
+![Phase 4 monorepo boundaries](docs/diagrams/rendered/phase-4-monorepo-boundaries.mermaid.svg)
 
-[Open the editable monorepo diagram](docs/diagrams/src/monorepo-boundaries.drawio).
+[Open the monorepo Mermaid source](docs/diagrams/mermaid/phase-4-monorepo-boundaries.mmd).
 
 | Project                     | Boundary                                                  | Runtime status     |
 | --------------------------- | --------------------------------------------------------- | ------------------ |
 | `control-api`               | Synchronous command acceptance and project queries        | REST + gRPC active |
-| `provisioning-orchestrator` | Asynchronous workflow coordination                        | Phase 3 active     |
+| `provisioning-orchestrator` | Asynchronous workflow coordination                        | Phase 4 active     |
 | `proxmox-provider`          | Privileged provider-neutral gRPC adapter                  | Fake/Proxmox active |
 | `reconciler`                | Scheduled observation and drift classification            | Process shell      |
 | `domain`                    | Framework-independent types and invariants                | Create slice active |
@@ -32,10 +32,12 @@ The application lifecycle is one pnpm/Nx workspace. Nx tags enforce dependency d
 | `provider-adapters`         | Deterministic fake and allowlisted Proxmox implementations | Create slice active |
 | `postgres-adapter`          | Owner transactions, inbox/outbox, workflow, and projections | Phase 4 active     |
 | `messaging`                 | Kafka envelope validation and explicit-offset consumers     | Phase 4 active     |
-| `observability`             | OpenTelemetry SDK, propagation, metrics, and JSON logs       | Phase 4 active     |
+| `observability`             | OpenTelemetry SDK, propagation, traces, and metrics          | Phase 4 active     |
 | `testing`                   | Deterministic provider adapter and conformance fixtures   | Test implementation |
 
 ## Phase 4 Event Pipeline
+
+![Phase 4 runtime components](docs/diagrams/rendered/phase-4-components.mermaid.svg)
 
 ![Phase 4 event journey](docs/diagrams/rendered/phase-4-event-journey.mermaid.svg)
 
@@ -56,9 +58,13 @@ endpoint Prometheus scrapes. Grafana queries those backends without entering the
 Build and start the complete local Phase 4 environment with:
 
 ```bash
-docker compose -f deploy/local/compose.phase4.yaml up -d --build
-docker compose -f deploy/local/compose.phase4.yaml ps -a
+pnpm run verify:phase4-runtime -- --reset
 ```
+
+The gate builds the production images, starts the complete Compose topology, executes happy-path and
+failure-recovery drills, scans exported telemetry, captures Grafana and Tempo screenshots, and leaves
+the persistent stack healthy. The Proxmox adapter is exercised against a local TLS
+Proxmox-compatible simulator; no hypervisor is contacted or mutated.
 
 The Grafana event-pipeline dashboard is served at
 `http://127.0.0.1:3101/d/private-cloud-phase4-event-pipeline/private-cloud-event-pipeline`.
@@ -66,7 +72,8 @@ The API is on `http://127.0.0.1:3100`; Prometheus is on `http://127.0.0.1:9090`;
 `http://127.0.0.1:3200`; and Kafka Connect is on `http://127.0.0.1:8083`.
 Application process configuration and failure procedures are documented in the
 [Phase 4 architecture](docs/architecture/phase-4-messaging-and-observability.md) and
-[recovery runbook](docs/runbooks/phase-4-failure-recovery.md).
+[recovery runbook](docs/runbooks/phase-4-failure-recovery.md). Instrument definitions and
+cardinality rules are in the [Phase 4 metric catalog](docs/observability/phase-4-metric-catalog.md).
 
 ## Phase 3 Vertical Slice
 
@@ -185,7 +192,8 @@ Start here if you are new to the codebase. It is not a conventional `Controller 
 - [Phase 4 Messaging and Observability](docs/architecture/phase-4-messaging-and-observability.md): CDC/Kafka topology, delivery boundaries, replay, telemetry, and scope
 - [Phase 4 Persistence](docs/architecture/phase-4-persistence.md): outbox, inbox, replay-generation, workflow, and migration semantics
 - [Phase 4 Failure Recovery](docs/runbooks/phase-4-failure-recovery.md): broker, duplicate, worker-loss, poison, DLQ, replay, and telemetry procedures
-- [Phase 4 Local Verification](docs/verification/phase-4-local-verification.md): measured runtime, trace, log, and metric evidence
+- [Phase 4 Metric Catalog](docs/observability/phase-4-metric-catalog.md): instruments, units, label allowlists, buckets, and infrastructure signals
+- [Phase 4 Local Verification](docs/verification/phase-4-local-verification.md): measured runtime, trace, metric, redaction, and screenshot evidence
 - [Phase 3 API Implementation](docs/contracts/phase-3-api.md): active REST/gRPC subset, authentication, fields, and error behavior
 - [Contracts and Provider Port](docs/architecture/contracts-and-provider-port.md): wire authorities, compatibility rules, provider outcomes, and conformance behavior
 - [Quality Gates](docs/architecture/quality-gates.md): CI stages, failure policy, dependency audit, and container scanning
@@ -204,4 +212,5 @@ inboxes, replay generations, leases, and fencing prevent duplicate provider effe
 worker resumes the persisted provider task. Governed dead-letter and replay outcomes are projected for
 administrators, while attributed audit facts cross CDC into their dedicated Kafka topic. One trace crosses the API, database, CDC, Kafka, workflow, and provider boundary,
 while metrics and traces reach the local evidence stack through OpenTelemetry. The Proxmox
-path remains behind strict allowlists and fixture tests; no live provider mutation has been run.
+path remains behind strict allowlists and was exercised against a local TLS-compatible simulator;
+no live provider mutation has been run.

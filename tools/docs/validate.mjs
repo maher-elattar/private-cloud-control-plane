@@ -48,11 +48,23 @@ for (const generatedDocument of [
   }
 }
 
-for (const diagram of [
-  'docs/diagrams/rendered/contract-communication.mermaid.svg',
-  'docs/diagrams/rendered/fake-provider-outcomes.mermaid.svg',
-  'docs/diagrams/rendered/monorepo-boundaries.drawio.svg',
-]) {
+const mermaidDirectory = 'docs/diagrams/mermaid';
+const renderedDirectory = 'docs/diagrams/rendered';
+const mermaidSources = (await readdir(mermaidDirectory)).filter((name) => name.endsWith('.mmd'));
+for (const sourceName of mermaidSources) {
+  const diagramName = sourceName.slice(0, -'.mmd'.length);
+  const diagram = join(renderedDirectory, `${diagramName}.mermaid.svg`);
+  try {
+    const [metadata, rendered] = await Promise.all([stat(diagram), readFile(diagram, 'utf8')]);
+    if (metadata.size < 1_000 || !rendered.includes('<svg')) {
+      errors.push(`${diagram}: rendered artifact is invalid or unexpectedly small.`);
+    }
+  } catch {
+    errors.push(`${diagram}: rendered artifact is missing for ${sourceName}.`);
+  }
+}
+
+for (const diagram of ['docs/diagrams/rendered/monorepo-boundaries.drawio.svg']) {
   const metadata = await stat(diagram);
   if (metadata.size < 1_000) errors.push(`${diagram}: rendered artifact is unexpectedly small.`);
 }
@@ -61,5 +73,7 @@ if (errors.length > 0) {
   for (const error of errors) console.error(`- ${error}`);
   process.exitCode = 1;
 } else {
-  console.log(`Validated ${documents.length} Markdown files and required diagram artifacts.`);
+  console.log(
+    `Validated ${documents.length} Markdown files and ${mermaidSources.length} Mermaid artifacts.`,
+  );
 }

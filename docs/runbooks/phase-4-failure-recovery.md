@@ -5,6 +5,16 @@ contract failure and requires durable evidence before an operator requests repla
 
 ## Start and Inspect
 
+The authoritative clean-volume gate builds the images unless `--skip-build` is supplied, starts the
+stack, runs all recovery drills, writes bounded JSON evidence, captures browser screenshots, and
+leaves the persistent stack running:
+
+```bash
+pnpm run verify:phase4-runtime -- --reset
+```
+
+For inspection without rerunning the drills:
+
 ```bash
 docker compose -f deploy/local/compose.phase4.yaml up -d --build
 docker compose -f deploy/local/compose.phase4.yaml ps -a
@@ -18,7 +28,9 @@ curl --fail http://127.0.0.1:3101/api/health
 Compose runs migrations and seed data before admitting CDC or application traffic. It also starts a
 deterministic local-only OIDC issuer, all four services, PostgreSQL, Kafka, Debezium Connect, the
 Collector, Tempo, Prometheus, and Grafana. The service containers use internal DNS names; host ports
-exist for verification only. Never reuse the embedded signing key outside this isolated environment.
+exist for verification only. A one-shot job generates an ephemeral Proxmox-simulator certificate in
+a named volume. Never reuse the local issuer key or simulator trust material outside this isolated
+environment.
 
 ## Kafka or Connect Unavailable
 
@@ -35,6 +47,8 @@ queued, the control outbox backlog and oldest age rise, and no workflow exists y
 
 Restarting Kafka or Connect is recovery. Creating a replacement API command is not.
 
+[Kafka-unavailable sequence](../diagrams/rendered/kafka-unavailable.mermaid.svg)
+
 ## Duplicate Delivery
 
 **Expected state:** `workflow.command_receipts` contains one generation-zero receipt, one workflow
@@ -45,6 +59,8 @@ exists, and the provider contains one owned resource.
 3. Confirm workflow count, provider resource count, and terminal event identity did not increase.
 4. Investigate only if the duplicate used a higher generation; that indicates the governed replay
    path, not an ordinary broker duplicate.
+
+[Duplicate-delivery sequence](../diagrams/rendered/duplicate-message.mermaid.svg)
 
 ## Orchestrator Terminated Mid-Task
 
@@ -58,6 +74,22 @@ lease eventually expires.
 5. Compare the provider resource IDs before and after recovery; there must be one distinct resource.
 
 If a stale worker later attempts to checkpoint, the store must reject its old fencing token.
+
+[Checkpoint-recovery sequence](../diagrams/rendered/phase-4-checkpoint-recovery.mermaid.svg)
+
+## Provider Failure Classification
+
+| Classification | Durable result | Automatic action |
+| --- | --- | --- |
+| Retryable | Persisted attempt, retry start, safe category, and next-ready time | Full-jitter retry; at most eight attempts inside 15 minutes |
+| Permanent | Failed operation and terminal workflow | No retry and no DLQ |
+| Ambiguous mutation | `manual_review` operation and workflow | No automatic mutation or replay |
+| Safely replayable exhaustion | Failed operation, closed receipt, sanitized dead letter, DLQ fact, and audit fact | Governed replay may be requested |
+
+The retry ceiling is 30 seconds and its base is 500 ms. Forward progress resets per-stage retry
+state. Never reset `stage_attempt` or `retry_started_at` manually to force a ninth attempt.
+
+[Retry-exhaustion decision flow](../diagrams/rendered/phase-4-retry-exhaustion.mermaid.svg)
 
 ## Poison Record or Dead Letter
 
@@ -75,6 +107,8 @@ curl --fail \
 Before replay, verify the original schema/version, failure code, `replayAllowed`, current deployment
 compatibility, target project, and provider ownership evidence. Do not extract the original payload
 into a ticket, command line, log, or metric.
+
+[Dead-letter publication sequence](../diagrams/rendered/phase-4-dead-letter.mermaid.svg)
 
 ## Governed Replay
 
@@ -101,6 +135,8 @@ has its own event ID and records actor, reason, correlation, and causation. In T
 new `controlplane.replay.request` span and inspect its link to the original failed trace. The replay
 span must not appear as a child of that completed trace.
 
+[Governed-replay sequence](../diagrams/rendered/phase-4-replay.mermaid.svg)
+
 ## Telemetry Checks
 
 Prometheus metric names use its OpenTelemetry translation, for example:
@@ -126,5 +162,13 @@ Provider service spans. Prometheus should report one healthy scrape target named
 arrive through that target. Telemetry absence is not permission to mutate durable state; use
 database and provider evidence while restoring the Collector or backend.
 
+The [metric catalog](../observability/phase-4-metric-catalog.md) defines all allowed labels,
+histogram buckets, infrastructure sources, and additional diagnostic queries.
+
 Grafana provisions the dashboard at
 `http://127.0.0.1:3101/d/private-cloud-phase4-event-pipeline/private-cloud-event-pipeline`.
+
+The verifier writes its machine-readable result to
+`docs/verification/evidence/phase4-runtime.json`. A valid record has `status: "passed"`, a healthy
+persistent final stack, all 23 required metric families, zero prohibited labels, zero restricted
+values, and links to the Grafana and Tempo screenshots.
