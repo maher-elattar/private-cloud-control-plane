@@ -6,10 +6,10 @@ without recording concrete evidence.
 
 ## Current State
 
-- Overall status: In progress
-- Current checkpoint: 6 - Mermaid coverage, documentation, and final review
-- Last completed checkpoint: 5 - Automated laptop verification and evidence
-- Last Phase 4 commit: `e22b074 docs: add phase 4 operational diagrams`
+- Overall status: Complete
+- Current checkpoint: None - Phase 4 completion gate is closed
+- Last completed checkpoint: 6 - Mermaid coverage, documentation, and final review
+- Last Phase 4 implementation commit: `8c6851a docs: refresh Mermaid render artifacts`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -211,7 +211,7 @@ without recording concrete evidence.
 
 ### Checkpoint 6 - Mermaid coverage, documentation, and final review
 
-- Status: In progress
+- Status: Complete
 - Required work:
   - Add or update Mermaid views for components, monorepo boundaries, telemetry and metric pipelines,
     trace hierarchy, asynchronous create, CDC routing, checkpoint recovery, Kafka outage, duplicate,
@@ -233,7 +233,40 @@ without recording concrete evidence.
     allowlists, histogram boundaries, infrastructure sources, and dashboard queries.
   - Documentation validation now requires every Mermaid source to have a nontrivial rendered SVG;
     the expanded gate passes for 49 Markdown files and 28 Mermaid artifacts.
-- Planned commit: `docs: complete phase 4 operational evidence`
+  - Contract generation is clean at 39 REST operations, 54 gRPC methods, 20 event messages, and 888
+    field rows. Four migrations and the seed reapplied idempotently to the persistent PostgreSQL
+    database.
+  - The full uncached Nx matrix completed successfully for all 14 workspace projects and executed
+    56 tests. Every backend and shared-package typecheck ran normally; the separately developed
+    console retains its generated no-op typecheck target.
+  - Compose rendering, Collector validation, `promtool`, Debezium and Grafana JSON parsing,
+    JavaScript syntax, documentation validation, and scoped formatting pass. All 28 Mermaid sources
+    parse, render, and exactly match their committed SVGs after four stale Phase 3 renders were
+    refreshed and visually inspected.
+  - The audit-topology verifier initially exposed fixed synthetic Kafka coordinates, fixed
+    idempotency keys, and global historical counts. It now uses run-unique signed-bigint offsets,
+    run-unique request identities, time- and target-bounded evidence, and exact relational audit ID
+    matching. Three consecutive populated-database runs passed with two Control API facts, three
+    Orchestrator facts, generation-one replay, and no fabricated restored coordinates.
+  - The production dependency audit reports six moderate and seven high findings exclusively under
+    the unrelated `apps__console-web>react-router` path. JSON path inspection proves zero advisory
+    paths reach a Phase 4 service or shared runtime package. No console or lockfile change was made.
+  - The repository-wide Prettier command is externally limited by existing unformatted editor-skill
+    files and the user-owned lockfile. Direct Prettier validation of the complete backend, packages,
+    deployment, documentation, and tooling scope passes.
+  - Final live smoke checks pass for the API, Grafana, Prometheus, Tempo, and Kafka Connect. The
+    Connector and its task are `RUNNING`, Prometheus has one healthy Collector target, sampled
+    application and infrastructure metrics remain present, and all 13 persistent containers remain
+    running with all 12 health-checked services healthy.
+- Review result: approved. The run-scoped verifier preserves parameterized database access, bounded
+  queries, bigint-safe synthetic coordinates, restricted output, and guaranteed connection cleanup.
+  Documentation claims were cross-checked against Compose, Collector configuration, metric views,
+  and the machine-readable runtime evidence; no blocking findings remain.
+- Completed commits:
+  - `e22b074 docs: add phase 4 operational diagrams`
+  - `018deee docs: complete phase 4 operational evidence`
+  - `8645cee test: make audit topology verification repeatable`
+  - `8c6851a docs: refresh Mermaid render artifacts`
 
 ## Resume Instructions
 

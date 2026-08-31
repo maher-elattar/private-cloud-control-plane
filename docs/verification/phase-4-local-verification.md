@@ -114,10 +114,22 @@ states. Connect's scheduled rebalance delay is bounded to five seconds for deter
 
 ## Static Evidence
 
-An uncached six-project Nx matrix passed every test, typecheck, lint, and build target plus dependency
-builds. Thirty-eight focused tests passed. Compose rendering, Collector configuration validation,
-`promtool`, JavaScript syntax, targeted formatting, documentation validation, and staged diff checks
-also passed before this evidence was accepted.
+The closing uncached Nx target matrix completed successfully across all 14 workspace projects and
+executed 56 tests. The separately developed console's generated typecheck target is disabled by its
+project configuration; every backend and shared-package typecheck ran normally. Contract
+regeneration remained clean at 39 REST operations, 54 RPCs, 20 event messages, and 888 field rows.
+All four migrations and the seed were idempotently reapplied.
+
+The standalone audit-topology drill passed twice back-to-back against the populated persistent
+database after its synthetic request identities, broker coordinates, and evidence queries were made
+run-scoped. Each run proved two Control API facts, three Orchestrator facts, matching relational audit
+IDs, generation-one replay, and null synthetic coordinates for the restored original receipt.
+
+Compose rendering, Collector validation, `promtool`, JSON parsing, JavaScript syntax, scoped
+Prettier, documentation validation for 49 Markdown files, exact rendering comparison for 28 Mermaid
+sources, and staged diff checks passed. The production audit was inspected path by path: all current
+advisories resolve exclusively through the separately developed console package, and none reach a
+Phase 4 service or shared runtime package.
 
 ## Known Local Limitation
 
