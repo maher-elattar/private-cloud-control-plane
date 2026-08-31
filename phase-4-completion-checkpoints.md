@@ -6,11 +6,11 @@ without recording concrete evidence.
 
 ## Current State
 
-- Overall status: Complete
-- Current checkpoint: None - Phase 4 completion gate is closed
-- Last completed checkpoint: 6 - Mermaid coverage, documentation, and final review
+- Overall status: Reopened - strict Phase 4 gaps remain
+- Current checkpoint: 8 - End-to-end telemetry correctness
+- Last completed checkpoint: 7 - Strict completion re-audit
 - Last Phase 4 implementation commit: `8c6851a docs: refresh Mermaid render artifacts`
-- Checkpoint closure commit: `42f5cc1 docs: close phase 4 completion gate`
+- Previous checkpoint closure commit: `42f5cc1 docs: close phase 4 completion gate`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -269,6 +269,82 @@ without recording concrete evidence.
   - `8645cee test: make audit topology verification repeatable`
   - `8c6851a docs: refresh Mermaid render artifacts`
   - `42f5cc1 docs: close phase 4 completion gate`
+
+### Checkpoint 7 - Strict completion re-audit
+
+- Status: Complete
+- Evidence recorded 2026-09-01:
+  - Queried Prometheus exemplar storage for every `controlplane_*` metric over the successful
+    verification window; no exemplar series or samples were present even though Grafana had a
+    Tempo exemplar destination configured.
+  - Queried all Prometheus series carrying `server_address`; 406 series exposed local service
+    hostnames or an IP address. The runtime verifier scanned only custom `controlplane_*` series,
+    so its previous restricted-label result did not cover standard application metrics.
+  - Queried the recorded 290-span happy-path Tempo trace. It contained `db-log-write` and
+    `private-cloud-outbox-relay`, but no distinct `debezium-read` or Kafka producer-kind span.
+  - Reviewed replay admission and confirmed that the authorized generation-one command was
+    inserted directly into the Orchestrator workflow transaction instead of being delivered again
+    through `provisioning.commands.v1`.
+  - Confirmed the persistent Compose environment still had 13 running containers, 12 healthy
+    health-checked services, and no unhealthy service before reopening this gate.
+- Review result: the previous completion statement was too broad; checkpoints 8-11 are required.
+
+### Checkpoint 8 - End-to-end telemetry correctness
+
+- Status: In progress
+- Required work:
+  - Export real trace-based exemplars for latency histograms and prove their Tempo trace IDs through
+    the Prometheus exemplar API.
+  - Remove hostnames and IP addresses from metric attributes across custom, standard application,
+    Java, Collector, and infrastructure metrics while retaining bounded semantic dimensions.
+  - Produce and verify the promised CDC trace structure: database log write, Debezium read/relay,
+    and Kafka producer spans, with the original W3C context preserved.
+  - Expand automated checks so datasource configuration cannot be mistaken for exemplar delivery
+    and custom-metric filtering cannot hide prohibited labels on other metric families.
+- Verification required: focused unit tests, Collector validation, `promtool`, a live traced create,
+  Prometheus exemplar queries, all-series label inspection, and Tempo span-kind inspection.
+- Planned commit: `feat: complete phase 4 telemetry semantics`
+
+### Checkpoint 9 - Kafka-backed authorized replay
+
+- Status: Pending
+- Required work:
+  - Make replay authorization and restored-command publication durable and atomic without a direct
+    Kafka dependency in the Control API or Orchestrator request transaction.
+  - Route the authorized generation-one command through `provisioning.commands.v1`, retain the
+    original logical event ID, increment replay generation, preserve the administrative trace link,
+    and deduplicate both request and restored command deliveries.
+  - Update contracts, persistence state, receipt semantics, workflow handling, and failure recovery
+    documentation to match the implemented broker path.
+- Verification required: transaction tests, contract checks, CDC routing, broker-coordinate proof,
+  denied replay, duplicate replay request, Kafka outage recovery, and successful generation-one
+  replay.
+- Planned commit: `feat: route authorized replays through Kafka`
+
+### Checkpoint 10 - Complete runtime evidence
+
+- Status: Pending
+- Required work:
+  - Extend the repeatable Phase 4 verifier with the new exemplar, global redaction, CDC span-kind,
+    and authorized-replay delivery assertions.
+  - Run the complete clean-volume Compose verification and update bounded machine-readable evidence,
+    screenshots, runbooks, diagrams, and measured results.
+  - Leave the persistent environment healthy and record the service URLs.
+- Verification required: `verify:phase4-runtime -- --reset`, screenshots, health stability, and all
+  required evidence artifacts.
+- Planned commit: `test: prove strict phase 4 completion`
+
+### Checkpoint 11 - Final quality gate and closure
+
+- Status: Pending
+- Required work:
+  - Run contracts, migrations, unit and integration tests, lint, typecheck, builds, formatting,
+    documentation validation, `promtool`, Mermaid rendering, dependency audit, and diff checks.
+  - Apply the code-review workflow to correctness, security, concurrency, idempotency, telemetry
+    cardinality, recovery, and documentation claims; resolve every blocking finding.
+  - Mark Phase 4 complete only when every reopened acceptance test has concrete evidence.
+- Verification required: all scoped quality gates pass and no blocking review finding remains.
+- Planned commit: `docs: close strict phase 4 completion gate`
 
 ## Resume Instructions
 
