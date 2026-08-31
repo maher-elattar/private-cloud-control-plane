@@ -7,9 +7,9 @@ without recording concrete evidence.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: 5 - Automated laptop verification and evidence
-- Last completed checkpoint: 4 - Full containerized Phase 4 environment and infrastructure metrics
-- Last Phase 4 commit: `f5a91c8 build: complete phase 4 integration environment`
+- Current checkpoint: 6 - Mermaid coverage, documentation, and final review
+- Last completed checkpoint: 5 - Automated laptop verification and evidence
+- Last Phase 4 commit: `06928e2 test: verify complete phase 4 runtime`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
 
@@ -153,7 +153,7 @@ without recording concrete evidence.
 
 ### Checkpoint 5 - Automated laptop verification and evidence
 
-- Status: In progress
+- Status: Complete
 - Required work:
   - Automate migration, seed, JWT issue, known-trace create, projection and receipt assertions.
   - Assert the required Tempo spans and Prometheus application/infrastructure samples.
@@ -207,11 +207,11 @@ without recording concrete evidence.
   retry, idempotent ephemeral TLS initialization, full-stack delayed health verification, provider
   gRPC cutover probing, generation-aware replay polling, Tempo partial-trace polling, scrape-label
   redaction semantics, and typed lint scope; no blocking findings remain.
-- Planned commit: `test: verify complete phase 4 runtime`
+- Completed commit: `06928e2 test: verify complete phase 4 runtime`
 
 ### Checkpoint 6 - Mermaid coverage, documentation, and final review
 
-- Status: Pending
+- Status: In progress
 - Required work:
   - Add or update Mermaid views for components, monorepo boundaries, telemetry and metric pipelines,
     trace hierarchy, asynchronous create, CDC routing, checkpoint recovery, Kafka outage, duplicate,
