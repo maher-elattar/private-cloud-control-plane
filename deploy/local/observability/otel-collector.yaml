@@ -54,6 +54,23 @@ receivers:
           static_configs:
             - targets: ['127.0.0.1:8888']
 
+connectors:
+  span_metrics:
+    namespace: controlplane.trace
+    histogram:
+      unit: s
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 60s]
+    exemplars:
+      enabled: true
+      max_per_data_point: 5
+    exclude_dimensions: [collector.instance.id]
+    resource_metrics_key_attributes:
+      - service.name
+      - service.namespace
+      - service.version
+      - deployment.environment.name
+
 processors:
   filter/drop-java-runtime:
     error_mode: ignore
@@ -75,6 +92,18 @@ processors:
       - { key: process.owner, action: delete }
       - { key: process.pid, action: delete }
       - { key: service.instance.id, action: delete }
+  attributes/sanitize-metrics:
+    actions:
+      # Endpoint identity is useful in traces but violates the metric-label contract.
+      - { key: server.address, action: delete }
+      - { key: client.address, action: delete }
+      - { key: network.local.address, action: delete }
+      - { key: network.peer.address, action: delete }
+      - { key: net.host.name, action: delete }
+      - { key: net.host.ip, action: delete }
+      - { key: net.peer.name, action: delete }
+      - { key: net.peer.ip, action: delete }
+      - { key: http.host, action: delete }
   batch:
     timeout: 1s
 
@@ -104,8 +133,16 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource/sanitize, batch]
-      exporters: [otlp/tempo]
+      exporters: [otlp/tempo, span_metrics]
     metrics:
-      receivers: [otlp, postgresql, sqlquery/replication-slots, prometheus/collector-self]
-      processors: [memory_limiter, filter/drop-java-runtime, resource/sanitize, batch]
+      receivers:
+        [otlp, postgresql, sqlquery/replication-slots, prometheus/collector-self, span_metrics]
+      processors:
+        [
+          memory_limiter,
+          filter/drop-java-runtime,
+          attributes/sanitize-metrics,
+          resource/sanitize,
+          batch,
+        ]
       exporters: [prometheus]

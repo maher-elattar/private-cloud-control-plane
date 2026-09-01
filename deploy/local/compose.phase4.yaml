@@ -12,6 +12,7 @@ x-runtime-environment: &runtime-environment
   OTEL_METRIC_EXPORT_INTERVAL: '5000'
   OTEL_METRIC_EXPORT_TIMEOUT: '4000'
   OTEL_SDK_DISABLED: 'false'
+  OTEL_TRACES_SAMPLER: always_on
 
 x-database-environment: &database-environment
   DATABASE_URL: postgresql://private_cloud:private_cloud@postgres:5432/private_cloud
@@ -222,12 +223,16 @@ services:
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
       CONNECT_PLUGIN_DISCOVERY: service_load
       CONNECT_SCHEDULED_REBALANCE_MAX_DELAY_MS: '5000'
+      CONNECT_PRODUCER_INTERCEPTOR_CLASSES: io.debezium.tracing.DebeziumTracingProducerInterceptor
       ENABLE_OTEL: 'true'
       OTEL_SDK_DISABLED: 'false'
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_SERVICE_NAME: debezium-connect
       OTEL_PROPAGATORS: tracecontext
+      OTEL_TRACES_SAMPLER: always_on
+      # The Debezium interceptor restores the Event Router context before producing. Kafka
+      # auto-instrumentation would start a root span and overwrite that restored trace header.
       OTEL_INSTRUMENTATION_KAFKA_ENABLED: 'false'
       OTEL_METRICS_EXPORTER: otlp
       OTEL_LOGS_EXPORTER: none
@@ -374,7 +379,10 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.12.0
-    command: ['--config.file=/etc/prometheus/prometheus.yaml', '--storage.tsdb.path=/prometheus']
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --enable-feature=exemplar-storage
     volumes:
       - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
       - prometheus-data:/prometheus

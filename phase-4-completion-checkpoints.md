@@ -7,8 +7,8 @@ without recording concrete evidence.
 ## Current State
 
 - Overall status: Reopened - strict Phase 4 gaps remain
-- Current checkpoint: 8 - End-to-end telemetry correctness
-- Last completed checkpoint: 7 - Strict completion re-audit
+- Current checkpoint: 9 - Kafka-backed authorized replay
+- Last completed checkpoint: 8 - End-to-end telemetry correctness
 - Last Phase 4 implementation commit: `8c6851a docs: refresh Mermaid render artifacts`
 - Previous checkpoint closure commit: `42f5cc1 docs: close phase 4 completion gate`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
@@ -291,7 +291,7 @@ without recording concrete evidence.
 
 ### Checkpoint 8 - End-to-end telemetry correctness
 
-- Status: In progress
+- Status: Complete
 - Required work:
   - Export real trace-based exemplars for latency histograms and prove their Tempo trace IDs through
     the Prometheus exemplar API.
@@ -303,11 +303,35 @@ without recording concrete evidence.
     and custom-metric filtering cannot hide prohibited labels on other metric families.
 - Verification required: focused unit tests, Collector validation, `promtool`, a live traced create,
   Prometheus exemplar queries, all-series label inspection, and Tempo span-kind inspection.
-- Planned commit: `feat: complete phase 4 telemetry semantics`
+- Evidence recorded 2026-09-01:
+  - The Collector span-metrics connector exports trace-correlated latency histograms with explicit
+    boundaries and bounded resource identity. Prometheus has exemplar storage enabled instead of
+    relying on Grafana datasource configuration as evidence.
+  - A clean-volume real-Proxmox create completed under trace
+    `a61a60e1ddd266425ea3b8ef72b3f49c`. Tempo returned 306 spans in that same trace, including the
+    API transaction, `db-log-write`, `debezium-read`, 11 Kafka producer spans, command and event
+    consumer spans, provider gRPC and HTTPS calls, workflow checkpoints, and projection apply.
+  - The checksum-pinned Debezium 3.4.3 interceptor restores the Event Router context before the
+    Kafka producer span. Producer spans for both `provisioning.commands.v1` and
+    `provisioning.events.v1` retain the original request trace; Kafka auto-instrumentation is
+    disabled because it otherwise overwrites the restored W3C header with a new root trace.
+  - Prometheus's exemplar API returned 181 samples tied to the known Tempo trace. Querying Tempo by
+    the exemplar trace ID succeeded.
+  - Global inspection of 7,169 current Prometheus series found zero prohibited identity label keys,
+    and every series came from `otel-collector:8889` under the single consolidated scrape job.
+    Endpoint identity is removed centrally from custom, standard, Java, and infrastructure metrics.
+  - Messaging, observability, Control API, and provider suites passed 26 tests. Their uncached
+    typecheck, lint, and build targets passed with all dependencies.
+  - Compose rendering, Collector validation, `promtool`, connector JSON, JavaScript syntax,
+    formatting, and diff checks pass. The connector and its task are `RUNNING`; 13 persistent
+    containers are running and all 12 health-checked services are healthy.
+- Review result: approved after requiring producer-span evidence for both command and workflow-event
+  destinations; no blocking findings remain.
+- Completed commit: `feat: complete phase 4 telemetry semantics`
 
 ### Checkpoint 9 - Kafka-backed authorized replay
 
-- Status: Pending
+- Status: In progress
 - Required work:
   - Make replay authorization and restored-command publication durable and atomic without a direct
     Kafka dependency in the Control API or Orchestrator request transaction.

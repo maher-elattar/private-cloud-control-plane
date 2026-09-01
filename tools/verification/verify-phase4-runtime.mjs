@@ -259,6 +259,16 @@ async function prometheusQuery(expression) {
   return response.data.result;
 }
 
+async function prometheusExemplars(expression, start = startedAt) {
+  const url = new URL(`${prometheusBase}/api/v1/query_exemplars`);
+  url.searchParams.set('query', expression);
+  url.searchParams.set('start', new Date(start.getTime() - 60_000).toISOString());
+  url.searchParams.set('end', new Date().toISOString());
+  const response = await jsonRequest(url);
+  assert.equal(response.status, 'success');
+  return response.data.flatMap((series) => series.exemplars ?? []);
+}
+
 async function scalar(expression) {
   const result = await prometheusQuery(expression);
   if (result.length === 0) return 0;
@@ -445,7 +455,7 @@ async function verifyProxmoxHappyPath(tenant) {
     'controlplane.transaction.accept_create',
     'controlplane.outbox.write',
     'db-log-write',
-    'private-cloud-outbox-relay',
+    'debezium-read',
     'provisioning.commands.v1 process',
     'controlplane.transaction.command_admission',
     'controlplane.workflow.stage',
@@ -458,6 +468,22 @@ async function verifyProxmoxHappyPath(tenant) {
     requiredNames.filter((name) => !names.has(name)),
     [],
     `missing spans: ${requiredNames.filter((name) => !names.has(name)).join(', ')}`,
+  );
+  const kafkaProducerSpans = allSpans.filter(
+    (span) =>
+      span.kind === 'SPAN_KIND_PRODUCER' && attributes(span)['messaging.system'] === 'kafka',
+  );
+  const producerDestinations = new Set(
+    kafkaProducerSpans.map((span) => attributes(span)['messaging.destination.name']),
+  );
+  const requiredProducerDestinations = ['provisioning.commands.v1', 'provisioning.events.v1'];
+  const missingProducerDestinations = requiredProducerDestinations.filter(
+    (destination) => !producerDestinations.has(destination),
+  );
+  assert.deepEqual(
+    missingProducerDestinations,
+    [],
+    `missing Debezium Kafka producer spans: ${missingProducerDestinations.join(', ')}`,
   );
   const httpSpans = allSpans.filter(
     (span) => attributes(span)['server.address'] === 'local-proxmox',
@@ -472,6 +498,8 @@ async function verifyProxmoxHappyPath(tenant) {
     duplicateBusinessEvents: afterEvents - beforeEvents,
     traceSpans: allSpans.length,
     proxmoxHttpSpans: httpSpans.length,
+    kafkaProducerSpans: kafkaProducerSpans.length,
+    kafkaProducerDestinations: [...producerDestinations].sort(),
     requiredSpanNames: requiredNames,
   };
   return fixture;
@@ -736,6 +764,7 @@ async function verifyMetricsAndRedaction(fixtures, traceRestrictedValues, metric
     'controlplane_dead_letter_total',
     'controlplane_quarantine_total',
     'controlplane_replay_total',
+    'controlplane_trace_duration_seconds_bucket',
     'kafka_server_brokertopicmetrics_messagesin_total',
     'kafka_connect_task_running_ratio',
     'debezium_postgres_connected',
@@ -758,16 +787,33 @@ async function verifyMetricsAndRedaction(fixtures, traceRestrictedValues, metric
   }
   assert.deepEqual(missing, [], `missing Prometheus metrics: ${missing.join(', ')}`);
 
+  const expectedTraceIds = new Set(
+    Object.values(evidence.fixtures)
+      .map((fixture) => fixture.traceId)
+      .filter(Boolean),
+  );
+  const correlatedExemplar = await waitFor(
+    'trace-correlated Prometheus exemplar',
+    async () => {
+      const exemplars = await prometheusExemplars(
+        '{__name__="controlplane_trace_duration_seconds_bucket"}',
+      );
+      return exemplars.find((exemplar) => expectedTraceIds.has(exemplar.labels?.trace_id)) ?? false;
+    },
+    30_000,
+    1_000,
+  );
+  await tempoTrace(correlatedExemplar.labels.trace_id, 60_000);
+
   const seriesUrl = new URL(`${prometheusBase}/api/v1/series`);
-  seriesUrl.searchParams.append('match[]', '{__name__=~"controlplane_.+"}');
+  seriesUrl.searchParams.append('match[]', '{__name__=~".+"}');
   seriesUrl.searchParams.set('start', new Date(startedAt.getTime() - 60_000).toISOString());
   const series = (await jsonRequest(seriesUrl)).data;
-  // Prometheus adds `instance` and `job` at scrape time; they are not application metric
-  // attributes. Match exact business identifiers so approved dimensions such as
-  // `event_schema_name` remain usable while high-cardinality entity identity is rejected.
+  // Prometheus adds `instance` and `job` at scrape time. Everything else is checked across every
+  // application, standard, Java, infrastructure, and Collector metric family.
   const scrapeMetadataLabels = new Set(['instance', 'job']);
   const prohibitedMetricLabel =
-    /(^|_)(project_id|tenant_id|instance_id|operation_id|event_id|resource_id|task_id|aggregate_id|idempotency_key|partition_key|ssh_key|address|credential|hostname|ip_address|reason|payload)($|_)/i;
+    /(^|_)(project_id|tenant_id|instance_id|operation_id|event_id|resource_id|task_id|aggregate_id|idempotency_key|partition_key|ssh_key|server_address|client_address|network_local_address|network_peer_address|net_host_name|net_host_ip|net_peer_name|net_peer_ip|http_host|credential|hostname|ip_address|reason|payload)($|_)/i;
   const prohibitedLabels = series.flatMap((item) =>
     Object.keys(item)
       .filter(
@@ -779,7 +825,7 @@ async function verifyMetricsAndRedaction(fixtures, traceRestrictedValues, metric
   assert.deepEqual(prohibitedLabels, []);
   assert(
     series.every((item) => item.instance === 'otel-collector:8889'),
-    'Control-plane metrics must be scraped only from the consolidated Collector endpoint',
+    'Metrics must be scraped only from the consolidated Collector endpoint',
   );
   const seriesText = JSON.stringify(series);
   for (const value of [...traceRestrictedValues, ...metricRestrictedValues]) {
@@ -795,6 +841,8 @@ async function verifyMetricsAndRedaction(fixtures, traceRestrictedValues, metric
   }
   evidence.checks.telemetry = {
     requiredMetrics,
+    exemplarTraceId: correlatedExemplar.labels.trace_id,
+    metricSeriesInspected: series.length,
     prohibitedMetricLabels: prohibitedLabels.length,
     restrictedValuesInMetrics: 0,
     restrictedValuesInTraces: 0,

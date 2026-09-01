@@ -104,13 +104,16 @@ export class ProjectionConsumer implements OnApplicationBootstrap, OnModuleDestr
       const outcome = await withSpan(
         'controlplane.projection.apply',
         { 'event.schema.name': event.schemaName },
-        () => this.store.applyWorkflowEvent(event, record.delivery),
-      );
-      recordProjectionDuration(
-        event.schemaName,
-        outcome,
-        (performance.now() - started) / 1_000,
-        Date.parse(event.occurredAt),
+        async () => {
+          const result = await this.store.applyWorkflowEvent(event, record.delivery);
+          recordProjectionDuration(
+            event.schemaName,
+            result,
+            (performance.now() - started) / 1_000,
+            Date.parse(event.occurredAt),
+          );
+          return result;
+        },
       );
       structuredLog('info', 'workflow_event_projected', {
         schema_name: event.schemaName,
@@ -128,13 +131,16 @@ export class ProjectionConsumer implements OnApplicationBootstrap, OnModuleDestr
     const outcome = await withSpan(
       'controlplane.projection.apply',
       { 'event.schema.name': event.schemaName },
-      () => this.store.applyDeadLetterEvent(event, record.delivery),
-    );
-    recordProjectionDuration(
-      event.schemaName,
-      outcome,
-      (performance.now() - started) / 1_000,
-      Date.parse(event.occurredAt),
+      async () => {
+        const result = await this.store.applyDeadLetterEvent(event, record.delivery);
+        recordProjectionDuration(
+          event.schemaName,
+          result,
+          (performance.now() - started) / 1_000,
+          Date.parse(event.occurredAt),
+        );
+        return result;
+      },
     );
     return {
       outcome: outcome === 'applied' ? 'handled' : 'duplicate',

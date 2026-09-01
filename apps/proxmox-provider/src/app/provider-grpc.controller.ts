@@ -173,13 +173,21 @@ export class ProviderGrpcController {
       return await withSpan(
         'controlplane.provider.adapter',
         { 'provider.operation': operation },
-        handler,
+        async () => {
+          try {
+            return await handler();
+          } catch (error: unknown) {
+            outcome = 'failed';
+            throw error;
+          } finally {
+            // Keep the measurement under the adapter span for trace-aware metric correlation.
+            recordProviderDuration(operation, outcome, (performance.now() - started) / 1_000);
+          }
+        },
       );
     } catch (error: unknown) {
-      outcome = 'failed';
       throw rpcError(error);
     } finally {
-      recordProviderDuration(operation, outcome, (performance.now() - started) / 1_000);
       structuredLog('info', 'provider_operation_completed', { operation, outcome });
     }
   }

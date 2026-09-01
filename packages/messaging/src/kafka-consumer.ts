@@ -102,6 +102,7 @@ export class KafkaConsumerRunner {
       autoCommit: false,
       partitionsConsumedConcurrently: 1,
       eachMessage: async ({ topic, partition, message, heartbeat }) => {
+        const consumedAtMs = Date.now();
         const record = this.record(topic, partition, message);
         const parentCarrier = record.headers.traceparent
           ? {
@@ -117,7 +118,7 @@ export class KafkaConsumerRunner {
               }
             : undefined;
         const parent = parentCarrier ? extractTransportContext(parentCarrier) : undefined;
-        const result = await withSpan(
+        await withSpan(
           `${topic} process`,
           {
             'messaging.system': 'kafka',
@@ -127,17 +128,23 @@ export class KafkaConsumerRunner {
             'messaging.kafka.offset': message.offset,
             'event.schema.name': record.envelope?.schemaName ?? 'unknown',
           },
-          async () => this.handleWithRetry(record, heartbeat),
+          async () => {
+            const handled = await this.handleWithRetry(record, heartbeat);
+            // Record while the consumer span is active so trace-aware metric SDKs can retain an
+            // exemplar. The Collector span-metrics path supplies exemplars for the current JS SDK.
+            recordMessageProcessed({
+              topic,
+              consumerGroup: this.options.groupId,
+              schemaName: handled.schemaName,
+              outcome: handled.outcome,
+              brokerTimestampMs: record.delivery.brokerTimestampMs,
+              occurredAtMs: handled.occurredAtMs,
+              handledAtMs: consumedAtMs,
+            });
+            return handled;
+          },
           { kind: SpanKind.CONSUMER, ...(parent ? { parent } : {}) },
         );
-        recordMessageProcessed({
-          topic,
-          consumerGroup: this.options.groupId,
-          schemaName: result.schemaName,
-          outcome: result.outcome,
-          brokerTimestampMs: record.delivery.brokerTimestampMs,
-          occurredAtMs: result.occurredAtMs,
-        });
         await this.consumer.commitOffsets([
           { topic, partition, offset: (BigInt(message.offset) + 1n).toString() },
         ]);
@@ -165,6 +172,13 @@ export class KafkaConsumerRunner {
         return await this.options.handle(record);
       } catch (error: unknown) {
         lastError = error;
+        structuredLog(attempt < this.maximumAttempts ? 'warn' : 'error', 'kafka_handler_failed', {
+          topic: this.options.topic,
+          consumer_group: this.options.groupId,
+          attempt,
+          exhausted: attempt === this.maximumAttempts,
+          error_type: error instanceof Error ? error.name : 'UnknownError',
+        });
         if (attempt < this.maximumAttempts) {
           await heartbeat();
           await new Promise<void>((resolve) => setTimeout(resolve, this.retryBackoffMs * attempt));
