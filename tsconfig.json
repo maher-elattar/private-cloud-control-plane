@@ -4,6 +4,9 @@
   "files": [],
   "references": [
     {
+      "path": "./apps/console-web"
+    },
+    {
       "path": "./apps/control-api"
     },
     {

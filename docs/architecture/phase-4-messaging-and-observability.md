@@ -68,11 +68,12 @@ modules are composition roots: they bind application ports to adapters and own r
 1. The Control API validates authentication, project scope, request identity, and payload.
 2. One `control` transaction commits intent, operation state, resource lease, audit evidence, and a
    versioned outbox envelope. Only then does the API return `202 Accepted`.
-3. Debezium reads the committed WAL change. Its outbox router sends the declared payload, event ID,
-   partition key, replay generation, and W3C headers to the allowlisted Kafka topic.
-4. The Orchestrator validates the Kafka key, identity headers, replay generation, envelope, and
-   supported command payload. One `workflow` transaction records the inbox receipt and creates the
-   initial workflow.
+3. Debezium reads the committed WAL change. Its outbox router sends the physical outbox ID, declared
+   payload, event ID, partition key, replay generation, and W3C headers to the allowlisted Kafka
+   topic.
+4. The Orchestrator validates the Kafka key, outbox and event identity headers, replay generation,
+   envelope, and supported command payload. One `workflow` transaction records the inbox receipt and
+   creates the initial workflow.
 5. Kafka's next offset is committed only after that transaction commits. Provider work is not done
    while the Kafka record is held.
 6. A worker claims one checkpoint with a lease and monotonic fencing token, calls the provider with
@@ -93,13 +94,18 @@ replay-decision facts from `workflow.outbox`. Each owner inserts `audit.entries`
 audit aggregate ID, the project ID is the partition key, and replay facts reference the durable
 replay request rather than copying its reason into Kafka.
 
-A normal replay request receipt retains its real Kafka topic, partition, and offset. The restored
-original command is admitted as generation `n+1` inside the replay transaction and therefore stores
-null source coordinates; no code invents a Kafka location for a record the broker never delivered.
+A replay request receipt retains its real Kafka topic, partition, and offset. If approved, the same
+owner transaction binds the request to an exact command hash and physical workflow outbox ID, writes
+the restored original command at generation `n+1`, and marks the dead letter `replay_requested`.
+Workflow execution does not reopen in that transaction. Debezium must publish the restored row and
+Kafka must deliver it before the Orchestrator records a second receipt with real topic, partition,
+and offset and atomically creates or reopens the workflow.
 
 The two durable identities serve different failure domains. `outbox_id` identifies one physical CDC
-row. `(consumer_name, event_id, replay_generation)` identifies one permitted logical delivery. A
-normal broker duplicate remains generation zero and cannot repeat a provider effect.
+row and is propagated as the `outbox-id` header. `(consumer_name, event_id, replay_generation)`
+identifies one permitted logical delivery. A generation above zero is accepted only when its payload
+hash and outbox ID match the pending authority. A normal broker duplicate remains generation zero
+and cannot repeat a provider effect.
 
 ## Failure and Recovery
 
@@ -114,16 +120,20 @@ command becomes an outbox-backed dead-letter fact.
 Infrastructure and programming failures are not dead-lettered: their offsets remain uncommitted so
 the dependency can recover and Kafka can redeliver.
 
-Replay is a new, authorized command, not a raw topic copy. The Control API requires a platform
+Replay is an authorized redelivery, not a raw topic copy. The Control API requires a platform
 administrator, a reason, and an idempotency key. A replayable dead letter can advance to a higher
 generation only if the current deployment validates the stored original contract. An incompatible
 request is consumed and marked `rejected`, while the original dead letter remains open for a later,
 fresh attributed request. A non-replayable record is rejected synchronously with
 `REPLAY_NOT_ALLOWED`.
 
-The Orchestrator records the decision in its own transaction and publishes
-`provisioning.replay.resolved` through its outbox. The Control API consumes that fact to update the
-replay request and administrator projection. Neither component writes the other component's state.
+The Orchestrator records authorization and restored-command publication in its own transaction. A
+Kafka outage after that commit leaves durable authority and an immutable outbox row; it does not
+reopen the workflow. After physical generation `n+1` admission, the Orchestrator completes the
+authority and publishes `provisioning.replay.resolved`. The Control API consumes that fact to update
+the replay request and administrator projection. Neither component writes the other component's
+state. A wrong hash or outbox ID is quarantined by broker coordinates without consuming the valid
+pending authority.
 
 A worker crash cannot erase its last provider task reference. After the lease expires, another worker
 claims a higher fence and resumes the persisted task instead of creating a second resource.

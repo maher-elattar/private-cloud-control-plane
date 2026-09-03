@@ -125,7 +125,8 @@ Expected outcomes:
 
 | Outcome | Meaning | Operator action |
 | --- | --- | --- |
-| HTTP `202`, replay `completed` | Current deployment admitted generation `n+1` | Follow the original event ID and new causation chain to terminal state |
+| HTTP `202`, replay `completed` | Kafka delivered and the Orchestrator admitted generation `n+1` | Follow the original event ID and new causation chain to terminal state |
+| HTTP `202`, replay `accepted` | Durable request exists but authorization or restored delivery is still pending | Inspect request receipt, `workflow.replay_requests`, outbox lag, connector status, and Kafka health; do not publish manually |
 | HTTP `202`, replay `rejected` | Request was durable, but current deployment still cannot validate the original | Leave the dead letter open; deploy compatibility, then submit a fresh attributed request |
 | HTTP `409`, `REPLAY_NOT_ALLOWED` | Policy prohibits replay | Investigate or resolve manually; never copy the record to the command topic |
 | Idempotent response | The same operator request was already accepted | Follow the returned replay request; do not generate another key |
@@ -134,6 +135,14 @@ Replay preserves the original event ID and allocates a new delivery generation. 
 has its own event ID and records actor, reason, correlation, and causation. In Tempo, search for the
 new `controlplane.replay.request` span and inspect its link to the original failed trace. The replay
 span must not appear as a child of that completed trace.
+
+An authorized replay has two physical records on `provisioning.commands.v1`: the generation-zero
+administrative request and the generation-`n+1` restored command. The latter must carry the
+authorizing workflow outbox ID and must produce a receipt with non-null broker coordinates. If Kafka
+is unavailable after authorization, leave the outbox row and `replay_requested` dead letter intact;
+Debezium resumes publication after broker recovery. Never use a console producer to bypass this
+binding. A `REPLAY_COMMAND_UNAUTHORIZED` poison record indicates a mismatched generation, payload
+hash, or outbox identity and requires producer or connector investigation.
 
 [Governed-replay sequence](../diagrams/rendered/phase-4-replay.mermaid.svg)
 

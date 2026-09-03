@@ -407,6 +407,13 @@ Every field declared by the OpenAPI components, event JSON Schema definitions, a
 | JSON Schema | AuditRecorded.data | targetId | string | yes | minLength=1; maxLength=128 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | AuditRecorded.data | outcome | accepted \| succeeded \| rejected \| failed | yes | enum=accepted,succeeded,rejected,failed | - | operational | allowed-if-low-cardinality |
 | JSON Schema | AuditRecorded.data | reasonReference | string | no | format="uuid" | - | audit | prohibited |
+| AsyncAPI header | KafkaTransportHeaders | outbox-id | string | yes | format="uuid" | Physical owner-outbox row identity propagated by the Debezium Event Router. | operational | prohibited |
+| AsyncAPI header | KafkaTransportHeaders | event-id | string | yes | format="uuid" | Logical event identity; stable across governed replay generations. | operational | prohibited |
+| AsyncAPI header | KafkaTransportHeaders | schema-name | string | yes | - | Versioned payload discriminator checked against the envelope. | operational | allowed-if-low-cardinality |
+| AsyncAPI header | KafkaTransportHeaders | schema-version | integer | yes | minimum=1 | Payload schema version checked against the envelope. | operational | allowed-if-low-cardinality |
+| AsyncAPI header | KafkaTransportHeaders | replay-generation | integer | yes | minimum=0 | Zero for original delivery and incremented for each authorized redelivery. | operational | allowed-if-low-cardinality |
+| AsyncAPI header | KafkaTransportHeaders | traceparent | string | yes | - | W3C trace carrier restored from the owner outbox by Debezium. | operational | prohibited |
+| AsyncAPI header | KafkaTransportHeaders | tracestate | string | no | - | Optional W3C vendor trace state restored with traceparent. | operational | prohibited |
 | Protobuf | privatecloud.common.v1.QueryContext | project_id | required string | proto3 semantic | field=1 | - | operational | allowed-if-low-cardinality |
 | Protobuf | privatecloud.common.v1.QueryContext | correlation_id | optional string | no | field=2 | - | operational | allowed-if-low-cardinality |
 | Protobuf | privatecloud.common.v1.MutationContext | project_id | required string | proto3 semantic | field=1 | - | operational | allowed-if-low-cardinality |

@@ -26,7 +26,7 @@
   "transforms.outbox.route.by.field": "topic",
   "transforms.outbox.route.topic.regex": "(?<routedByValue>.*)",
   "transforms.outbox.route.topic.replacement": "${routedByValue}",
-  "transforms.outbox.table.fields.additional.placement": "event_id:header:event-id,schema_name:header:schema-name,schema_version:header:schema-version,replay_generation:header:replay-generation",
+  "transforms.outbox.table.fields.additional.placement": "outbox_id:header:outbox-id,event_id:header:event-id,schema_name:header:schema-name,schema_version:header:schema-version,replay_generation:header:replay-generation",
   "transforms.outbox.tracing.span.context.field": "tracingspancontext",
   "transforms.outbox.tracing.operation.name": "debezium-read",
   "transforms.outbox.tracing.with.context.field.only": "true"

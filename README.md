@@ -47,6 +47,8 @@ Offsets advance only after durable consumer transactions. Bounded permanent fail
 governed DLQ and replay path; infrastructure failures remain uncommitted for recovery.
 Control API and Orchestrator state changes also publish append-only `audit.recorded` facts from their
 own transactions, partitioned by project for the future audit archive.
+Authorized replay writes the restored generation to the Orchestrator outbox and waits for its Kafka
+delivery before reopening work, so every command receipt retains genuine broker coordinates.
 
 ![Phase 4 telemetry pipeline](docs/diagrams/rendered/phase-4-telemetry-pipeline.mermaid.svg)
 
@@ -189,6 +191,7 @@ Start here if you are new to the codebase. It is not a conventional `Controller 
 - [Data Ownership Map](docs/architecture/data-ownership.md): authoritative writers, schemas, topics, transactions, and AWS ownership
 - [Phase 3 Persistence](docs/architecture/phase-3-persistence.md): implemented schemas, records, locks, and acceptance transaction
 - [Phase 3 Vertical Slice](docs/architecture/phase-3-vertical-slice.md): runtime components, workflow stages, recovery semantics, provider selection, and evidence
+- [Phase 4 Explained](docs/architecture/phase-4-explained.md): guided walkthrough of the implemented backend, the failure taxonomy, governed replay, telemetry, current state, and remaining work
 - [Phase 4 Messaging and Observability](docs/architecture/phase-4-messaging-and-observability.md): CDC/Kafka topology, delivery boundaries, replay, telemetry, and scope
 - [Phase 4 Persistence](docs/architecture/phase-4-persistence.md): outbox, inbox, replay-generation, workflow, and migration semantics
 - [Phase 4 Failure Recovery](docs/runbooks/phase-4-failure-recovery.md): broker, duplicate, worker-loss, poison, DLQ, replay, and telemetry procedures

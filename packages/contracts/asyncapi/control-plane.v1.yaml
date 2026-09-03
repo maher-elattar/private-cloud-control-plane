@@ -7,6 +7,53 @@ info:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
 defaultContentType: application/json
+x-transport-headers:
+  outbox-id:
+    type: string
+    format: uuid
+    required: true
+    description: Physical owner-outbox row identity propagated by the Debezium Event Router.
+    x-classification: operational
+    x-telemetry: prohibited
+  event-id:
+    type: string
+    format: uuid
+    required: true
+    description: Logical event identity; stable across governed replay generations.
+    x-classification: operational
+    x-telemetry: prohibited
+  schema-name:
+    type: string
+    required: true
+    description: Versioned payload discriminator checked against the envelope.
+    x-classification: operational
+    x-telemetry: allowed-if-low-cardinality
+  schema-version:
+    type: integer
+    minimum: 1
+    required: true
+    description: Payload schema version checked against the envelope.
+    x-classification: operational
+    x-telemetry: allowed-if-low-cardinality
+  replay-generation:
+    type: integer
+    minimum: 0
+    required: true
+    description: Zero for original delivery and incremented for each authorized redelivery.
+    x-classification: operational
+    x-telemetry: allowed-if-low-cardinality
+  traceparent:
+    type: string
+    required: true
+    description: W3C trace carrier restored from the owner outbox by Debezium.
+    x-classification: operational
+    x-telemetry: prohibited
+  tracestate:
+    type: string
+    required: false
+    description: Optional W3C vendor trace state restored with traceparent.
+    x-classification: operational
+    x-telemetry: prohibited
 servers:
   kubernetesKafka:
     host: kafka.private-cloud-control-plane.svc:9092

@@ -26,21 +26,37 @@ sequenceDiagram
     CDC->>CDB: Read committed replay request outbox
     CDC-)Kafka: Publish provisioning.replay.requested
     Kafka-)Orch: Deliver physical request at generation 0
-    Orch->>WDB: Validate stored original contract and lock dead letter
+    Orch->>WDB: Record request receipt and lock dead letter
+    Orch->>WDB: Validate stored original contract
 
     alt Current deployment is incompatible
-      Orch->>WDB: Commit rejected decision + resolution outbox
+      Orch->>WDB: Commit rejected authority + resolution outbox
     else Compatible and safe to replay
-      Orch->>WDB: Insert request receipt with Kafka coordinates
-      Orch->>WDB: Admit original event at generation n+1
-      Note over Orch,WDB: Logical original receipt has null broker coordinates and none are fabricated.
-      Orch->>WDB: Reopen failed workflow + resolution outbox atomically
+      Orch->>WDB: Bind request + command hash + outbox ID
+      Orch->>WDB: Commit restored command outbox at generation n+1
+      Orch->>WDB: Mark dead letter replay_requested
+      Note over Orch,WDB: Workflow remains failed or absent until physical command delivery.
+      CDC->>WDB: Read committed restored-command outbox
+      CDC-)Kafka: Publish original event ID at generation n+1
+      Kafka-)Orch: Deliver restored command + outbox-id header
+      Orch->>WDB: Verify pending authority, hash, outbox ID, and generation
+
+      alt Restored record does not match authority
+        Orch->>WDB: Quarantine hash + broker coordinates
+        Note over Orch,WDB: Pending valid authority is not consumed.
+      else Restored record matches authority
+        Orch->>WDB: Insert generation receipt with Kafka coordinates
+        Orch->>WDB: Create or reopen workflow + complete authority
+        Orch->>WDB: Commit replay resolution outbox atomically
+      end
     end
 
-    CDC->>WDB: Read committed replay resolution
-    CDC-)Kafka: Publish provisioning.replay.resolved
-    Kafka-)API: Deliver resolution fact
-    API->>CDB: Update replay request + owner receipt
-    API->>Kafka: Commit offset after owner transaction
-    API-->>Admin: GET replay shows completed or rejected
+    opt Rejected request or matching restored command committed a resolution
+      CDC->>WDB: Read committed replay resolution
+      CDC-)Kafka: Publish provisioning.replay.resolved
+      Kafka-)API: Deliver resolution fact
+      API->>CDB: Update replay request + owner receipt
+      API->>Kafka: Commit offset after owner transaction
+      API-->>Admin: GET replay shows completed or rejected
+    end
   end

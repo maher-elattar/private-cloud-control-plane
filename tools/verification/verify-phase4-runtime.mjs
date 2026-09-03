@@ -336,6 +336,9 @@ async function publishRecord(payload, overrides = {}) {
   const producer = kafka.producer({ allowAutoTopicCreation: false });
   await producer.connect();
   try {
+    if (!overrides.headers && !overrides.outboxId) {
+      throw new Error('A valid manually published event requires its physical outbox ID.');
+    }
     await producer.send({
       topic: overrides.topic ?? 'provisioning.commands.v1',
       messages: [
@@ -343,6 +346,7 @@ async function publishRecord(payload, overrides = {}) {
           key: overrides.key ?? payload.partitionKey,
           value: overrides.value ?? JSON.stringify(payload),
           headers: overrides.headers ?? {
+            'outbox-id': overrides.outboxId,
             'event-id': payload.eventId,
             'schema-name': payload.schemaName,
             'schema-version': String(payload.schemaVersion),
@@ -414,9 +418,10 @@ async function verifyProxmoxHappyPath(tenant) {
   assert.equal((await mockProxmoxState()).count, 1);
 
   const commandRow = (
-    await query(`SELECT payload FROM control.outbox WHERE payload->>'operationId' = $1`, [
-      fixture.operationId,
-    ])
+    await query(
+      `SELECT outbox_id, payload FROM control.outbox WHERE payload->>'operationId' = $1`,
+      [fixture.operationId],
+    )
   )[0];
   assert(commandRow?.payload);
   const beforeEvents = Number(
@@ -426,7 +431,7 @@ async function verifyProxmoxHappyPath(tenant) {
       ])
     )[0].count,
   );
-  await publishRecord(commandRow.payload);
+  await publishRecord(commandRow.payload, { outboxId: commandRow.outbox_id });
   await waitFor(
     'duplicate message metric',
     async () =>

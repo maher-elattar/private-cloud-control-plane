@@ -57,7 +57,7 @@ class MemoryWorkflowStore implements WorkflowStore {
 
   private checkpointFailed = false;
 
-  public admitCreateCommand(): Promise<'accepted' | 'duplicate'> {
+  public admitCreateCommand(): Promise<'accepted' | 'duplicate' | 'rejected'> {
     return Promise.resolve('accepted');
   }
 

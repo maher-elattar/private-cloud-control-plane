@@ -105,8 +105,17 @@ export class CommandConsumer implements OnApplicationBootstrap, OnModuleDestroy 
         operation_id: command.operationId,
         instance_id: command.aggregateId,
       });
+      if (outcome === 'rejected') {
+        recordQuarantine('REPLAY_COMMAND_UNAUTHORIZED');
+        recordReplay('rejected');
+      }
       return {
-        outcome: outcome === 'accepted' ? 'handled' : 'duplicate',
+        outcome:
+          outcome === 'accepted'
+            ? 'handled'
+            : outcome === 'duplicate'
+              ? 'duplicate'
+              : 'quarantined',
         schemaName: command.schemaName,
         occurredAtMs: Date.parse(command.occurredAt),
       };

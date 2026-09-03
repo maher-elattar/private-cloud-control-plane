@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 import {
   NOOP_APPLICATION_TELEMETRY,
   isInstanceCreateRequestedV1,
+  isProvisioningReplayRequestedV1,
   toWorkflowStage,
   type ClaimedCreateWorkflow,
   type ApplicationTelemetry,
@@ -66,6 +67,12 @@ function createCommand(value: unknown): InstanceCreateRequestedV1 | null {
   return isInstanceCreateRequestedV1(command) ? command : null;
 }
 
+/** Validates the attributed request retained until its authorized command is broker-delivered. */
+function storedReplayRequest(value: unknown): ProvisioningReplayRequestedV1 | null {
+  const request = parseJsonColumn<EventEnvelope & { readonly data?: unknown }>(value);
+  return isProvisioningReplayRequestedV1(request) ? request : null;
+}
+
 /** A row of `workflow.workflows` as returned by the raw claim queries. */
 interface WorkflowRow {
   readonly operation_id: string;
@@ -102,18 +109,24 @@ export class PostgresWorkflowStore implements WorkflowStore {
   public admitCreateCommand(
     command: InstanceCreateRequestedV1,
     delivery: MessageDeliveryIdentity,
-  ): Promise<'accepted' | 'duplicate'> {
-    return this.db.transaction().execute((tx) => this.admitCommand(tx, command, delivery));
+  ): Promise<'accepted' | 'duplicate' | 'rejected'> {
+    return this.db
+      .transaction()
+      .execute((tx) =>
+        delivery.replayGeneration === 0
+          ? this.admitCommand(tx, command, delivery)
+          : this.admitAuthorizedReplayCommand(tx, command, delivery),
+      );
   }
 
-  /** Restores an approved dead letter with a new generation but the original event identity. */
+  /** Authorizes a replay and publishes the restored command through the transactional outbox. */
   public admitReplayRequest(
     request: ProvisioningReplayRequestedV1,
     delivery: MessageDeliveryIdentity,
   ): Promise<'accepted' | 'duplicate' | 'rejected'> {
     return this.db.transaction().execute(async (tx) => {
       const now = new Date();
-      const receipt = await this.insertCommandReceipt(tx, request, delivery, now, true);
+      const receipt = await this.insertCommandReceipt(tx, request, delivery, now);
       if (!receipt) return 'duplicate';
 
       const deadLetter = await tx
@@ -122,15 +135,14 @@ export class PostgresWorkflowStore implements WorkflowStore {
         .where('original_event_id', '=', request.data.originalEventId)
         .forUpdate()
         .executeTakeFirst();
-      if (!deadLetter || !deadLetter.replay_allowed || deadLetter.status === 'closed') {
-        throw new Error('Replay request does not reference an open replayable dead letter.');
-      }
-      if (deadLetter.status === 'replayed') {
+      const original = deadLetter ? createCommand(deadLetter.original_payload) : null;
+      if (!deadLetter || !deadLetter.replay_allowed || deadLetter.status !== 'open' || !original) {
+        await this.persistReplayRequest(tx, request, 'rejected', now);
         await this.writeReplayResolution(
           tx,
           request,
           'rejected',
-          deadLetter.replay_generation,
+          deadLetter?.replay_generation ?? 0,
           now,
         );
         await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'rejected', now, {
@@ -139,57 +151,38 @@ export class PostgresWorkflowStore implements WorkflowStore {
         return 'rejected';
       }
 
-      const original = createCommand(deadLetter.original_payload);
-      if (!original) {
-        // A replay may be requested before the deployment that understands the original schema is
-        // live. Consume this request deterministically, leave the dead letter open, and require a
-        // fresh attributed request after compatibility has been deployed.
-        await this.writeReplayResolution(
-          tx,
-          request,
-          'rejected',
-          deadLetter.replay_generation,
-          now,
-        );
-        await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'rejected', now, {
-          reasonReference: request.data.replayRequestId,
-        });
-        return 'rejected';
-      }
       const replayGeneration = deadLetter.replay_generation + 1;
       const replayed: InstanceCreateRequestedV1 = {
         ...original,
         correlationId: request.correlationId,
         causationId: request.eventId,
+        occurredAt: now.toISOString(),
         traceContext: request.traceContext,
       };
-      const outcome = await this.admitCommand(
-        tx,
-        replayed,
-        { ...delivery, replayGeneration },
-        false,
-      );
-      if (outcome === 'accepted') {
-        await tx
-          .updateTable('workflow.dead_letters')
-          .set({
-            replay_generation: replayGeneration,
-            status: 'replayed',
-            last_replay_at: now,
-          })
-          .where('original_event_id', '=', original.eventId)
-          .executeTakeFirstOrThrow();
-        await this.writeReplayResolution(tx, request, 'completed', replayGeneration, now);
-        await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'accepted', now, {
-          reasonReference: request.data.replayRequestId,
-        });
-        return 'accepted';
-      }
-      await this.writeReplayResolution(tx, request, 'rejected', deadLetter.replay_generation, now);
-      await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'rejected', now, {
+      const authorizedOutboxId = randomUUID();
+      await this.persistReplayRequest(tx, request, 'authorized', now, {
+        replayGeneration,
+        authorizedCommandHash: canonicalSha256(replayed),
+        authorizedOutboxId,
+      });
+      await this.writeWorkflowOutbox(tx, replayed, 'provisioning.commands.v1', now, {
+        outboxId: authorizedOutboxId,
+        replayGeneration,
+      });
+      await tx
+        .updateTable('workflow.dead_letters')
+        .set({
+          replay_generation: replayGeneration,
+          status: 'replay_requested',
+          last_replay_at: now,
+        })
+        .where('original_event_id', '=', original.eventId)
+        .where('status', '=', 'open')
+        .executeTakeFirstOrThrow();
+      await this.writeServiceAudit(tx, request, 'replay_dead_letter', 'accepted', now, {
         reasonReference: request.data.replayRequestId,
       });
-      return 'rejected';
+      return 'accepted';
     });
   }
 
@@ -228,7 +221,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
   ): Promise<'dead_lettered' | 'duplicate'> {
     return this.db.transaction().execute(async (tx) => {
       const now = new Date();
-      const receipt = await this.insertCommandReceipt(tx, input.event, input.delivery, now, true);
+      const receipt = await this.insertCommandReceipt(tx, input.event, input.delivery, now);
       if (!receipt) return 'duplicate';
       await this.writeDeadLetter(tx, {
         original: input.event,
@@ -519,7 +512,6 @@ export class PostgresWorkflowStore implements WorkflowStore {
     tx: Tx,
     command: InstanceCreateRequestedV1,
     delivery: MessageDeliveryIdentity,
-    sourceCoordinates = true,
   ): Promise<'accepted' | 'duplicate'> {
     const now = new Date();
     const existing = await tx
@@ -528,47 +520,11 @@ export class PostgresWorkflowStore implements WorkflowStore {
       .where('operation_id', '=', command.operationId)
       .executeTakeFirst();
     if (existing) {
-      const reopensFailedWorkflow =
-        !sourceCoordinates &&
-        existing.status === 'failed' &&
-        delivery.replayGeneration === existing.replay_generation + 1;
-      if (reopensFailedWorkflow) {
-        const receipt = await this.insertCommandReceipt(tx, command, delivery, null, false);
-        if (!receipt) return 'duplicate';
-        // A governed generation is a fresh attempt with the original logical identity. Clearing
-        // provider handles makes the workflow replay its idempotent create request instead of
-        // trusting stale task state retained before exhaustion.
-        await tx
-          .updateTable('workflow.workflows')
-          .set({
-            command,
-            status: 'running',
-            stage: 'accepted',
-            attempt: 0,
-            stage_attempt: 0,
-            retry_started_at: null,
-            replay_generation: delivery.replayGeneration,
-            trace_context: command.traceContext,
-            provider_resource_id: null,
-            provider_task_reference: null,
-            next_attempt_at: now,
-            failure_category: null,
-            failure_code: null,
-            failure_message: null,
-            last_error_category: null,
-            last_error_code: null,
-            updated_at: now,
-            completed_at: null,
-          })
-          .where('operation_id', '=', command.operationId)
-          .executeTakeFirstOrThrow();
-        return 'accepted';
-      }
-      await this.insertCommandReceipt(tx, command, delivery, now, sourceCoordinates);
+      await this.insertCommandReceipt(tx, command, delivery, now);
       return 'duplicate';
     }
 
-    const receipt = await this.insertCommandReceipt(tx, command, delivery, null, sourceCoordinates);
+    const receipt = await this.insertCommandReceipt(tx, command, delivery, null);
     if (!receipt) return 'duplicate';
 
     await tx
@@ -606,13 +562,173 @@ export class PostgresWorkflowStore implements WorkflowStore {
     return 'accepted';
   }
 
-  /** Inserts one physical or governed logical command receipt. */
+  /** Reopens a failed workflow only after the authorized command returns through Kafka. */
+  private async admitAuthorizedReplayCommand(
+    tx: Tx,
+    command: InstanceCreateRequestedV1,
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'accepted' | 'duplicate' | 'rejected'> {
+    const payloadHash = canonicalSha256(command);
+    const existingReceipt = await tx
+      .selectFrom('workflow.command_receipts')
+      .select('payload_hash')
+      .where('consumer_name', '=', CONSUMER_NAME)
+      .where('event_id', '=', command.eventId)
+      .where('replay_generation', '=', delivery.replayGeneration)
+      .executeTakeFirst();
+    if (existingReceipt) {
+      if (existingReceipt.payload_hash === payloadHash) return 'duplicate';
+      await this.rejectReplayCommand(tx, delivery, payloadHash, 'REPLAY_COMMAND_IDENTITY_CONFLICT');
+      return 'rejected';
+    }
+
+    const authorization = await tx
+      .selectFrom('workflow.replay_requests')
+      .selectAll()
+      .where('original_event_id', '=', command.eventId)
+      .where('replay_generation', '=', delivery.replayGeneration)
+      .forUpdate()
+      .executeTakeFirst();
+    const authorized =
+      authorization?.status === 'authorized' &&
+      authorization.authorized_command_hash === payloadHash &&
+      authorization.authorized_outbox_id === delivery.outboxId;
+    if (!authorized) {
+      await this.rejectReplayCommand(tx, delivery, payloadHash, 'REPLAY_COMMAND_UNAUTHORIZED');
+      return 'rejected';
+    }
+
+    const request = storedReplayRequest(authorization.request_payload);
+    if (!request) throw new Error('Stored replay authorization payload is invalid.');
+    const workflow = await tx
+      .selectFrom('workflow.workflows')
+      .select(['event_id', 'operation_id', 'status', 'replay_generation'])
+      .where('operation_id', '=', command.operationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (
+      workflow &&
+      (workflow.event_id !== command.eventId ||
+        workflow.status !== 'failed' ||
+        delivery.replayGeneration !== workflow.replay_generation + 1)
+    ) {
+      throw new Error('Authorized replay cannot reopen the current workflow state.');
+    }
+
+    const now = new Date();
+    const receipt = await this.insertCommandReceipt(tx, command, delivery, null);
+    if (!receipt) return 'duplicate';
+    if (workflow) {
+      // The replay is a fresh provider attempt. Clearing stale handles ensures the idempotency key,
+      // rather than an ambiguous pre-exhaustion task reference, determines provider-effect safety.
+      await tx
+        .updateTable('workflow.workflows')
+        .set({
+          command,
+          status: 'running',
+          stage: 'accepted',
+          attempt: 0,
+          stage_attempt: 0,
+          retry_started_at: null,
+          replay_generation: delivery.replayGeneration,
+          trace_context: command.traceContext,
+          provider_resource_id: null,
+          provider_task_reference: null,
+          next_attempt_at: now,
+          failure_category: null,
+          failure_code: null,
+          failure_message: null,
+          last_error_category: null,
+          last_error_code: null,
+          updated_at: now,
+          completed_at: null,
+        })
+        .where('operation_id', '=', command.operationId)
+        .executeTakeFirstOrThrow();
+    } else {
+      // Compatibility dead letters can occur before workflow admission. Their authorized replay
+      // starts the workflow for the first time, still carrying generation one and real coordinates.
+      await tx
+        .insertInto('workflow.workflows')
+        .values({
+          operation_id: command.operationId,
+          event_id: command.eventId,
+          project_id: command.projectId,
+          instance_id: command.aggregateId,
+          command,
+          status: 'running',
+          stage: 'accepted',
+          attempt: 0,
+          stage_attempt: 0,
+          retry_started_at: null,
+          replay_generation: delivery.replayGeneration,
+          trace_context: command.traceContext,
+          fencing_token: '0',
+          provider_resource_id: null,
+          provider_task_reference: null,
+          next_attempt_at: now,
+          failure_category: null,
+          failure_code: null,
+          failure_message: null,
+          last_error_category: null,
+          last_error_code: null,
+          created_at: now,
+          updated_at: now,
+          completed_at: null,
+        })
+        .executeTakeFirstOrThrow();
+    }
+    await tx
+      .updateTable('workflow.dead_letters')
+      .set({ status: 'replayed', last_replay_at: now })
+      .where('original_event_id', '=', command.eventId)
+      .where('status', '=', 'replay_requested')
+      .where('replay_generation', '=', delivery.replayGeneration)
+      .executeTakeFirstOrThrow();
+    await tx
+      .updateTable('workflow.replay_requests')
+      .set({ status: 'completed', completed_at: now })
+      .where('replay_request_id', '=', authorization.replay_request_id)
+      .where('status', '=', 'authorized')
+      .executeTakeFirstOrThrow();
+    await this.writeReplayResolution(tx, request, 'completed', delivery.replayGeneration, now);
+    return 'accepted';
+  }
+
+  /** Persists a rejected physical replay by hash and coordinates without retaining its payload. */
+  private async rejectReplayCommand(
+    tx: Tx,
+    delivery: MessageDeliveryIdentity,
+    payloadHash: string,
+    failureCode: 'REPLAY_COMMAND_IDENTITY_CONFLICT' | 'REPLAY_COMMAND_UNAUTHORIZED',
+  ): Promise<void> {
+    await tx
+      .insertInto('workflow.poison_records')
+      .values({
+        id: randomUUID(),
+        consumer_name: CONSUMER_NAME,
+        source_topic: delivery.topic,
+        source_partition: delivery.partition,
+        source_offset: delivery.offset,
+        payload_hash: payloadHash,
+        failure_code: failureCode,
+        safe_message: 'The replay command did not match a durable replay authorization.',
+        quarantined_at: new Date(),
+      })
+      .onConflict((conflict) =>
+        conflict
+          .columns(['consumer_name', 'source_topic', 'source_partition', 'source_offset'])
+          .doNothing(),
+      )
+      .executeTakeFirst();
+  }
+
+  /** Inserts one physical command receipt after the owner transaction commits. */
   private async insertCommandReceipt(
     tx: Tx,
     event: EventEnvelope,
     delivery: MessageDeliveryIdentity,
     completedAt: Date | null,
-    sourceCoordinates: boolean,
   ): Promise<boolean> {
     const receipt = await tx
       .insertInto('workflow.command_receipts')
@@ -620,9 +736,9 @@ export class PostgresWorkflowStore implements WorkflowStore {
         event_id: event.eventId,
         consumer_name: CONSUMER_NAME,
         replay_generation: delivery.replayGeneration,
-        source_topic: sourceCoordinates ? delivery.topic : null,
-        source_partition: sourceCoordinates ? delivery.partition : null,
-        source_offset: sourceCoordinates ? delivery.offset : null,
+        source_topic: delivery.topic,
+        source_partition: delivery.partition,
+        source_offset: delivery.offset,
         payload_hash: canonicalSha256(event),
         received_at: new Date(),
         completed_at: completedAt,
@@ -665,6 +781,39 @@ export class PostgresWorkflowStore implements WorkflowStore {
       },
     };
     return this.writeEvent(tx, event);
+  }
+
+  /** Retains the replay decision until its exact authorized outbox record is consumed. */
+  private persistReplayRequest(
+    tx: Tx,
+    request: ProvisioningReplayRequestedV1,
+    status: 'authorized' | 'rejected',
+    decidedAt: Date,
+    authorization?: {
+      readonly replayGeneration: number;
+      readonly authorizedCommandHash: string;
+      readonly authorizedOutboxId: string;
+    },
+  ): Promise<unknown> {
+    if (status === 'authorized' && !authorization) {
+      throw new Error('Authorized replay persistence requires command identity.');
+    }
+    return tx
+      .insertInto('workflow.replay_requests')
+      .values({
+        replay_request_id: request.data.replayRequestId,
+        request_event_id: request.eventId,
+        original_event_id: request.data.originalEventId,
+        replay_generation: authorization?.replayGeneration ?? null,
+        status,
+        request_payload: request,
+        authorized_command_hash: authorization?.authorizedCommandHash ?? null,
+        authorized_outbox_id: authorization?.authorizedOutboxId ?? null,
+        requested_at: new Date(request.occurredAt),
+        decided_at: decidedAt,
+        completed_at: status === 'rejected' ? decidedAt : null,
+      })
+      .executeTakeFirstOrThrow();
   }
 
   /**
@@ -863,8 +1012,13 @@ export class PostgresWorkflowStore implements WorkflowStore {
   private writeWorkflowOutbox(
     tx: Tx,
     event: EventEnvelope,
-    topic: 'provisioning.events.v1' | 'provisioning.dlq.v1' | 'audit.events.v1',
+    topic:
+      | 'provisioning.commands.v1'
+      | 'provisioning.events.v1'
+      | 'provisioning.dlq.v1'
+      | 'audit.events.v1',
     occurredAt: Date,
+    options: { readonly outboxId?: string; readonly replayGeneration?: number } = {},
   ): Promise<unknown> {
     return this.telemetry.trace(
       'controlplane.outbox.write',
@@ -873,7 +1027,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         tx
           .insertInto('workflow.outbox')
           .values({
-            outbox_id: randomUUID(),
+            outbox_id: options.outboxId ?? randomUUID(),
             event_id: event.eventId,
             aggregate_id: event.aggregateId,
             aggregate_type: event.aggregateType,
@@ -883,7 +1037,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
             partition_key: event.partitionKey,
             payload: event,
             tracingspancontext: serializeDebeziumTraceContext(event.traceContext),
-            replay_generation: 0,
+            replay_generation: options.replayGeneration ?? 0,
             occurred_at: occurredAt,
             created_at: new Date(),
           })

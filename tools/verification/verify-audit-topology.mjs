@@ -179,8 +179,77 @@ try {
     }),
     'accepted',
   );
+  assert.equal(
+    await workflowStore.admitReplayRequest(replayRequest, {
+      topic: 'provisioning.commands.v1',
+      partition: 1,
+      offset: syntheticOffset(3),
+      replayGeneration: 0,
+    }),
+    'duplicate',
+  );
 
-  // The restored original is a new logical delivery, not a Kafka record that ever had coordinates.
+  const restoredOutbox = await db
+    .selectFrom('workflow.outbox')
+    .select(['outbox_id', 'payload', 'topic', 'replay_generation'])
+    .where('event_id', '=', replayable.eventId)
+    .where('replay_generation', '=', 1)
+    .executeTakeFirstOrThrow();
+  assert.equal(restoredOutbox.topic, 'provisioning.commands.v1');
+  assert.equal(restoredOutbox.replay_generation, 1);
+  const restoredCommand = json(restoredOutbox.payload);
+
+  const pendingAuthorization = await db
+    .selectFrom('workflow.replay_requests')
+    .select(['status', 'authorized_outbox_id', 'replay_generation'])
+    .where('request_event_id', '=', replayRequest.eventId)
+    .executeTakeFirstOrThrow();
+  assert.deepEqual(pendingAuthorization, {
+    status: 'authorized',
+    authorized_outbox_id: restoredOutbox.outbox_id,
+    replay_generation: 1,
+  });
+  const prematureReceipt = await db
+    .selectFrom('workflow.command_receipts')
+    .select('event_id')
+    .where('event_id', '=', replayable.eventId)
+    .where('replay_generation', '=', 1)
+    .executeTakeFirst();
+  assert.equal(prematureReceipt, undefined);
+
+  // A syntactically valid generation cannot consume authority unless it came from the exact owner
+  // outbox row. The rejected physical record is quarantined, while the authorization remains live.
+  assert.equal(
+    await workflowStore.admitCreateCommand(restoredCommand, {
+      topic: 'provisioning.commands.v1',
+      partition: 1,
+      offset: syntheticOffset(4),
+      replayGeneration: 1,
+      outboxId: randomUUID(),
+    }),
+    'rejected',
+  );
+  assert.equal(
+    await workflowStore.admitCreateCommand(restoredCommand, {
+      topic: 'provisioning.commands.v1',
+      partition: 1,
+      offset: syntheticOffset(5),
+      replayGeneration: 1,
+      outboxId: restoredOutbox.outbox_id,
+    }),
+    'accepted',
+  );
+  assert.equal(
+    await workflowStore.admitCreateCommand(restoredCommand, {
+      topic: 'provisioning.commands.v1',
+      partition: 1,
+      offset: syntheticOffset(5),
+      replayGeneration: 1,
+      outboxId: restoredOutbox.outbox_id,
+    }),
+    'duplicate',
+  );
+
   const restoredReceipt = await db
     .selectFrom('workflow.command_receipts')
     .select(['replay_generation', 'source_topic', 'source_partition', 'source_offset'])
@@ -189,9 +258,66 @@ try {
     .executeTakeFirstOrThrow();
   assert.deepEqual(restoredReceipt, {
     replay_generation: 1,
-    source_topic: null,
-    source_partition: null,
-    source_offset: null,
+    source_topic: 'provisioning.commands.v1',
+    source_partition: 1,
+    source_offset: syntheticOffset(5),
+  });
+  const completedAuthorization = await db
+    .selectFrom('workflow.replay_requests')
+    .select('status')
+    .where('request_event_id', '=', replayRequest.eventId)
+    .executeTakeFirstOrThrow();
+  assert.equal(completedAuthorization.status, 'completed');
+
+  const deniedOriginal = syntheticCreateCommand();
+  assert.equal(
+    await workflowStore.deadLetterCommand({
+      event: deniedOriginal,
+      delivery: {
+        topic: 'provisioning.commands.v1',
+        partition: 2,
+        offset: syntheticOffset(6),
+        replayGeneration: 0,
+      },
+      attempts: 1,
+      failureCode: 'COMMAND_SCHEMA_UNSUPPORTED',
+      safeMessage: 'Replay was administratively disabled.',
+      replayAllowed: false,
+    }),
+    'dead_lettered',
+  );
+  const deniedReplay = {
+    ...replayRequest,
+    eventId: randomUUID(),
+    aggregateId: deniedOriginal.aggregateId,
+    operationId: deniedOriginal.operationId,
+    correlationId: randomUUID(),
+    causationId: randomUUID(),
+    occurredAt: new Date().toISOString(),
+    partitionKey: deniedOriginal.partitionKey,
+    data: {
+      ...replayRequest.data,
+      replayRequestId: randomUUID(),
+      originalEventId: deniedOriginal.eventId,
+    },
+  };
+  const deniedDelivery = {
+    topic: 'provisioning.commands.v1',
+    partition: 2,
+    offset: syntheticOffset(7),
+    replayGeneration: 0,
+  };
+  assert.equal(await workflowStore.admitReplayRequest(deniedReplay, deniedDelivery), 'rejected');
+  assert.equal(await workflowStore.admitReplayRequest(deniedReplay, deniedDelivery), 'duplicate');
+  const deniedDecision = await db
+    .selectFrom('workflow.replay_requests')
+    .select(['status', 'replay_generation', 'authorized_outbox_id'])
+    .where('request_event_id', '=', deniedReplay.eventId)
+    .executeTakeFirstOrThrow();
+  assert.deepEqual(deniedDecision, {
+    status: 'rejected',
+    replay_generation: null,
+    authorized_outbox_id: null,
   });
 
   const controlAudit = await db
@@ -250,7 +376,13 @@ try {
       controlAuditFacts: controlAudit.length,
       workflowAuditFacts: workflowAudit.length,
       restoredReplayGeneration: restoredReceipt.replay_generation,
-      restoredCoordinates: null,
+      restoredCoordinates: {
+        topic: restoredReceipt.source_topic,
+        partition: restoredReceipt.source_partition,
+        offset: restoredReceipt.source_offset,
+      },
+      authorizedOutboxId: restoredOutbox.outbox_id,
+      deniedReplay: deniedDecision.status,
     })}\n`,
   );
 } finally {

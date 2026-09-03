@@ -41,7 +41,7 @@ metric labels or fabricated broker metadata.
 ## Inbox and Offset Boundary
 
 Command and projection receipts use `(consumer_name, event_id, replay_generation)` as their primary
-key and also retain Kafka topic, partition, and offset. A consumer performs these steps:
+key and also retain non-null Kafka topic, partition, and offset. A consumer performs these steps:
 
 1. Validate the Kafka key, headers, envelope, schema, and size.
 2. Insert or find the receipt and apply the owning state change in one PostgreSQL transaction.
@@ -62,11 +62,16 @@ provider execution. `workflow.workflows` remains a leased and fenced durable sch
 
 The logical command event ID remains unique on the workflow row. Governed replay preserves that event
 ID and admits a new generation only after the current deployment validates the stored original
-command. A compatible replay creates or resumes one checkpointed workflow for that generation. An
-incompatible replay request is durably marked `rejected` and consumed, while the original dead letter
-stays open at its current generation; an operator must deploy compatibility and submit a fresh
-attributed request. This prevents an accepted replay request from blocking its Kafka partition or
-injecting a command the active worker cannot execute.
+command. `workflow.replay_requests` binds the administrative request to the exact command hash,
+generation, and physical workflow outbox ID. Authorization writes that outbox row and changes the
+dead letter to `replay_requested` in one transaction; it does not create an inbox receipt or reopen
+work. Only a matching later Kafka record may record the generation receipt and create or resume the
+checkpointed workflow. This means every command receipt is physical delivery evidence.
+
+An incompatible replay request is durably marked `rejected` and consumed, while the original dead
+letter stays open at its current generation; an operator must deploy compatibility and submit a fresh
+attributed request. A syntactically valid generation with no matching authority, payload hash, or
+outbox ID is quarantined without raw-payload retention and cannot invoke the provider.
 
 Outbox backlog gauges compare immutable producer rows with consumer-owned inbox or projection
 receipts. This is consumption evidence used by drills, not a CDC publisher acknowledgement, and it
@@ -78,8 +83,10 @@ does not replace Kafka offsets. No consumer updates a producer-owned outbox row.
 checksums, and records each successful migration in `public.schema_migrations` in the same transaction
 as its SQL. It can adopt the original untracked Phase 3 schema exactly once before applying Phase 4.
 
-Local verification applies all numbered migrations to a clean PostgreSQL 16 database, applies the runner a
-second time, and separately verifies adoption of an existing Phase 3 database.
+Local verification applies all numbered migrations to a clean PostgreSQL 16 database, applies the
+runner a second time, and separately verifies adoption of an existing Phase 3 database. Migration
+`0005` removes legacy coordinate-free replay placeholders before making command broker coordinates
+mandatory and adds the durable replay-authority table.
 
 See [Phase 4 Messaging and Observability](phase-4-messaging-and-observability.md) for the full event
 path and [Phase 4 Failure Recovery](../runbooks/phase-4-failure-recovery.md) for operational use.

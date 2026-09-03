@@ -8,6 +8,7 @@ import {
 import { Kafka, logLevel, type Consumer, type KafkaMessage } from 'kafkajs';
 import {
   MessageDecodeError,
+  decodeOutboxId,
   decodeEventEnvelope,
   decodeReplayGeneration,
   type DecodedEventEnvelope,
@@ -21,6 +22,7 @@ export interface MessageDelivery {
   readonly offset: string;
   readonly brokerTimestampMs: number;
   readonly replayGeneration: number;
+  readonly outboxId?: string;
 }
 
 /** Raw Kafka delivery passed to a bounded application handler. */
@@ -210,6 +212,12 @@ export class KafkaConsumerRunner {
     } catch (error: unknown) {
       if (error instanceof MessageDecodeError) decodeError ??= error;
     }
+    let outboxId: string | undefined;
+    try {
+      outboxId = decodeOutboxId(headers['outbox-id']);
+    } catch (error: unknown) {
+      if (error instanceof MessageDecodeError) decodeError ??= error;
+    }
     if (envelope && !decodeError) {
       try {
         validateEventTransport(envelope, message.key, headers);
@@ -225,6 +233,7 @@ export class KafkaConsumerRunner {
         offset: message.offset,
         brokerTimestampMs: Number.isFinite(brokerTimestampMs) ? brokerTimestampMs : Date.now(),
         replayGeneration,
+        ...(outboxId ? { outboxId } : {}),
       },
       key: message.key,
       value: message.value,

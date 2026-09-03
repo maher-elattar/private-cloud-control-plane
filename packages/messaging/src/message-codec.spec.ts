@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   decodeEventEnvelope,
+  decodeOutboxId,
   decodeReplayGeneration,
   MessageDecodeError,
   validateEventTransport,
@@ -71,6 +72,16 @@ describe('decodeReplayGeneration', () => {
   });
 });
 
+describe('decodeOutboxId', () => {
+  it('accepts an owner outbox UUID and rejects missing or malformed metadata', () => {
+    expect(decodeOutboxId('70000000-0000-4000-8000-000000000001')).toBe(
+      '70000000-0000-4000-8000-000000000001',
+    );
+    expect(() => decodeOutboxId(undefined)).toThrow(MessageDecodeError);
+    expect(() => decodeOutboxId('not-an-outbox-id')).toThrow(MessageDecodeError);
+  });
+});
+
 describe('validateEventTransport', () => {
   const fixture = decodeEventEnvelope(
     readFileSync(
@@ -84,6 +95,7 @@ describe('validateEventTransport', () => {
     'event-id': fixture.eventId,
     'schema-name': fixture.schemaName,
     'schema-version': String(fixture.schemaVersion),
+    'outbox-id': '70000000-0000-4000-8000-000000000001',
   };
 
   it('accepts a key and identity headers that agree with the envelope', () => {

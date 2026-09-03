@@ -174,6 +174,24 @@ invariant(
   asyncApi['x-max-payload-bytes'] === 262_144,
   'AsyncAPI payload limit is not 262,144 bytes.',
 );
+const transportHeaders = asyncApi['x-transport-headers'] ?? {};
+for (const requiredHeader of [
+  'outbox-id',
+  'event-id',
+  'schema-name',
+  'schema-version',
+  'replay-generation',
+  'traceparent',
+]) {
+  invariant(
+    transportHeaders[requiredHeader]?.required === true,
+    `AsyncAPI transport header '${requiredHeader}' is not required.`,
+  );
+}
+invariant(
+  transportHeaders.tracestate?.required === false,
+  "AsyncAPI transport header 'tracestate' must remain optional.",
+);
 for (const channel of Object.values(asyncApi.channels)) {
   invariant(
     channel.address.endsWith('.v1'),

@@ -332,6 +332,25 @@ without recording concrete evidence.
 ### Checkpoint 9 - Kafka-backed authorized replay
 
 - Status: In progress
+- Progress recorded 2026-09-01:
+  - Added an additive migration for durable workflow-owned replay authorization. The row binds the
+    administrative request, original event, next generation, authorized command hash, and physical
+    workflow outbox ID until Kafka delivers that exact command.
+  - Split authorization from execution: request admission now atomically records authority, writes
+    generation one to `workflow.outbox`, and marks the dead letter `replay_requested`; workflow
+    reopening and replay resolution occur only after a matching physical Kafka delivery.
+  - Added an `outbox-id` Debezium header contract and messaging-boundary validation. Replayed
+    commands with missing or mismatched durable authority are quarantined by hash and coordinates.
+  - Removed the legacy coordinate-free receipt model in migration `0005`; command receipts now
+    represent physical broker records exclusively.
+  - A clean PostgreSQL 16.10 drill applied all five migrations and the seed, then passed the
+    transaction verifier. It proved duplicate request deduplication, deterministic replay denial,
+    wrong-outbox quarantine without consuming authority, a generation-one command outbox row, and
+    a matching receipt with non-null topic, partition, and run-unique offset after delivery.
+  - A persistent Compose run completed the Proxmox happy path, physical duplicate delivery, Kafka
+    outage recovery, consumer buffering, and checkpoint recovery. The subsequent retry, DLQ, and
+    replay matrix was intentionally stopped before completion; do not treat the runtime gate as
+    passed. The failed partial evidence file is deliberately left unstaged for follow-up.
 - Required work:
   - Make replay authorization and restored-command publication durable and atomic without a direct
     Kafka dependency in the Control API or Orchestrator request transaction.

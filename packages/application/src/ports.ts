@@ -61,6 +61,8 @@ export interface MessageDeliveryIdentity {
   readonly partition: number;
   readonly offset: string;
   readonly replayGeneration: number;
+  /** Physical owner-outbox row propagated by the Debezium Event Router. */
+  readonly outboxId?: string;
 }
 
 /**
@@ -248,8 +250,8 @@ export interface WorkflowStore {
   admitCreateCommand(
     command: InstanceCreateRequestedV1,
     delivery: MessageDeliveryIdentity,
-  ): Promise<'accepted' | 'duplicate'>;
-  /** Executes an approved replay request against its durable dead-letter evidence. */
+  ): Promise<'accepted' | 'duplicate' | 'rejected'>;
+  /** Authorizes a replay and atomically writes its restored command to the owner outbox. */
   admitReplayRequest(
     request: ProvisioningReplayRequestedV1,
     delivery: MessageDeliveryIdentity,

@@ -293,7 +293,7 @@ const eventRows = Object.entries(asyncApi.components.messages).map(([name, messa
 });
 await writeFile(
   `${outputDirectory}/events.md`,
-  `${GENERATED_NOTICE}\n# Kafka event contract\n\nSources: \`packages/contracts/asyncapi/control-plane.v1.yaml\` and \`schemas/control-plane-events.v1.schema.json\`. The delivery guarantee is at-least-once; consumers deduplicate by \`eventId\` and preserve per-aggregate ordering with \`partitionKey\`. Maximum encoded payload: ${asyncApi['x-max-payload-bytes'].toLocaleString()} bytes.\n\n${table(
+  `${GENERATED_NOTICE}\n# Kafka event contract\n\nSources: \`packages/contracts/asyncapi/control-plane.v1.yaml\` and \`schemas/control-plane-events.v1.schema.json\`. The delivery guarantee is at-least-once; consumers deduplicate by \`eventId\` plus replay generation and preserve per-aggregate ordering with \`partitionKey\`. Maximum encoded payload: ${asyncApi['x-max-payload-bytes'].toLocaleString()} bytes.\n\n${table(
     [
       'Topic',
       'Message',
@@ -305,6 +305,17 @@ await writeFile(
       'Requirements',
     ],
     eventRows,
+  )}\n\n## Transport headers\n\n${table(
+    ['Header', 'Type', 'Required', 'Constraints', 'Description', 'Classification', 'Telemetry'],
+    Object.entries(asyncApi['x-transport-headers']).map(([name, header]) => [
+      name,
+      schemaType(header),
+      header.required ? 'yes' : 'no',
+      constraints(header),
+      header.description,
+      header['x-classification'],
+      header['x-telemetry'],
+    ]),
   )}\n`,
   'utf8',
 );
@@ -335,6 +346,19 @@ for (const [name, schema] of Object.entries(openApi.components.schemas)) {
 }
 for (const [name, schema] of Object.entries(eventSchema.$defs)) {
   addJsonFields('JSON Schema', name, schema);
+}
+for (const [name, header] of Object.entries(asyncApi['x-transport-headers'])) {
+  fieldRows.push([
+    'AsyncAPI header',
+    'KafkaTransportHeaders',
+    name,
+    schemaType(header),
+    header.required ? 'yes' : 'no',
+    constraints(header),
+    header.description,
+    header['x-classification'],
+    header['x-telemetry'],
+  ]);
 }
 for (const { parsed } of protoDocuments) {
   for (const field of parsed.fields) {

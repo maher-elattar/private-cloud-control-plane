@@ -1,5 +1,7 @@
 import type { EventEnvelope } from '@private-cloud/contracts';
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Common envelope plus the schema-specific object validated by downstream handlers. */
 export type DecodedEventEnvelope = EventEnvelope & {
   readonly data: Record<string, unknown>;
@@ -45,6 +47,17 @@ export function decodeReplayGeneration(value: string | undefined): number {
   return generation;
 }
 
+/** Parses the physical owner-outbox identity attached by Debezium. */
+export function decodeOutboxId(value: string | undefined): string {
+  if (!value || !uuidPattern.test(value)) {
+    throw new MessageDecodeError(
+      'INVALID_TRANSPORT_METADATA',
+      'Kafka outbox identity is missing or malformed.',
+    );
+  }
+  return value;
+}
+
 /**
  * Verifies that Debezium's routing metadata describes the same logical event as the value.
  *
@@ -61,7 +74,8 @@ export function validateEventTransport(
     key?.toString('utf8') === envelope.partitionKey &&
     headers['event-id'] === envelope.eventId &&
     headers['schema-name'] === envelope.schemaName &&
-    headers['schema-version'] === String(envelope.schemaVersion);
+    headers['schema-version'] === String(envelope.schemaVersion) &&
+    Boolean(headers['outbox-id'] && uuidPattern.test(headers['outbox-id']));
   if (!valid) {
     throw new MessageDecodeError(
       'INVALID_TRANSPORT_METADATA',
@@ -81,7 +95,6 @@ export class PermanentMessageError extends Error {
   }
 }
 
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const traceparentPattern = /^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/;
 
 /** Checks a bounded non-empty contract string. */

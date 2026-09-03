@@ -274,6 +274,20 @@ interface ReplayRequestTable {
   updated_at: Timestamp;
 }
 
+interface WorkflowReplayRequestTable {
+  replay_request_id: string;
+  request_event_id: string;
+  original_event_id: string;
+  replay_generation: number | null;
+  status: string;
+  request_payload: Json<unknown>;
+  authorized_command_hash: string | null;
+  authorized_outbox_id: string | null;
+  requested_at: Timestamp;
+  decided_at: Timestamp;
+  completed_at: Timestamp | null;
+}
+
 interface DeadLetterTable {
   original_event_id: string;
   dead_letter_event_id: string;
@@ -341,6 +355,7 @@ export interface PostgresDatabase {
   'workflow.workflows': WorkflowTable;
   'workflow.outbox': OutboxTable;
   'workflow.dead_letters': DeadLetterTable;
+  'workflow.replay_requests': WorkflowReplayRequestTable;
   'workflow.poison_records': PoisonRecordTable;
   'projection.instances': ProjectionInstanceTable;
   'projection.operations': ProjectionOperationTable;

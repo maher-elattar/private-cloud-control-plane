@@ -2,7 +2,7 @@
 flowchart LR
   subgraph Owners["Owner transactions"]
     COut[("control.outbox<br/>commands + audit facts")]
-    WOut[("workflow.outbox<br/>events + DLQ + audit facts")]
+    WOut[("workflow.outbox<br/>replay commands + events + DLQ + audit")]
   end
 
   WAL["PostgreSQL WAL<br/>logical replication slot"]
@@ -10,7 +10,7 @@ flowchart LR
   Validate{"Allowlisted topic<br/>and route fields?"}
 
   subgraph Mapping["Outbox field mapping"]
-    Identity["outbox_id -> physical row<br/>event_id -> logical identity"]
+    Identity["outbox_id -> outbox-id header<br/>event_id -> stable logical identity"]
     Routing["topic + partition_key<br/>schema_name + schema_version"]
     Carrier["replay_generation + occurred_at<br/>traceparent + tracestate"]
   end

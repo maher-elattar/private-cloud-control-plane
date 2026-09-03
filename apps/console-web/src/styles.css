@@ -1,0 +1,145 @@
+/**
+ * Design tokens for the console.
+ *
+ * Every value below was read off the live Hetzner Cloud Console's `:root` custom properties
+ * rather than sampled from a screenshot, so colours, spacing, and layout widths are exact.
+ * Hetzner names variants with a double dash (`--color-primary--hover`); those are normalised to
+ * single-dash Tailwind namespaces here so they generate utilities (`bg-primary-hover`).
+ */
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+@theme {
+  /* Typography — console body copy is Inter at a 16px base. */
+  --font-sans: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif;
+
+  /* Brand */
+  --color-primary: hsl(350 89% 44%);
+  --color-primary-hover: hsl(350 89% 52%);
+  --color-primary-disabled: hsl(350 89% 74%);
+
+  /* Text */
+  --color-text: hsl(0 0% 22%);
+  --color-text-muted: hsl(0 0% 35%);
+  --color-text-disabled: hsl(0 0% 54%);
+  --color-text-faint: hsl(0 0% 72%);
+
+  /* Surfaces */
+  --color-canvas: hsl(0 0% 96%);
+  --color-surface: #fff;
+  --color-surface-hover: hsl(0 0% 98%);
+  --color-surface-disabled: hsl(0 0% 98%);
+  --color-empty-state: hsl(0 0% 91%);
+  --color-step-header: hsl(0 0% 96% / 0.6);
+  --color-console-dark: hsl(0 0% 22%);
+
+  /* Borders */
+  --color-border: hsl(0 0% 91%);
+  --color-border-dark: hsl(0 0% 86%);
+  --color-form-border: hsl(0 0% 86%);
+  --color-form-border-disabled: hsl(0 0% 93%);
+
+  /* Secondary / switch buttons */
+  --color-button-secondary: hsl(0 0% 86%);
+  --color-button-secondary-hover: hsl(0 0% 91%);
+  --color-button-secondary-disabled: hsl(0 0% 84%);
+  --color-switch-bg: hsl(0 0% 86%);
+  --color-switch-hover: hsl(0 0% 91%);
+
+  /* Dashed "add" affordances */
+  --color-dashed-content: hsl(0 0% 72%);
+  --color-dashed-hover: hsl(0 0% 98%);
+
+  /* Status indicators (the dot next to a server name) */
+  --color-status-green: hsl(143 76% 47%);
+  --color-status-orange: hsl(37 91% 55%);
+  --color-status-red: hsl(0 100% 50%);
+  --color-status-grey: hsl(0 0% 86%);
+
+  /* Status badges */
+  --color-badge-green-bg: hsl(143 76% 95%);
+  --color-badge-green-fg: hsl(143 76% 37%);
+  --color-badge-grey-bg: hsl(0 0% 96%);
+  --color-badge-grey-fg: hsl(0 0% 35%);
+  --color-badge-dark-grey-bg: hsl(0 0% 93%);
+  --color-badge-orange-bg: hsl(37 91% 97%);
+  --color-badge-orange-fg: hsl(37 91% 55%);
+  --color-badge-red-bg: hsl(0 100% 98%);
+  --color-badge-red-fg: hsl(0 100% 50%);
+  --color-badge-red-border: hsl(0 100% 90%);
+  --color-badge-plain: hsl(0 0% 91%);
+
+  /* Callouts */
+  --color-callout-info-bg: hsl(0 0% 96%);
+  --color-callout-info-fg: hsl(0 0% 35%);
+  --color-callout-warning-bg: hsl(37 91% 97%);
+  --color-callout-warning-fg: hsl(37 91% 25%);
+  --color-callout-warning-icon: hsl(37 91% 25%);
+  --color-callout-error-bg: hsl(0 100% 98%);
+  --color-callout-error-fg: hsl(0 100% 40%);
+
+  /* Tables */
+  --color-table-head: hsl(0 0% 96%);
+  --color-table-odd: #fff;
+  --color-table-even: hsl(0 0% 98%);
+  --color-table-highlight: hsl(0 0% 96%);
+
+  /* Navigation */
+  --color-nav-icon: hsl(0 0% 27%);
+  --color-nav-active: hsl(0 0% 96%);
+  --color-nav-hover: hsl(0 0% 98%);
+  --color-nav-secondary-hover: hsl(0 0% 35%);
+
+  /* Inputs and dropdowns */
+  --color-input-bg: #fff;
+  --color-dropdown-hover: hsl(0 0% 98%);
+  --color-dropdown-active: hsl(0 0% 96%);
+  --color-dropdown-header: hsl(0 0% 93%);
+  --color-select-border-selected: hsl(350 89% 44%);
+  --color-select-bg-default: hsl(0 0% 99%);
+
+  /* Misc */
+  --color-overlay: rgb(0 0 0 / 0.5);
+  --color-modal-overlay: rgb(0 0 0 / 0.7);
+  --color-modal-footer: hsl(0 0% 96%);
+  --color-spinner: hsl(0 0% 86%);
+  --color-icon-fill: hsl(0 0% 72%);
+  --color-icon-strong: hsl(0 0% 22%);
+  --color-project-dark: #434a62;
+  --color-project-darker: #1f2433;
+
+  /* Layout metrics (exact console values) */
+  --spacing-nav: 14rem;
+  --spacing-stepper-nav: 20rem;
+  --spacing-card: 2rem;
+  --spacing-card-gap: 1.25rem;
+  --spacing-topbar: 4rem;
+
+  /* Shadows */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-raised: 0 2px 8px rgb(0 0 0 / 0.1);
+  --shadow-overlay: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+@layer base {
+  html {
+    font-size: 16px;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The console never scrolls horizontally; wide tables scroll inside their own container. */
+  body {
+    overflow-x: hidden;
+  }
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-dark) transparent;
+}
