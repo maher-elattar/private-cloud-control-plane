@@ -34,6 +34,7 @@ import { PROJECTION_STORE } from '../tokens';
 
 const EVENT_TOPIC = 'provisioning.events.v1';
 const DLQ_TOPIC = 'provisioning.dlq.v1';
+const RECONCILIATION_TOPIC = 'reconciliation.events.v1';
 
 /** Narrows the three workflow event variants accepted by the projection. */
 function workflowEvent(record: IncomingKafkaRecord): WorkflowEvent {
@@ -69,20 +70,26 @@ function deadLetterEvent(record: IncomingKafkaRecord): ProvisioningDeadLetteredV
 export class ProjectionConsumer implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly events: KafkaConsumerRunner;
   private readonly deadLetters: KafkaConsumerRunner;
+  private readonly reconciliation: KafkaConsumerRunner;
 
   public constructor(@Inject(PROJECTION_STORE) private readonly store: ProjectionStore) {
     const brokers = kafkaBrokers();
     this.events = this.runner(EVENT_TOPIC, 'control-api.provisioning-events.v1', brokers);
     this.deadLetters = this.runner(DLQ_TOPIC, 'control-api.provisioning-dlq.v1', brokers);
+    this.reconciliation = this.runner(
+      RECONCILIATION_TOPIC,
+      'control-api.reconciliation-events.v1',
+      brokers,
+    );
   }
 
   public async onApplicationBootstrap(): Promise<void> {
-    await Promise.all([this.events.start(), this.deadLetters.start()]);
+    await Promise.all([this.events.start(), this.deadLetters.start(), this.reconciliation.start()]);
   }
 
   /** Kafka drains before the later database lifecycle hook closes the pool. */
   public async onModuleDestroy(): Promise<void> {
-    await Promise.all([this.events.stop(), this.deadLetters.stop()]);
+    await Promise.all([this.events.stop(), this.deadLetters.stop(), this.reconciliation.stop()]);
   }
 
   private runner(topic: string, groupId: string, brokers: readonly string[]): KafkaConsumerRunner {
@@ -99,6 +106,33 @@ export class ProjectionConsumer implements OnApplicationBootstrap, OnModuleDestr
 
   private async handle(record: IncomingKafkaRecord): Promise<MessageHandlingResult> {
     const started = performance.now();
+    if (record.delivery.topic === RECONCILIATION_TOPIC) {
+      const event = decodeEventEnvelope(record.value);
+      const outcome = await withSpan(
+        'controlplane.projection.apply',
+        { 'event.schema.name': event.schemaName },
+        async () => {
+          const result = await this.store.applyDriftEvent(event, record.delivery);
+          recordProjectionDuration(
+            event.schemaName,
+            result,
+            (performance.now() - started) / 1_000,
+            Date.parse(event.occurredAt),
+          );
+          return result;
+        },
+      );
+      structuredLog('info', 'drift_event_projected', {
+        schema_name: event.schemaName,
+        outcome,
+        instance_id: event.aggregateId,
+      });
+      return {
+        outcome: outcome === 'applied' ? 'handled' : 'duplicate',
+        schemaName: event.schemaName,
+        occurredAtMs: Date.parse(event.occurredAt),
+      };
+    }
     if (record.delivery.topic === EVENT_TOPIC) {
       const event = workflowEvent(record);
       const outcome = await withSpan(

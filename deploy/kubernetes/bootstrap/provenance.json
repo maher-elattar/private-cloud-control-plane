@@ -1,0 +1,25 @@
+{
+  "$comment": "Provenance of the vendored upstream installation manifests. tools/kubernetes/bootstrap.mjs refuses to apply a file whose digest does not match, so an edited or truncated vendored manifest fails loudly instead of installing a mutated control plane.",
+  "components": [
+    {
+      "name": "argo-cd",
+      "version": "v3.5.1",
+      "namespace": "argocd",
+      "path": "argocd/install.yaml",
+      "source": "https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.1/manifests/install.yaml",
+      "sha256": "795a3a972224da6a7f9d32c3e946445f062b60fb46028476715affeb688236e3",
+      "readinessDeployment": "argocd-server",
+      "versionImage": "quay.io/argoproj/argocd:v3.5.1"
+    },
+    {
+      "name": "argo-rollouts",
+      "version": "v1.9.1",
+      "namespace": "argo-rollouts",
+      "path": "argo-rollouts/install.yaml",
+      "source": "https://github.com/argoproj/argo-rollouts/releases/download/v1.9.1/install.yaml",
+      "sha256": "78c82343803c2bbc13a36049e269a532dd67f25b7e2cb3603c99e31d8d8a40b5",
+      "readinessDeployment": "argo-rollouts",
+      "versionImage": "quay.io/argoproj/argo-rollouts:v1.9.1"
+    }
+  ]
+}

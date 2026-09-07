@@ -1,0 +1,156 @@
+# Sync wave 4 — the Services a blue-green Rollout switches between.
+#
+# Each workload has two Services. Argo Rollouts owns their selectors: it injects
+# `rollouts-pod-template-hash` into the **active** Service pointing at the stable ReplicaSet, and
+# into the **preview** Service pointing at the new one. Neither selector is written here, and
+# writing one would be actively harmful — it would fight the controller for the field that
+# decides which environment receives traffic.
+#
+# The `private-cloud.io/rollout-role` label is what the ServiceMonitors in wave 3 select on. It is
+# the link that lets a promotion gate ask about the green environment specifically.
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-api
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: control-api
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    private-cloud.io/rollout-role: active
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: control-api }
+  ports:
+    - { name: http, port: 3000, targetPort: http }
+    - { name: grpc, port: 50051, targetPort: grpc }
+    - { name: metrics, port: 9464, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-api-preview
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: control-api
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    private-cloud.io/rollout-role: preview
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: control-api }
+  ports:
+    - { name: http, port: 3000, targetPort: http }
+    - { name: grpc, port: 50051, targetPort: grpc }
+    - { name: metrics, port: 9464, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: provisioning-orchestrator
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: provisioning-orchestrator
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    private-cloud.io/rollout-role: active
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: provisioning-orchestrator }
+  ports:
+    - { name: http, port: 3001, targetPort: http }
+    - { name: metrics, port: 9464, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: provisioning-orchestrator-preview
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: provisioning-orchestrator
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    private-cloud.io/rollout-role: preview
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: provisioning-orchestrator }
+  ports:
+    - { name: http, port: 3001, targetPort: http }
+    - { name: metrics, port: 9464, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxmox-provider
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: proxmox-provider
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    private-cloud.io/rollout-role: active
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: proxmox-provider }
+  ports:
+    - { name: http, port: 3002, targetPort: http }
+    - { name: grpc, port: 50052, targetPort: grpc }
+    - { name: metrics, port: 9464, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxmox-provider-preview
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: proxmox-provider
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    private-cloud.io/rollout-role: preview
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: proxmox-provider }
+  ports:
+    - { name: http, port: 3002, targetPort: http }
+    - { name: grpc, port: 50052, targetPort: grpc }
+    - { name: metrics, port: 9464, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reconciler
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: reconciler
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    private-cloud.io/rollout-role: active
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: reconciler }
+  ports:
+    - { name: http, port: 3003, targetPort: http }
+    - { name: metrics, port: 9464, targetPort: metrics }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reconciler-preview
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: reconciler
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    private-cloud.io/rollout-role: preview
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: reconciler }
+  ports:
+    - { name: http, port: 3003, targetPort: http }
+    - { name: metrics, port: 9464, targetPort: metrics }
+---
+# The local identity provider. A fixture, not a component: it exists so the API can validate a
+# bearer token without reaching an external issuer, and its signing key never leaves this cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-oidc
+  namespace: private-cloud
+  labels:
+    { app.kubernetes.io/name: local-oidc, app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  selector: { app.kubernetes.io/name: local-oidc }
+  ports:
+    - { name: http, port: 18080, targetPort: http }

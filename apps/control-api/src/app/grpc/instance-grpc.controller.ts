@@ -10,18 +10,42 @@
 import { Controller } from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
 import type { Metadata } from '@grpc/grpc-js';
-import type {
-  CreateInstanceRequest,
-  CreateInstanceResponse,
-  GetInstanceRequest,
-  GetInstanceResponse,
-  ListInstancesRequest,
-  ListInstancesResponse,
+import {
+  PowerAction,
+  type CreateInstanceRequest,
+  type CreateInstanceResponse,
+  type GetInstanceRequest,
+  type GetInstanceResponse,
+  type ListInstancesRequest,
+  type ListInstancesResponse,
+  type MutateInstanceRequest,
+  type MutateInstanceResponse,
 } from '@private-cloud/contracts/control-plane';
 import { correlationId, requestTraceparent, requestTracestate } from '../common/request-context';
 import { AuthenticatedGrpcController, grpcPage } from './authenticated-grpc.controller';
 import { metadataValue, requireField } from './grpc-errors';
-import { grpcInstance, grpcTimestamp } from './grpc-mappers.js';
+import { grpcInstance, grpcMutationAccepted } from './grpc-mappers.js';
+
+/**
+ * Maps the protobuf power enum onto the domain's action vocabulary.
+ *
+ * Unknown and unspecified values are passed through as-is so the domain validator produces the
+ * same `VALIDATION_FAILED` a REST caller would get, rather than this layer inventing an error.
+ */
+function powerActionName(value: PowerAction | undefined): string {
+  switch (value) {
+    case PowerAction.POWER_ACTION_START:
+      return 'start';
+    case PowerAction.POWER_ACTION_SHUTDOWN:
+      return 'shutdown';
+    case PowerAction.POWER_ACTION_STOP:
+      return 'stop';
+    case PowerAction.POWER_ACTION_REBOOT:
+      return 'reboot';
+    default:
+      return String(value ?? '');
+  }
+}
 
 /** Serves the `InstanceService` RPCs. */
 @Controller()
@@ -65,14 +89,51 @@ export class InstanceGrpcController extends AuthenticatedGrpcController {
         sshPublicKeys: request.sshPublicKeys ?? [],
       });
       return {
-        accepted: {
-          operationId: accepted.operationId,
-          targetId: accepted.targetId,
-          acceptedAt: grpcTimestamp(accepted.acceptedAt),
-          statusUri: accepted.statusUrl,
-          replayed: accepted.replayed,
-        },
+        accepted: grpcMutationAccepted(accepted),
       };
+    });
+  }
+
+  /**
+   * Accepts a power transition on an existing instance.
+   *
+   * The proto models the action as a `oneof`, so a request carrying neither branch is a client
+   * error rather than a default. Resize is declared here and lands with its own capability;
+   * until then it is refused explicitly instead of being silently ignored.
+   */
+  @GrpcMethod('InstanceService', 'MutateInstance')
+  public async mutateInstance(
+    request: MutateInstanceRequest,
+    metadata: Metadata,
+  ): Promise<MutateInstanceResponse> {
+    return this.handleAuthenticated(metadata, async (actor) => {
+      const traceparent = requestTraceparent(metadataValue(metadata, 'traceparent'));
+      const tracestate = requestTracestate(metadataValue(metadata, 'tracestate'), traceparent);
+      const identity = {
+        actor,
+        projectId: requireField(request.context?.projectId, 'project_id'),
+        instanceId: requireField(request.instanceId, 'instance_id'),
+        idempotencyKey: request.context?.idempotencyKey ?? '',
+        correlationId: correlationId(request.context?.correlationId),
+        traceparent,
+        ...(tracestate ? { tracestate } : {}),
+      };
+      // The proto models the action as a `oneof`, so exactly one branch should be set. Resize wins
+      // when both are, because sending both is a client error and silently applying the power half
+      // would be the more surprising of the two outcomes.
+      const accepted = request.resize
+        ? await this.application.resizeInstance({
+            ...identity,
+            flavorId: request.resize.flavorId ?? '',
+            ...(request.resize.diskGib === undefined
+              ? {}
+              : { diskGiB: Number(request.resize.diskGib) }),
+          })
+        : await this.application.mutateInstancePower({
+            ...identity,
+            action: powerActionName(request.power),
+          });
+      return { accepted: grpcMutationAccepted(accepted) };
     });
   }
 
@@ -87,6 +148,7 @@ export class InstanceGrpcController extends AuthenticatedGrpcController {
         actor,
         requireField(request.context?.projectId, 'project_id'),
         request.page?.limit,
+        request.page?.cursor,
       );
       return { items: page.items.map(grpcInstance), page: grpcPage(page) };
     });

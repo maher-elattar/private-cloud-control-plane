@@ -1382,6 +1382,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['AuditEventPage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };
@@ -1507,6 +1508,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['DeadLetterPage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };
@@ -1618,6 +1620,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['ManualReviewPage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };
@@ -1728,6 +1731,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['ProviderProfilePage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };
@@ -1990,6 +1994,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['FlavorPage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };
@@ -2019,6 +2024,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['ImagePage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };
@@ -2048,6 +2054,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['NetworkPage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };
@@ -2078,6 +2085,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['InstancePage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };
@@ -2234,6 +2242,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['SnapshotPage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
       readonly 404: components['responses']['NotFound'];
@@ -2371,6 +2380,7 @@ export interface operations {
           readonly 'application/json': components['schemas']['OperationPage'];
         };
       };
+      readonly 400: components['responses']['BadRequest'];
       readonly 401: components['responses']['Unauthorized'];
       readonly 403: components['responses']['Forbidden'];
     };

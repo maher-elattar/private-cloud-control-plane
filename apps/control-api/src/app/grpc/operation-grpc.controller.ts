@@ -34,6 +34,7 @@ export class OperationGrpcController extends AuthenticatedGrpcController {
         actor,
         requireField(request.context?.projectId, 'project_id'),
         request.page?.limit,
+        request.page?.cursor,
       );
       return { items: page.items.map(grpcOperation), page: grpcPage(page) };
     });

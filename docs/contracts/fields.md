@@ -272,12 +272,16 @@ Every field declared by the OpenAPI components, event JSON Schema definitions, a
 | JSON Schema | InstancePowerRequested | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstancePowerRequested | data | object | yes | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstancePowerRequested.data | action | start \| shutdown \| stop \| reboot | yes | enum=start,shutdown,stop,reboot | - | operational | allowed-if-low-cardinality |
+| JSON Schema | InstancePowerRequested.data | providerProfileId | string | yes | minLength=1; maxLength=64 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | InstancePowerRequested.data | createOperationId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceResizeRequested | schemaName | const "instance.resize.requested" | no | const="instance.resize.requested" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceResizeRequested | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceResizeRequested | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceResizeRequested | data | object | yes | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceResizeRequested.data | flavorId | string | yes | minLength=1; maxLength=63 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceResizeRequested.data | targetResources | Resources | yes | - | - | operational | allowed-if-low-cardinality |
+| JSON Schema | InstanceResizeRequested.data | providerProfileId | string | yes | minLength=1; maxLength=64 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | InstanceResizeRequested.data | createOperationId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotCreateRequested | schemaName | const "snapshot.create.requested" | no | const="snapshot.create.requested" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotCreateRequested | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotCreateRequested | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
@@ -285,16 +289,24 @@ Every field declared by the OpenAPI components, event JSON Schema definitions, a
 | JSON Schema | SnapshotCreateRequested.data | snapshotId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotCreateRequested.data | name | string | yes | minLength=1; maxLength=64 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotCreateRequested.data | description | string | no | maxLength=256 | - | tenant-configuration | prohibited |
+| JSON Schema | SnapshotCreateRequested.data | providerProfileId | string | yes | minLength=1; maxLength=64 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | SnapshotCreateRequested.data | createOperationId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotRollbackRequested | schemaName | const "snapshot.rollback.requested" | no | const="snapshot.rollback.requested" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotRollbackRequested | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotRollbackRequested | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotRollbackRequested | data | object | yes | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotRollbackRequested.data | snapshotId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | SnapshotRollbackRequested.data | providerProfileId | string | yes | minLength=1; maxLength=64 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | SnapshotRollbackRequested.data | createOperationId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | SnapshotRollbackRequested.data | providerSnapshotReference | string | yes | minLength=1; maxLength=128 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotDeleteRequested | schemaName | const "snapshot.delete.requested" | no | const="snapshot.delete.requested" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotDeleteRequested | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotDeleteRequested | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotDeleteRequested | data | object | yes | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | SnapshotDeleteRequested.data | snapshotId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | SnapshotDeleteRequested.data | providerProfileId | string | yes | minLength=1; maxLength=64 | - | operational | allowed-if-low-cardinality |
+| JSON Schema | SnapshotDeleteRequested.data | createOperationId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | SnapshotDeleteRequested.data | providerSnapshotReference | string | yes | minLength=1; maxLength=128 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceRetentionRequested | schemaName | const "instance.retention.requested" | no | const="instance.retention.requested" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceRetentionRequested | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceRetentionRequested | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
@@ -346,6 +358,7 @@ Every field declared by the OpenAPI components, event JSON Schema definitions, a
 | JSON Schema | InstanceMutationCompleted.data | lifecycleState | string | yes | minLength=1; maxLength=64 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceMutationCompleted.data | providerResourceId | string | no | maxLength=128 | - | restricted-operational | prohibited |
 | JSON Schema | InstanceMutationCompleted.data | evidenceId | string | yes | format="uuid" | - | operational | allowed-if-low-cardinality |
+| JSON Schema | InstanceMutationCompleted.data | observed | ObservedState | no | - | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceMutationFailed | schemaName | const "instance.mutation.failed" | no | const="instance.mutation.failed" | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceMutationFailed | schemaVersion | const 1 | no | const=1 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | InstanceMutationFailed | aggregateType | const "instance" | no | const="instance" | - | operational | allowed-if-low-cardinality |
@@ -407,6 +420,11 @@ Every field declared by the OpenAPI components, event JSON Schema definitions, a
 | JSON Schema | AuditRecorded.data | targetId | string | yes | minLength=1; maxLength=128 | - | operational | allowed-if-low-cardinality |
 | JSON Schema | AuditRecorded.data | outcome | accepted \| succeeded \| rejected \| failed | yes | enum=accepted,succeeded,rejected,failed | - | operational | allowed-if-low-cardinality |
 | JSON Schema | AuditRecorded.data | reasonReference | string | no | format="uuid" | - | audit | prohibited |
+| JSON Schema | ObservedState | exists | boolean | yes | - | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ObservedState | powerState | running \| stopped \| suspended \| unknown | yes | enum=running,stopped,suspended,unknown | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ObservedState | resources | Resources | no | - | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ObservedState | markerMatch | boolean | yes | - | - | operational | allowed-if-low-cardinality |
+| JSON Schema | ObservedState | observedAt | string | yes | format="date-time" | - | operational | allowed-if-low-cardinality |
 | AsyncAPI header | KafkaTransportHeaders | outbox-id | string | yes | format="uuid" | Physical owner-outbox row identity propagated by the Debezium Event Router. | operational | prohibited |
 | AsyncAPI header | KafkaTransportHeaders | event-id | string | yes | format="uuid" | Logical event identity; stable across governed replay generations. | operational | prohibited |
 | AsyncAPI header | KafkaTransportHeaders | schema-name | string | yes | - | Versioned payload discriminator checked against the envelope. | operational | allowed-if-low-cardinality |

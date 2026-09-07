@@ -1,0 +1,19 @@
+# Sync wave 0 — the namespace every control-plane object lives in.
+#
+# Wave 0 exists below the roadmap's five waves because a namespace, its identities, and its
+# boundaries have to exist before an operator can place a CustomResource inside it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: private-cloud
+  labels:
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    # Restricted is the strictest built-in profile: no privilege escalation, non-root, seccomp
+    # RuntimeDefault, and all capabilities dropped. Every workload here is written to satisfy it,
+    # so a future manifest that quietly needs root fails admission rather than getting it.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'

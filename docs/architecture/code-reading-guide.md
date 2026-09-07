@@ -137,12 +137,13 @@ have partially succeeded must not be reported as if nothing happened.
 
 ### 11. Readback — `packages/postgres-adapter/src/projection-store.ts`
 
-Every checkpoint wrote an event to `workflow.outbox`. `ProjectionWorker` in the control API
-polls it, and `applyNextWorkflowEvent` applies each to both the write tables and the read
-documents.
+Every checkpoint wrote an event to `workflow.outbox`. Debezium publishes it to
+`provisioning.events.v1`, and `ProjectionConsumer` in the control API applies each event to both
+the write tables and the read documents, committing its inbox receipt in the same transaction.
 
-The claim query is the subtle part. It admits an event only when no *earlier* unconsumed event
-exists for the same instance. Without that ordering guard, a `completed` event could overtake a
+Ordering is the subtle part, and it is the broker's job: events are partitioned by
+`partitionKey`, so everything touching one instance lands on one partition and is consumed in
+order. Without that guarantee, a `completed` event could overtake a
 `progressed` event and be overwritten by it, leaving a successfully built instance stuck at
 `provisioning` forever.
 

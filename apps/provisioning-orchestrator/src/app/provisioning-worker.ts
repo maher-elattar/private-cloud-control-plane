@@ -1,9 +1,10 @@
 /**
  * Background poller that drives the provisioning saga.
  *
- * This is the entire orchestrator process, in effect: a timer that repeatedly asks
- * {@link CreateInstanceWorkflow} to perform one transition. All provisioning logic lives in
- * `packages/application`; this class exists only to schedule it and manage process lifecycle.
+ * This is the entire orchestrator process, in effect: a timer that repeatedly asks the
+ * {@link WorkflowRegistry} to let one capability perform one transition. All provisioning logic
+ * lives in `packages/application`; this class exists only to schedule it and manage process
+ * lifecycle.
  *
  * WHY one transition per tick rather than a loop inside a claim: each transition commits its
  * own checkpoint and then releases the instance lease. Draining a whole workflow in one pass
@@ -20,9 +21,25 @@ import {
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
-import { CreateInstanceWorkflow, type WorkflowStore } from '@private-cloud/application';
+import {
+  CreateInstanceWorkflow,
+  PowerInstanceWorkflow,
+  ResizeInstanceWorkflow,
+  PurgeInstanceWorkflow,
+  RetainInstanceWorkflow,
+  SnapshotWorkflow,
+  WorkflowRegistry,
+  type WorkflowStore,
+} from '@private-cloud/application';
 import { OpenTelemetryApplicationTelemetry } from '@private-cloud/observability';
-import type { CreateInstanceProviderPort } from '@private-cloud/provider-sdk';
+import type {
+  CreateInstanceProviderPort,
+  PowerProviderPort,
+  PurgeProviderPort,
+  ResizeProviderPort,
+  RetentionProviderPort,
+  SnapshotProviderPort,
+} from '@private-cloud/provider-sdk';
 import { PROVIDER_CLIENT, WORKFLOW_STORE } from './tokens';
 
 /**
@@ -40,7 +57,7 @@ const ERROR_BACKOFF_MS = 1_000;
 @Injectable()
 export class ProvisioningWorker implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(ProvisioningWorker.name);
-  private readonly workflow: CreateInstanceWorkflow;
+  private readonly registry: WorkflowRegistry;
   private timer: NodeJS.Timeout | undefined;
   private stopping = false;
 
@@ -50,18 +67,34 @@ export class ProvisioningWorker implements OnApplicationBootstrap, OnApplication
    */
   public constructor(
     @Inject(WORKFLOW_STORE) store: WorkflowStore,
-    @Inject(PROVIDER_CLIENT) provider: CreateInstanceProviderPort,
+    @Inject(PROVIDER_CLIENT)
+    provider: CreateInstanceProviderPort &
+      PowerProviderPort &
+      ResizeProviderPort &
+      SnapshotProviderPort &
+      RetentionProviderPort &
+      PurgeProviderPort,
   ) {
-    this.workflow = new CreateInstanceWorkflow(
-      store,
-      provider,
-      // WHY the PID fallback: the worker ID is claimed on instance leases, so two processes
-      // sharing one would each accept the other's lease as their own and could act on the
-      // same instance concurrently. `WORKER_ID` should be set from the pod name in a
-      // multi-replica deployment; the PID only makes single-host local runs distinct.
-      process.env.WORKER_ID?.trim() || `orchestrator-${process.pid}`,
-      new OpenTelemetryApplicationTelemetry(),
-    );
+    // WHY the PID fallback: the worker ID is claimed on instance leases, so two processes
+    // sharing one would each accept the other's lease as their own and could act on the
+    // same instance concurrently. `WORKER_ID` should be set from the pod name in a
+    // multi-replica deployment; the PID only makes single-host local runs distinct.
+    const workerId = process.env.WORKER_ID?.trim() || `orchestrator-${process.pid}`;
+    const telemetry = new OpenTelemetryApplicationTelemetry();
+    // One executor per implemented capability. Each Phase 5 capability adds itself here; the
+    // registry refuses duplicates so two executors cannot both answer for one action.
+    this.registry = new WorkflowRegistry([
+      new CreateInstanceWorkflow(store, provider, workerId, telemetry),
+      new PowerInstanceWorkflow(store, provider, workerId, telemetry),
+      new ResizeInstanceWorkflow(store, provider, workerId, telemetry),
+      // One class, three registrations: the snapshot actions differ only in which provider call
+      // the submit stage makes and what the confirming list is expected to show.
+      new SnapshotWorkflow('create_snapshot', store, provider, workerId, telemetry),
+      new SnapshotWorkflow('rollback_snapshot', store, provider, workerId, telemetry),
+      new SnapshotWorkflow('delete_snapshot', store, provider, workerId, telemetry),
+      new RetainInstanceWorkflow(store, provider, workerId, telemetry),
+      new PurgeInstanceWorkflow(store, provider, workerId, telemetry),
+    ]);
   }
 
   /** Starts polling once the process is ready. */
@@ -97,7 +130,7 @@ export class ProvisioningWorker implements OnApplicationBootstrap, OnApplication
    */
   private async tick(): Promise<void> {
     try {
-      const handled = await this.workflow.runOne();
+      const handled = await this.registry.runOne();
       this.schedule(handled ? 0 : IDLE_POLL_DELAY_MS);
     } catch (error: unknown) {
       this.logger.error(

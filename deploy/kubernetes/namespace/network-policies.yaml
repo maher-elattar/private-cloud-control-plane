@@ -1,0 +1,157 @@
+# Network boundaries for the control-plane namespace.
+#
+# The shape is deny-by-default plus one narrow allowance per real dependency, in both directions.
+# Egress is restricted as tightly as ingress on purpose: a provider adapter that can reach
+# arbitrary hosts is a provider adapter that can be pointed at a hypervisor nobody authorised.
+#
+# Every rule below corresponds to an edge that exists in
+# `docs/diagrams/rendered/phase-6-network-boundaries.mermaid.svg`. If a rule has no edge, one of
+# the two is wrong.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# DNS is the one egress every pod needs and no pod can be written without.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Prometheus scrapes every pod's metrics port. This is what makes blue-green analysis possible, so
+# it is a first-class rule rather than a monitoring afterthought.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-scrape
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - { protocol: TCP, port: metrics }
+---
+# North-south traffic. Only the API is reachable from outside the namespace, and only from the
+# Gateway that terminates it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-to-control-api
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: control-api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: traefik }
+      ports:
+        - { protocol: TCP, port: http }
+    # The in-namespace load generator drives promotion analysis against the preview environment.
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: rollout-load }
+      ports:
+        - { protocol: TCP, port: http }
+---
+# East-west traffic between the services, expressed one dependency at a time.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-provider-grpc
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: proxmox-provider }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: provisioning-orchestrator }
+        # Reads only. The reconciler's client exposes one RPC and its store cannot express a
+        # correction, which is how the non-destructive reconciliation rule is enforced in code;
+        # this rule is the network-layer restatement of it.
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: reconciler }
+      ports:
+        - { protocol: TCP, port: grpc }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-control-plane-egress
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  policyTypes: [Egress]
+  egress:
+    # PostgreSQL, managed by CloudNativePG in this same namespace.
+    - to:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: control-plane-postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # Kafka, managed by Strimzi in this same namespace.
+    - to:
+        - podSelector:
+            matchLabels: { strimzi.io/cluster: control-plane-kafka }
+      ports:
+        - { protocol: TCP, port: 9092 }
+        - { protocol: TCP, port: 9093 }
+    # The namespace's own OpenTelemetry Collector.
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: otel-collector }
+      ports:
+        - { protocol: TCP, port: 4317 }
+        - { protocol: TCP, port: 4318 }
+    # Sibling services and the local fixtures that stand in for an identity provider and a
+    # hypervisor. Kept in one rule because they are all in-namespace pods of this application.
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+      ports:
+        - { protocol: TCP, port: 3000 }
+        - { protocol: TCP, port: 3001 }
+        - { protocol: TCP, port: 3002 }
+        - { protocol: TCP, port: 3003 }
+        - { protocol: TCP, port: 8443 }
+        - { protocol: TCP, port: 18080 }
+        - { protocol: TCP, port: 50051 }
+        - { protocol: TCP, port: 50052 }

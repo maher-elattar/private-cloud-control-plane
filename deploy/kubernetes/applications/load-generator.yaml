@@ -1,0 +1,154 @@
+# Sync wave 4 — synthetic traffic for the promotion gate.
+#
+# The green environment's HTTP success rate is only measurable if the green environment is
+# receiving requests. Nothing sends it any: production traffic goes to the active Service by
+# definition, which is what makes blue-green safe and also what makes it unmeasurable without a
+# deliberate source.
+#
+# These two workloads are that source, and they route through the Gateway rather than straight at
+# a Service on purpose — so the same requests that feed the analysis also exercise the header rule
+# that is supposed to reach green. A header route that silently stopped working would show up here
+# as a green environment with no traffic, and the traffic floor would fail the promotion.
+#
+# WHY health endpoints rather than API calls: the generator holds no credentials. A load source
+# that carried a bearer token would be a standing credential in the namespace whose only purpose
+# is to make a graph look busy. `/health/ready` exercises the same instrumented HTTP server, the
+# same readiness path, and the same database round trip, and needs no identity at all.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollout-load-green
+  namespace: private-cloud
+  labels:
+    { app.kubernetes.io/name: rollout-load, app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+    private-cloud.io/policy-exempt: probes
+    private-cloud.io/policy-exempt-reason: >-
+      A shell loop calling curl serves nothing and exposes no endpoint, so a probe could only
+      assert that a process exists — which the kubelet already knows. This generator produces the
+      traffic the promotion gate measures; it is never itself a dependency of anything.
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: rollout-load, private-cloud.io/load-target: green }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rollout-load
+        app.kubernetes.io/part-of: private-cloud-control-plane
+        private-cloud.io/load-target: green
+    spec:
+      serviceAccountName: control-plane-jobs
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: curl
+          image: curlimages/curl:8.16.0
+          imagePullPolicy: IfNotPresent
+          command: ['/bin/sh', '/etc/rollout-load/generate.sh']
+          env:
+            - { name: GATEWAY, value: traefik.traefik.svc.cluster.local }
+            - { name: ROUTE_HOST, value: control-plane.test }
+            # The header that reaches the preview environment. This is the only difference between
+            # this workload and the one below it.
+            - { name: CANARY, value: green }
+            - { name: PATHS, value: /health/ready /health/live }
+            - { name: INTERVAL, value: '1' }
+          volumeMounts:
+            - { name: script, mountPath: /etc/rollout-load, readOnly: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+      volumes:
+        - name: script
+          configMap: { name: rollout-load, defaultMode: 0555 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollout-load-active
+  namespace: private-cloud
+  labels:
+    { app.kubernetes.io/name: rollout-load, app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+    private-cloud.io/policy-exempt: probes
+    private-cloud.io/policy-exempt-reason: >-
+      A shell loop calling curl serves nothing and exposes no endpoint, so a probe could only
+      assert that a process exists — which the kubelet already knows. This generator produces the
+      traffic the promotion gate measures; it is never itself a dependency of anything.
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: rollout-load, private-cloud.io/load-target: active }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rollout-load
+        app.kubernetes.io/part-of: private-cloud-control-plane
+        private-cloud.io/load-target: active
+    spec:
+      serviceAccountName: control-plane-jobs
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: curl
+          image: curlimages/curl:8.16.0
+          imagePullPolicy: IfNotPresent
+          command: ['/bin/sh', '/etc/rollout-load/generate.sh']
+          env:
+            - { name: GATEWAY, value: traefik.traefik.svc.cluster.local }
+            - { name: ROUTE_HOST, value: control-plane.test }
+            - { name: PATHS, value: /health/ready }
+            - { name: INTERVAL, value: '1' }
+          volumeMounts:
+            - { name: script, mountPath: /etc/rollout-load, readOnly: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+      volumes:
+        - name: script
+          configMap: { name: rollout-load, defaultMode: 0555 }
+---
+# The generators reach the API through the Gateway, so their egress is to the Gateway's namespace
+# rather than to a Service in this one.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rollout-load-egress
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: rollout-load }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: traefik }
+      ports:
+        - { protocol: TCP, port: 80 }

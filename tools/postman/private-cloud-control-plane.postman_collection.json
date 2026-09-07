@@ -1,0 +1,2840 @@
+{
+  "info": {
+    "_postman_id": "b6f1d3a2-5c9e-4e17-9a3f-2d0c6e5f1a44",
+    "name": "Private Cloud Control Plane — Phase 6 (minikube)",
+    "description": "Exercises the control plane running on the minikube cluster, through the Gateway, in lifecycle order.\n\n**Run the `00 Identity` folder first.** It mints the bearer tokens every other request carries, from the in-cluster OIDC fixture reached over a port-forward:\n\n```bash\nkubectl port-forward -n private-cloud svc/local-oidc 18085:18080\n```\n\nThen run the whole collection top to bottom. Requests that expect a refusal — a 403 for a foreign project, a 409 for a purge inside the retention window — assert the refusal: those are safety rules, and a run in which they stopped failing would be a regression.\n\nGenerated from `tools/postman/requests.mjs`; do not hand-edit. Regenerate with `node tools/postman/generate-collection.mjs`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "00 Identity",
+      "description": "Mints the bearer tokens every later request carries. The issuer is the in-cluster OIDC fixture, reached over a `kubectl port-forward`; it has no route through the Gateway and is not meant to have one. Run this folder first: every other folder reads the variables it sets.",
+      "item": [
+        {
+          "name": "Mint tenant token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.collectionVariables.set('tenantToken', pm.response.json().access_token);",
+                  "pm.test('token is a three-part JWS', () => pm.expect(pm.response.json().access_token.split('.')).to.have.lengthOf(3));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{oidcUrl}}/token?roles=tenant_developer&projects={{projectId}}",
+            "description": "A `tenant_developer` in the seeded project. Valid for 15 minutes — re-run this request rather than debugging a sudden 401."
+          },
+          "response": []
+        },
+        {
+          "name": "Mint administrator token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.collectionVariables.set('adminToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{oidcUrl}}/token?roles=platform_administrator&projects={{projectId}}",
+            "description": "A `platform_administrator`. Administrative recovery is never inferred from project membership, so this role is checked on its own and the two tokens are not interchangeable in either direction."
+          },
+          "response": []
+        },
+        {
+          "name": "Mint foreign-project token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.collectionVariables.set('foreignToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{oidcUrl}}/token?roles=tenant_developer&projects={{foreignProjectId}}",
+            "description": "A correctly signed token for a project the caller does not belong to. Used later to prove that a valid signature is not by itself authorisation."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "01 Health and routing",
+      "description": "The unauthenticated probes, and the one header that decides which environment answers. `X-Canary: green` reaches the preview Service; everything else reaches the active one.",
+      "item": [
+        {
+          "name": "Liveness (active / blue)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.test('reports ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/health/live",
+            "description": "Deliberately unauthenticated: a liveness probe that needs a token cannot run from a kubelet."
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness (active / blue)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/health/ready",
+            "description": "Readiness is the gate the blue-green promotion waits on. A green ReplicaSet whose pods never report ready is aborted by the progress deadline rather than promoted."
+          },
+          "response": []
+        },
+        {
+          "name": "Liveness through the green header",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "X-Canary",
+                "value": "green"
+              }
+            ],
+            "url": "{{gatewayUrl}}/health/live",
+            "description": "Same path, same Gateway, different backend. Gateway API resolves the tie by header match count, so the rule carrying `X-Canary: green` wins over the one that matches everything. When no rollout is in progress the preview Service points at the same ReplicaSet as the active one, so this answers identically — that is correct, not a routing failure."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 Project, quota, and catalog",
+      "description": "The read surface a caller needs before it can compose a valid create request.",
+      "item": [
+        {
+          "name": "Get project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get project quota",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.test('limits and usage are both reported', () => { const q = pm.response.json(); pm.expect(q).to.have.property('limits'); pm.expect(q).to.have.property('usage'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/quota",
+            "description": "`usage` is measured, not cached: it is computed inside the same read that returns it, so a create accepted a moment ago is already counted."
+          },
+          "response": []
+        },
+        {
+          "name": "List images",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/catalog/images",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List flavors",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/catalog/flavors",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List networks",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/catalog/networks",
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 Create an instance",
+      "description": "The asynchronous accept path, and the two behaviours that make it safe to retry. A create returns 202 with an operation to follow; it does not return an instance, because no instance exists yet.",
+      "item": [
+        {
+          "name": "Create instance",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fresh key per run. Reusing one would replay the stored response from a previous run",
+                  "// and this request would stop testing anything.",
+                  "pm.collectionVariables.set('createKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('idempotencyKey', pm.collectionVariables.get('createKey'));",
+                  "// A hostname unique to this run, so repeated runs do not collide on a name.",
+                  "pm.collectionVariables.set('hostname', 'postman-' + Date.now().toString(36));",
+                  "pm.collectionVariables.set('snapshotName', 'postman-snap-' + Date.now().toString(36));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "const accepted = pm.response.json();",
+                  "pm.collectionVariables.set('instanceId', accepted.targetId);",
+                  "pm.collectionVariables.set('operationId', accepted.operationId);",
+                  "pm.collectionVariables.set('statusUrl', accepted.statusUrl);",
+                  "pm.test('is not reported as a replay', () => pm.expect(accepted.replayed).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "X-Correlation-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageId\": \"{{imageId}}\",\n  \"flavorId\": \"{{flavorId}}\",\n  \"networkId\": \"{{networkId}}\",\n  \"hostname\": \"{{hostname}}\",\n  \"sshPublicKeys\": [\n    \"{{sshPublicKey}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances",
+            "description": "The `Idempotency-Key` header is required. The response carries `operationId`, `targetId` (the new instance), and a `statusUrl` to poll. The instance is not usable until that operation reaches `succeeded`."
+          },
+          "response": []
+        },
+        {
+          "name": "Create instance again with the same key (replay)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Deliberately the *same* key as \"createKey\", to exercise the replay path.",
+                  "pm.collectionVariables.set('idempotencyKey', pm.collectionVariables.get('createKey'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "const replay = pm.response.json();",
+                  "pm.test('is reported as a replay', () => pm.expect(replay.replayed).to.eql(true));",
+                  "pm.test('returns the original operation, not a new one', () => pm.expect(replay.operationId).to.eql(pm.collectionVariables.get('operationId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageId\": \"{{imageId}}\",\n  \"flavorId\": \"{{flavorId}}\",\n  \"networkId\": \"{{networkId}}\",\n  \"hostname\": \"{{hostname}}\",\n  \"sshPublicKeys\": [\n    \"{{sshPublicKey}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances",
+            "description": "The same key with the same payload returns the *stored* response. This is the behaviour that makes a client retry safe: a second VM is never built, and the caller is handed back the operation it already started."
+          },
+          "response": []
+        },
+        {
+          "name": "Create instance with the same key but a different payload",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Deliberately the *same* key as \"createKey\", to exercise the replay path.",
+                  "pm.collectionVariables.set('idempotencyKey', pm.collectionVariables.get('createKey'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 409', () => pm.expect(pm.response.code).to.be.oneOf([409]));",
+                  "pm.test('names the idempotency conflict', () => pm.expect(pm.response.json().code).to.eql('IDEMPOTENCY_CONFLICT'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageId\": \"{{imageId}}\",\n  \"flavorId\": \"{{flavorIdLarger}}\",\n  \"networkId\": \"{{networkId}}\",\n  \"hostname\": \"{{hostname}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances",
+            "description": "A reused key with different content is a client bug, not a retry, and is refused. The payload is compared by canonical hash, so key order and whitespace do not matter and a genuinely identical body still replays."
+          },
+          "response": []
+        },
+        {
+          "name": "Poll the create operation until it settles",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-sends itself until 'state' settles, up to 60 attempts.",
+                  "const attempt = Number(pm.collectionVariables.get('pollAttempt') || 0) + 1;",
+                  "// An error response will never settle, so it ends the poll immediately. Without this a",
+                  "// mistyped id polls a 400 until the attempt cap, and a two-second bug takes four minutes",
+                  "// to report itself.",
+                  "const readable = pm.response.code >= 200 && pm.response.code < 300;",
+                  "const settled = readable && [\"succeeded\",\"failed\"].includes(pm.response.json().state);",
+                  "if (readable && !settled && attempt < 60) {",
+                  "  pm.collectionVariables.set('pollAttempt', attempt);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('pollAttempt', 0);",
+                  "  pm.test('settles within 60 attempts', () => pm.expect(settled).to.eql(true));",
+                  "}",
+                  "if (settled) {",
+                  "  pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "  pm.test('the create succeeded', () => pm.expect(pm.response.json().state).to.eql('succeeded'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations/{{operationId}}",
+            "description": "Re-sends itself until the operation leaves `pending`/`running`. In the Postman GUI this uses `postman.setNextRequest`, so it works in a collection run; sending it once by hand simply shows the current state."
+          },
+          "response": []
+        },
+        {
+          "name": "Get instance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.test('is active', () => pm.expect(pm.response.json().lifecycleState).to.eql('active'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List instances",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.test('page metadata is present', () => pm.expect(pm.response.json()).to.have.property('page'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances?limit=10",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List operations",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.test('the create operation is listed', () => pm.expect(pm.response.json().items.map((o) => o.id)).to.include(pm.collectionVariables.get('operationId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations?limit=10",
+            "description": "The operation journal for the project. Every accepted command appears here whether it succeeded, failed, or is still running, which makes it the place to look when a caller lost the `operationId` a 202 returned."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 Power and resize",
+      "description": "Every mutation is the same shape as a create: a 202 with an operation to follow. The instance is locked for the duration, which is what the 409 in the last request proves.",
+      "item": [
+        {
+          "name": "Shutdown",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "pm.collectionVariables.set('operationId', pm.response.json().operationId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"shutdown\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/actions",
+            "description": "A graceful guest shutdown. `stop` is the ungraceful one and is a separate action."
+          },
+          "response": []
+        },
+        {
+          "name": "Poll the shutdown operation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-sends itself until 'state' settles, up to 60 attempts.",
+                  "const attempt = Number(pm.collectionVariables.get('pollAttempt') || 0) + 1;",
+                  "// An error response will never settle, so it ends the poll immediately. Without this a",
+                  "// mistyped id polls a 400 until the attempt cap, and a two-second bug takes four minutes",
+                  "// to report itself.",
+                  "const readable = pm.response.code >= 200 && pm.response.code < 300;",
+                  "const settled = readable && [\"succeeded\",\"failed\"].includes(pm.response.json().state);",
+                  "if (readable && !settled && attempt < 60) {",
+                  "  pm.collectionVariables.set('pollAttempt', attempt);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('pollAttempt', 0);",
+                  "  pm.test('settles within 60 attempts', () => pm.expect(settled).to.eql(true));",
+                  "}",
+                  "if (settled) {",
+                  "  pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "  pm.test('the shutdown succeeded', () => pm.expect(pm.response.json().state).to.eql('succeeded'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations/{{operationId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Start",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "pm.collectionVariables.set('operationId', pm.response.json().operationId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"start\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/actions",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Poll the start operation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-sends itself until 'state' settles, up to 60 attempts.",
+                  "const attempt = Number(pm.collectionVariables.get('pollAttempt') || 0) + 1;",
+                  "// An error response will never settle, so it ends the poll immediately. Without this a",
+                  "// mistyped id polls a 400 until the attempt cap, and a two-second bug takes four minutes",
+                  "// to report itself.",
+                  "const readable = pm.response.code >= 200 && pm.response.code < 300;",
+                  "const settled = readable && [\"succeeded\",\"failed\"].includes(pm.response.json().state);",
+                  "if (readable && !settled && attempt < 60) {",
+                  "  pm.collectionVariables.set('pollAttempt', attempt);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('pollAttempt', 0);",
+                  "  pm.test('settles within 60 attempts', () => pm.expect(settled).to.eql(true));",
+                  "}",
+                  "if (settled) {",
+                  "  pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "  pm.test('the start succeeded', () => pm.expect(pm.response.json().state).to.eql('succeeded'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations/{{operationId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Resize to a larger flavor",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "pm.collectionVariables.set('operationId', pm.response.json().operationId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"resize\",\n  \"flavorId\": \"{{flavorIdLarger}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/actions",
+            "description": "CPU and memory come from the flavor. A disk change is the optional `diskGiB` on the same action, and it may only grow — a shrink is refused with `DISK_SHRINK_FORBIDDEN` because no safe shrink exists that the control plane can perform blind."
+          },
+          "response": []
+        },
+        {
+          "name": "Poll the resize operation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-sends itself until 'state' settles, up to 60 attempts.",
+                  "const attempt = Number(pm.collectionVariables.get('pollAttempt') || 0) + 1;",
+                  "// An error response will never settle, so it ends the poll immediately. Without this a",
+                  "// mistyped id polls a 400 until the attempt cap, and a two-second bug takes four minutes",
+                  "// to report itself.",
+                  "const readable = pm.response.code >= 200 && pm.response.code < 300;",
+                  "const settled = readable && [\"succeeded\",\"failed\"].includes(pm.response.json().state);",
+                  "if (readable && !settled && attempt < 60) {",
+                  "  pm.collectionVariables.set('pollAttempt', attempt);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('pollAttempt', 0);",
+                  "  pm.test('settles within 60 attempts', () => pm.expect(settled).to.eql(true));",
+                  "}",
+                  "if (settled) {",
+                  "  pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "  pm.test('the resize succeeded', () => pm.expect(pm.response.json().state).to.eql('succeeded'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations/{{operationId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Refuse a disk shrink",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 409 or 422', () => pm.expect(pm.response.code).to.be.oneOf([409,422]));",
+                  "pm.test('names the shrink refusal', () => pm.expect(pm.response.json().code).to.eql('DISK_SHRINK_FORBIDDEN'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"resize\",\n  \"flavorId\": \"{{flavorIdLarger}}\",\n  \"diskGiB\": 8\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/actions",
+            "description": "The instance already has a larger disk than 8 GiB, so this is a shrink. It is refused at acceptance — nothing reaches the provider."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 Snapshots",
+      "description": "Create, list, roll back, and delete. Each mutating call is asynchronous.",
+      "item": [
+        {
+          "name": "Create snapshot",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "pm.collectionVariables.set('operationId', pm.response.json().operationId);",
+                  "pm.collectionVariables.set('snapshotId', pm.response.json().targetId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{snapshotName}}\",\n  \"description\": \"Taken by the Postman collection run.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/snapshots",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Poll the snapshot operation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-sends itself until 'state' settles, up to 60 attempts.",
+                  "const attempt = Number(pm.collectionVariables.get('pollAttempt') || 0) + 1;",
+                  "// An error response will never settle, so it ends the poll immediately. Without this a",
+                  "// mistyped id polls a 400 until the attempt cap, and a two-second bug takes four minutes",
+                  "// to report itself.",
+                  "const readable = pm.response.code >= 200 && pm.response.code < 300;",
+                  "const settled = readable && [\"succeeded\",\"failed\"].includes(pm.response.json().state);",
+                  "if (readable && !settled && attempt < 60) {",
+                  "  pm.collectionVariables.set('pollAttempt', attempt);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('pollAttempt', 0);",
+                  "  pm.test('settles within 60 attempts', () => pm.expect(settled).to.eql(true));",
+                  "}",
+                  "if (settled) {",
+                  "  pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "  pm.test('the snapshot succeeded', () => pm.expect(pm.response.json().state).to.eql('succeeded'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations/{{operationId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List snapshots",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.test('the new snapshot is listed', () => pm.expect(pm.response.json().items.map((s) => s.id)).to.include(pm.collectionVariables.get('snapshotId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/snapshots",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Roll back to the snapshot",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "pm.collectionVariables.set('operationId', pm.response.json().operationId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"rollback\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/snapshots/{{snapshotId}}/actions",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Poll the rollback operation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-sends itself until 'state' settles, up to 60 attempts.",
+                  "const attempt = Number(pm.collectionVariables.get('pollAttempt') || 0) + 1;",
+                  "// An error response will never settle, so it ends the poll immediately. Without this a",
+                  "// mistyped id polls a 400 until the attempt cap, and a two-second bug takes four minutes",
+                  "// to report itself.",
+                  "const readable = pm.response.code >= 200 && pm.response.code < 300;",
+                  "const settled = readable && [\"succeeded\",\"failed\"].includes(pm.response.json().state);",
+                  "if (readable && !settled && attempt < 60) {",
+                  "  pm.collectionVariables.set('pollAttempt', attempt);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('pollAttempt', 0);",
+                  "  pm.test('settles within 60 attempts', () => pm.expect(settled).to.eql(true));",
+                  "}",
+                  "if (settled) {",
+                  "  pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "  pm.test('the rollback succeeded', () => pm.expect(pm.response.json().state).to.eql('succeeded'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations/{{operationId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Delete the snapshot",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "pm.collectionVariables.set('operationId', pm.response.json().operationId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/snapshots/{{snapshotId}}",
+            "description": "Deletes the snapshot, never the instance. This is the one delete in the tenant surface that actually destroys something, and its blast radius is one snapshot."
+          },
+          "response": []
+        },
+        {
+          "name": "Poll the snapshot deletion",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-sends itself until 'state' settles, up to 60 attempts.",
+                  "const attempt = Number(pm.collectionVariables.get('pollAttempt') || 0) + 1;",
+                  "// An error response will never settle, so it ends the poll immediately. Without this a",
+                  "// mistyped id polls a 400 until the attempt cap, and a two-second bug takes four minutes",
+                  "// to report itself.",
+                  "const readable = pm.response.code >= 200 && pm.response.code < 300;",
+                  "const settled = readable && [\"succeeded\",\"failed\"].includes(pm.response.json().state);",
+                  "if (readable && !settled && attempt < 60) {",
+                  "  pm.collectionVariables.set('pollAttempt', attempt);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('pollAttempt', 0);",
+                  "  pm.test('settles within 60 attempts', () => pm.expect(settled).to.eql(true));",
+                  "}",
+                  "if (settled) {",
+                  "  pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "  pm.test('the deletion succeeded', () => pm.expect(pm.response.json().state).to.eql('succeeded'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations/{{operationId}}",
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 Retention and purge",
+      "description": "`DELETE` on an instance does not delete it. It detaches access and retains the resource, and only an administrator can destroy what is left — after the retention window has expired. The refusal in the last request is the safety rule working, not a failure.",
+      "item": [
+        {
+          "name": "Retain (soft delete) the instance",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "pm.collectionVariables.set('operationId', pm.response.json().operationId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}",
+            "description": "The VM keeps existing. Access is detached, the address is quarantined rather than reissued, and a retention deadline is stamped from the policy."
+          },
+          "response": []
+        },
+        {
+          "name": "Poll the retention operation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Re-sends itself until 'state' settles, up to 60 attempts.",
+                  "const attempt = Number(pm.collectionVariables.get('pollAttempt') || 0) + 1;",
+                  "// An error response will never settle, so it ends the poll immediately. Without this a",
+                  "// mistyped id polls a 400 until the attempt cap, and a two-second bug takes four minutes",
+                  "// to report itself.",
+                  "const readable = pm.response.code >= 200 && pm.response.code < 300;",
+                  "const settled = readable && [\"succeeded\",\"failed\"].includes(pm.response.json().state);",
+                  "if (readable && !settled && attempt < 60) {",
+                  "  pm.collectionVariables.set('pollAttempt', attempt);",
+                  "  setTimeout(() => {}, 2000);",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.set('pollAttempt', 0);",
+                  "  pm.test('settles within 60 attempts', () => pm.expect(settled).to.eql(true));",
+                  "}",
+                  "if (settled) {",
+                  "  pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "  pm.test('the retention succeeded', () => pm.expect(pm.response.json().state).to.eql('succeeded'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/operations/{{operationId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Confirm the instance is retained, not gone",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const retained = pm.response.json();",
+                  "pm.test('is retained', () => pm.expect(retained.lifecycleState).to.eql('retained'));",
+                  "pm.test('reports when it stops being recoverable', () => pm.expect(retained.retentionDeadline).to.not.eql(null));",
+                  "pm.test('is not yet purge-eligible', () => pm.expect(retained.purgeEligible).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Purge is refused inside the retention window",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 409', () => pm.expect(pm.response.code).to.be.oneOf([409]));",
+                  "pm.test('is refused as busy, not accepted', () => pm.expect(pm.response.json().code).to.eql('INSTANCE_BUSY'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Postman collection run: proving the retention window is enforced.\",\n  \"confirmInstanceId\": \"{{instanceId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/instances/{{instanceId}}/purges",
+            "description": "The default policy retains for 168 hours, so a purge moments after a retain is refused. Making this succeed on purpose is a lab-only step documented in the operations manual; there is no API that shortens the window today."
+          },
+          "response": []
+        },
+        {
+          "name": "Purge refuses a mismatched confirmation",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 409 or 422', () => pm.expect(pm.response.code).to.be.oneOf([409,422]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Postman collection run: proving the confirmation guard is enforced.\",\n  \"confirmInstanceId\": \"{{absentInstanceId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/instances/{{instanceId}}/purges",
+            "description": "The caller must name the instance twice, in the path and in the body, and the two must agree. A purge is the one irreversible operation in the API, so the request has to be unambiguous about what it is destroying."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "07 Administration",
+      "description": "The administrative surface that is served today. Each requires `platform_administrator`; project membership grants none of it.",
+      "item": [
+        {
+          "name": "Get an operation as an administrator",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/operations/{{operationId}}",
+            "description": "The same operation the tenant route returns, without requiring the administrator to be a member of the project that owns it."
+          },
+          "response": []
+        },
+        {
+          "name": "List audit events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const audit = pm.response.json();",
+                  "pm.test('page metadata is present', () => pm.expect(audit).to.have.property('page'));",
+                  "pm.test('records the action that actually happened', () => pm.expect(audit.items.some((entry) => entry.action === 'retain_instance' && entry.outcome === 'succeeded')).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/audit-events?limit=10",
+            "description": "Every accepted command writes an audit entry in the same transaction that accepts it, so this list cannot disagree with what actually happened. The second assertion guards a real defect: every terminal entry was once labelled `create_instance` regardless of the capability that produced it, so the log claimed a VM had been built once per power change, resize, snapshot, and retention."
+          },
+          "response": []
+        },
+        {
+          "name": "List dead letters",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const items = pm.response.json().items;",
+                  "if (items.length > 0) { pm.collectionVariables.set('deadLetterEventId', items[0].eventId); }",
+                  "pm.test('page metadata is present', () => pm.expect(pm.response.json()).to.have.property('page'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/dead-letters?limit=10",
+            "description": "Empty on a healthy run. Raw poison-record bytes are never stored or returned here — the entry carries identifiers and a classification, not the payload that broke."
+          },
+          "response": []
+        },
+        {
+          "name": "Request reconciliation",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Postman collection run: observe and report drift, change nothing.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/instances/{{instanceId}}/reconciliations",
+            "description": "Reconciliation observes and reports. It never repairs by deleting or stopping anything; a disagreement it cannot explain becomes a manual review, not an action."
+          },
+          "response": []
+        },
+        {
+          "name": "Replay a dead letter",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));",
+                  "if (!pm.collectionVariables.get('deadLetterEventId')) {",
+                  "  // Nothing to act on. Skipping is the correct outcome, not a silent pass.",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 202 or 404', () => pm.expect(pm.response.code).to.be.oneOf([202,404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Postman collection run: authorised replay of a quarantined record.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/dead-letters/{{deadLetterEventId}}/replays",
+            "description": "Skipped when the previous request found no dead letters, which is the normal case. A replay is authorised in one transaction and admitted back only after a three-way check on generation, payload hash, and the outbox row that authorised it."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "08 Authorization and validation",
+      "description": "The refusals. Each of these is a rule the control plane is supposed to enforce, so each asserts the refusal rather than tolerating a range.",
+      "item": [
+        {
+          "name": "No token is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 401', () => pm.expect(pm.response.code).to.be.oneOf([401]));",
+                  "pm.test('names the missing authentication', () => pm.expect(pm.response.json().code).to.eql('AUTHENTICATION_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "A token for another project is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 403', () => pm.expect(pm.response.code).to.be.oneOf([403]));",
+                  "pm.test('names the project denial', () => pm.expect(pm.response.json().code).to.eql('PROJECT_ACCESS_DENIED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{foreignToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances",
+            "description": "The signature is valid and the role is right. Membership is what is missing, and it is checked in the application layer so REST and gRPC get the rule from one place."
+          },
+          "response": []
+        },
+        {
+          "name": "A tenant token cannot reach the admin surface",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 403', () => pm.expect(pm.response.code).to.be.oneOf([403]));",
+                  "pm.test('requires an administrator', () => pm.expect(pm.response.json().code).to.eql('ADMIN_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/audit-events",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "An unknown instance is a 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances/{{absentInstanceId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "A malformed create body is rejected",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 400 or 422', () => pm.expect(pm.response.code).to.be.oneOf([400,422]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageId\": \"ubuntu-24-04-cloud\",\n  \"hostname\": \"missing-required-fields\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances",
+            "description": "Missing `flavorId` and `networkId`. Rejected by the transport before any transaction opens, so nothing is written and no operation is created."
+          },
+          "response": []
+        },
+        {
+          "name": "A create without an Idempotency-Key is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 400 or 422', () => pm.expect(pm.response.code).to.be.oneOf([400,422]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tenantToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageId\": \"{{imageId}}\",\n  \"flavorId\": \"{{flavorId}}\",\n  \"networkId\": \"{{networkId}}\",\n  \"hostname\": \"no-idempotency-key\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/projects/{{projectId}}/instances",
+            "description": "The header is required on every mutating call. Without it a client retry after a timeout could not be distinguished from a second request, which is how duplicate VMs get built."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "09 Declared but not yet served",
+      "description": "These operations are in the OpenAPI document and in the generated clients, and the control-api has no route for them yet. They answer 404 today. They are kept in the collection deliberately: when a later phase implements one, this folder is where the change shows up, and until then the collection states the gap instead of hiding it. See the coverage table in the API examples document.",
+      "item": [
+        {
+          "name": "Upsert image",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ubuntu 24.04 Cloud\",\n  \"providerProfileId\": \"fake-lab\",\n  \"enabled\": true,\n  \"architecture\": \"x86_64\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/catalog/images/{{imageId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Upsert flavor",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Lab Small\",\n  \"cpuCount\": 2,\n  \"memoryMiB\": 4096,\n  \"minimumDiskGiB\": 32,\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/catalog/flavors/{{flavorId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Upsert network",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Lab primary\",\n  \"ipv4Cidr\": \"192.0.2.0/27\",\n  \"gateway\": \"192.0.2.1\",\n  \"dnsServers\": [\n    \"192.0.2.53\"\n  ],\n  \"exclusions\": [\n    \"192.0.2.2\"\n  ],\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/catalog/networks/{{networkId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List provider profiles",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/provider-profiles",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Create provider profile",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"fake-lab-2\",\n  \"providerType\": \"fake\",\n  \"endpoint\": \"fake://lab-2\",\n  \"clusterAlias\": \"fake-lab-2\",\n  \"computeTarget\": \"fake-node\",\n  \"imageSourceReference\": \"ubuntu-24-04-cloud\",\n  \"storageTarget\": \"fake-storage\",\n  \"networkAttachment\": \"lab-primary\",\n  \"resourceIdMinimum\": 920000,\n  \"resourceIdMaximum\": 920099,\n  \"networkId\": \"lab-primary\",\n  \"credentialReference\": \"test-only\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/provider-profiles",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get provider profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/provider-profiles/fake-lab",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update provider profile",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"computeTarget\": \"fake-node-2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/provider-profiles/fake-lab",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Validate provider profile",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/provider-profiles/fake-lab/actions/validate",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Activate provider profile",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/provider-profiles/fake-lab/actions/activate",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Disable provider profile",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Postman collection run: exercising the declared disable action.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/provider-profiles/fake-lab/actions/disable",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List manual reviews",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/manual-reviews",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get manual review",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/manual-reviews/{{absentInstanceId}}",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Resolve manual review",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resolution\": \"acknowledged\",\n  \"notes\": \"Postman collection run: exercising the declared resolution action.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/manual-reviews/{{absentInstanceId}}/resolutions",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get retention policy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              }
+            ],
+            "url": "{{gatewayUrl}}/v1/admin/retention-policy",
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update retention policy",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responds 404', () => pm.expect(pm.response.code).to.be.oneOf([404]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}"
+              },
+              {
+                "key": "Host",
+                "value": "{{gatewayHost}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"retentionHours\": 168,\n  \"leaseReleaseMode\": \"quarantine_until_purge\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{gatewayUrl}}/v1/admin/retention-policy",
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "idempotencyKey",
+      "value": ""
+    },
+    {
+      "key": "tenantToken",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
+      "value": ""
+    },
+    {
+      "key": "foreignToken",
+      "value": ""
+    },
+    {
+      "key": "instanceId",
+      "value": ""
+    },
+    {
+      "key": "operationId",
+      "value": ""
+    },
+    {
+      "key": "snapshotId",
+      "value": ""
+    },
+    {
+      "key": "statusUrl",
+      "value": ""
+    },
+    {
+      "key": "deadLetterEventId",
+      "value": ""
+    },
+    {
+      "key": "createKey",
+      "value": ""
+    },
+    {
+      "key": "hostname",
+      "value": "postman-demo-01"
+    },
+    {
+      "key": "snapshotName",
+      "value": "postman-snap-01"
+    },
+    {
+      "key": "pollAttempt",
+      "value": "0"
+    }
+  ]
+}

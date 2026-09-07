@@ -1,0 +1,165 @@
+# The Git repository Argo CD syncs from.
+#
+# **Why this exists.** Argo CD reconciles a cluster against a Git repository, so there has to be a
+# repository it can reach. This project's manifests live in a working tree on a workstation and are
+# not published anywhere the cluster can clone from, and publishing them to a public forge is a
+# decision that belongs to whoever owns the repository, not to a deployment script.
+#
+# So the cluster gets its own. This is a real Git repository served over HTTP: Argo CD clones it,
+# reads commits from it, and reports the revision it synced, exactly as it would from any remote.
+# The only difference is who hosts it.
+#
+# **How content gets in.** `tools/kubernetes/publish-gitops-repo.mjs` packs `deploy/kubernetes`
+# into a ConfigMap and rolls this Deployment, whose init container unpacks it and commits. That
+# tool is this setup's `git push`. Like a push, it is the step that makes a working-tree change
+# visible to the control loop, and until it runs, Argo CD is correctly reconciling the previous
+# revision.
+#
+# **On a cluster with a real remote**, delete this directory and point the `Application` objects
+# in `argocd/` at the remote instead. Nothing else changes: the manifests, the waves, and the sync
+# policies are identical either way.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: private-cloud-gitops
+  labels:
+    app.kubernetes.io/part-of: private-cloud-control-plane
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gitops-repo
+  namespace: private-cloud-gitops
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitops-repo
+  namespace: private-cloud-gitops
+  labels:
+    { app.kubernetes.io/name: gitops-repo, app.kubernetes.io/part-of: private-cloud-control-plane }
+spec:
+  selector: { app.kubernetes.io/name: gitops-repo }
+  ports:
+    - { name: git, port: 9418, targetPort: git }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitops-repo
+  namespace: private-cloud-gitops
+  labels:
+    { app.kubernetes.io/name: gitops-repo, app.kubernetes.io/part-of: private-cloud-control-plane }
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. Each publish rebuilds the repository from scratch, so two pods of
+  # this Deployment serve two *unrelated* histories. Behind one Service that is a repository whose
+  # answer to `git ls-remote` depends on which pod the connection landed on — and Argo CD resolving
+  # a revision from one pod and fetching it from the other reports a stale render as a successful
+  # sync. A second or two of unavailability during a publish is the correct trade.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: gitops-repo }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gitops-repo
+        app.kubernetes.io/part-of: private-cloud-control-plane
+    spec:
+      serviceAccountName: gitops-repo
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: build-repository
+          image: private-cloud/gitops-repo:phase6
+          imagePullPolicy: IfNotPresent
+          command: ['/bin/sh', '-ec']
+          args:
+            - |
+              # Unpack the published tree and commit it. The result is a normal bare repository
+              # with one commit per publish, which is what lets Argo CD report a real revision
+              # rather than a synthetic one.
+              rm -rf /srv/git/work /srv/git/control-plane.git
+              mkdir -p /srv/git/work
+              tar -xzf /publish/manifests.tar.gz -C /srv/git/work
+              cd /srv/git/work
+              git init --quiet --initial-branch=main
+              git config user.email gitops-repo@private-cloud.invalid
+              git config user.name 'Private Cloud GitOps Publisher'
+              # A marker the publisher can read back through the Git protocol. Without it, the
+              # only thing a client can prove is that *some* repository is answering; with it, the
+              # publisher waits until the repository being served is the one it just published.
+              printf '%s\n' "${PUBLISH_DIGEST:-unknown}" > .publish-digest
+              git add --all
+              git commit --quiet -m "Published ${PUBLISH_ID:-unknown}"
+              git clone --quiet --bare . /srv/git/control-plane.git
+              rm -rf /srv/git/work
+          env:
+            - name: PUBLISH_ID
+              valueFrom:
+                configMapKeyRef: { name: gitops-manifests, key: publish-id }
+            - name: PUBLISH_DIGEST
+              valueFrom:
+                configMapKeyRef: { name: gitops-manifests, key: manifests-sha256 }
+          volumeMounts:
+            - { name: repository, mountPath: /srv/git }
+            - { name: publish, mountPath: /publish, readOnly: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      containers:
+        - name: git-daemon
+          image: private-cloud/gitops-repo:phase6
+          imagePullPolicy: IfNotPresent
+          command:
+            - git
+            - daemon
+            - --base-path=/srv/git
+            - --export-all
+            - --reuseaddr
+            - --informative-errors
+            - --listen=0.0.0.0
+            - --port=9418
+          ports:
+            - { name: git, containerPort: 9418 }
+          # WHY the Git protocol rather than HTTP: Argo CD's repository server lists refs with
+          # go-git, which implements the smart transports only. A plain static HTTP server answers
+          # a dumb-HTTP clone perfectly well and fails go-git's `ls-remote` with "unexpected EOF",
+          # which reads as a corrupt repository rather than an unsupported transport. `git daemon`
+          # speaks the smart protocol in one process with no CGI host in front of it.
+          #
+          # It is read-only: `receive-pack` is disabled by default, so the only way content changes
+          # is a republish, which rebuilds the whole repository.
+          readinessProbe:
+            tcpSocket: { port: git }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: git }
+            periodSeconds: 15
+          volumeMounts:
+            - { name: repository, mountPath: /srv/git, readOnly: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 25m, memory: 48Mi }
+            limits: { cpu: 250m, memory: 192Mi }
+      volumes:
+        - name: repository
+          emptyDir: { sizeLimit: 64Mi }
+        - name: publish
+          configMap: { name: gitops-manifests }

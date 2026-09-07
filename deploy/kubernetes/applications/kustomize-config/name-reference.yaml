@@ -1,0 +1,21 @@
+# Teaches kustomize that a `Rollout` has a pod template.
+#
+# kustomize rewrites references to a generated ConfigMap only for kinds it knows about, and
+# `argoproj.io/Rollout` is not one of them. Without this file the generator produces
+# `control-plane-config-<hash>` and every Rollout keeps pointing at the un-suffixed name — which
+# resolves to nothing, so the pods fail to start with a missing-ConfigMap error that looks like a
+# typo rather than a missing transformer configuration.
+nameReference:
+  - kind: ConfigMap
+    version: v1
+    fieldSpecs:
+      - path: spec/template/spec/containers/envFrom/configMapRef/name
+        kind: Rollout
+      - path: spec/template/spec/containers/env/valueFrom/configMapKeyRef/name
+        kind: Rollout
+      - path: spec/template/spec/volumes/configMap/name
+        kind: Rollout
+      - path: spec/template/spec/initContainers/envFrom/configMapRef/name
+        kind: Rollout
+      - path: spec/template/spec/initContainers/env/valueFrom/configMapKeyRef/name
+        kind: Rollout

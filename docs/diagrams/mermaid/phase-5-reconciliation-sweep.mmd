@@ -1,0 +1,30 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+sequenceDiagram
+  autonumber
+  participant T as Sweep timer
+  participant S as ReconciliationStore
+  participant P as Provider (observe only)
+  participant D as classifyDrift
+  participant O as control.outbox
+  participant C as Control API projection
+
+  T->>S: claimStaleInstances(25, now - 5m)
+  Note over S: FOR UPDATE SKIP LOCKED, and last_reconciled_at<br/>stamped inside the claim so a parallel replica skips these.
+  S-->>T: Candidates with desired state
+
+  loop Each candidate
+    T->>P: ObserveInstance(resource, expected markers)
+    P-->>T: exists, power state, ownership, resources
+    T->>D: desired vs observed
+    D-->>T: classification + dangerous flag
+    T->>S: recordObservation(outcome)
+    alt Drift found
+      S->>O: drift.detected to reconciliation.events.v1
+      O->>C: Debezium then Kafka
+      C->>C: Record classification on the instance document
+    else No drift
+      Note over S: Instance updated, nothing published.<br/>A quiet sweep does not fill the topic with non-news.
+    end
+  end
+
+  Note over T,C: Nothing here corrects anything. The store has no method<br/>that destroys, shrinks, detaches, or overwrites (SAFE-029),<br/>and the client exposes exactly one RPC.

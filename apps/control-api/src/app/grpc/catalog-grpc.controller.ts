@@ -72,6 +72,7 @@ export class CatalogGrpcController extends AuthenticatedGrpcController {
         actor,
         requireField(request.context?.projectId, 'project_id'),
         request.page?.limit,
+        request.page?.cursor,
       );
       return { items: page.items.map(grpcImage), page: grpcPage(page) };
     });
@@ -88,6 +89,7 @@ export class CatalogGrpcController extends AuthenticatedGrpcController {
         actor,
         requireField(request.context?.projectId, 'project_id'),
         request.page?.limit,
+        request.page?.cursor,
       );
       return { items: page.items.map(grpcFlavor), page: grpcPage(page) };
     });
@@ -104,6 +106,7 @@ export class CatalogGrpcController extends AuthenticatedGrpcController {
         actor,
         requireField(request.context?.projectId, 'project_id'),
         request.page?.limit,
+        request.page?.cursor,
       );
       return { items: page.items.map(grpcNetwork), page: grpcPage(page) };
     });

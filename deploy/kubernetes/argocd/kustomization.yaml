@@ -1,0 +1,11 @@
+# The GitOps definition of the GitOps pipeline.
+#
+# `root-application.yaml` is deliberately absent from this list. It is the entry point, applied
+# once by `tools/kubernetes/bootstrap.mjs`; including it here would have the root application
+# manage itself, which Argo CD tolerates but which makes a broken root unrecoverable without
+# deleting it out from under its own finalizer.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - project.yaml
+  - applications.yaml

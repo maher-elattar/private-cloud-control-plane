@@ -1,0 +1,55 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+flowchart LR
+  A(["accepted"])
+
+  subgraph Create["create_instance"]
+    direction LR
+    c1["submitting_create"] --> c2["polling_create"] --> c3["configuring"]
+    c3 --> c4["polling_configuration"] --> c5["starting"] --> c6["polling_start"] --> c7["observing"]
+  end
+
+  subgraph Power["power_instance"]
+    direction LR
+    p1["submitting_power"] --> p2["polling_power"] --> p3["observing_power"]
+  end
+
+  subgraph Resize["resize_instance"]
+    direction LR
+    r1["submitting_resize"] --> r2["polling_resize"] --> r3["observing_resize"]
+  end
+
+  subgraph Snapshot["create / rollback / delete_snapshot"]
+    direction LR
+    s1["submitting_snapshot"] --> s2["polling_snapshot"] --> s3["observing_snapshot"]
+  end
+
+  subgraph Retention["retain_instance"]
+    direction LR
+    t1["submitting_retention"] --> t2["polling_retention"] --> t3["observing_retention"]
+  end
+
+  subgraph Purge["purge_instance"]
+    direction LR
+    g0["verifying_purge"] --> g1["submitting_purge"] --> g2["polling_purge"] --> g3["observing_purge"]
+  end
+
+  A --> c1
+  A --> p1
+  A --> r1
+  A --> s1
+  A --> t1
+  A --> g0
+
+  c7 --> Z(["completed"])
+  p3 --> Z
+  r3 --> Z
+  s3 --> Z
+  t3 --> Z
+  g3 --> Z
+
+  classDef mutation fill:#fecaca,stroke:#991b1b,color:#7f1d1d,stroke-width:2px
+  classDef guard fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a,stroke-width:2px
+  classDef terminal fill:#dcfce7,stroke:#15803d,color:#14532d
+  class c1,c3,c5,p1,r1,s1,t1,g1 mutation
+  class g0 guard
+  class A,Z terminal

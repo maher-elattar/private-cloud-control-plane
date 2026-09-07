@@ -19,14 +19,21 @@ import type { components } from '@private-cloud/contracts';
 import type {
   EventEnvelope,
   InstanceCreateRequestedV1,
+  InstancePowerRequestedV1,
+  InstanceResizeRequestedV1,
+  InstanceRetentionRequestedV1,
+  InstancePurgeRequestedV1,
   InstanceMutationCompletedV1,
   InstanceMutationFailedV1,
   ProvisioningDeadLetteredV1,
   ProvisioningReplayResolvedV1,
   ProvisioningReplayRequestedV1,
+  SnapshotCreateRequestedV1,
+  SnapshotDeleteRequestedV1,
+  SnapshotRollbackRequestedV1,
   WorkflowProgressedV1,
 } from '@private-cloud/contracts';
-import type { WorkflowStage } from './workflow-stage.js';
+import type { WorkflowAction, WorkflowStage } from './workflow-stage.js';
 import type { ApplicationTraceContext } from './telemetry.js';
 
 /*
@@ -52,8 +59,22 @@ export type InstanceView = components['schemas']['Instance'];
 export type OperationView = components['schemas']['Operation'];
 /** The `202 Accepted` body: what was accepted, and where to poll for its outcome. */
 export type AcceptedMutation = components['schemas']['MutationAccepted'];
+/** One snapshot, as published by the REST and gRPC contracts. */
+export type SnapshotView = components['schemas']['Snapshot'];
+/** Retention configuration, as published by the administrative REST API. */
+export type RetentionPolicyView = components['schemas']['RetentionPolicy'];
 /** Administrative dead-letter evidence returned by the REST API. */
 export type DeadLetterView = components['schemas']['DeadLetter'];
+/** One attributed audit fact, as published to administrators. */
+export type AuditEventView = components['schemas']['AuditEvent'];
+/**
+ * An operation enriched with the recovery metadata only an administrator may see.
+ *
+ * Superset of `OperationView`: it adds correlation, causation, trace, retry, checkpoint,
+ * dead-letter, and provider-task fields that are restricted-operational rather than tenant
+ * facing.
+ */
+export type AdministrativeOperationView = components['schemas']['AdministrativeOperation'];
 
 /** Durable broker coordinates used for inbox identity and operational evidence. */
 export interface MessageDeliveryIdentity {
@@ -112,6 +133,166 @@ export interface CreateInstanceCommand {
   readonly sshPublicKeys: readonly string[];
 }
 
+/** Optional narrowing applied to an administrative audit-event read. */
+export interface AuditEventFilter {
+  /** Restricts to facts recorded against one project. */
+  readonly projectId?: string;
+  /** Restricts to facts recorded against one operation. */
+  readonly operationId?: string;
+}
+
+/**
+ * A validated power request, ready to be committed as durable intent.
+ *
+ * Shares the mutation-identity fields with {@link CreateInstanceCommand} but names an existing
+ * instance rather than describing a new one, so the store guards it with the per-instance
+ * concurrency lock instead of a quota and address reservation.
+ */
+export interface PowerInstanceCommand {
+  readonly actor: Actor;
+  readonly projectId: string;
+  /** The instance to act on. Must already exist and be idle. */
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  /** The requested transition, already narrowed by the domain validator. */
+  readonly action: 'start' | 'shutdown' | 'stop' | 'reboot';
+}
+
+/**
+ * A validated resize request, ready to be committed as durable intent.
+ *
+ * Names a flavor rather than raw sizing: SAFE-027 requires sizing to come from server-side catalog
+ * data, not from caller-supplied numbers.
+ */
+export interface ResizeInstanceCommand {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  /** Catalog flavor defining the target sizing. */
+  readonly flavorId: string;
+  /**
+   * Requested disk size in GiB, independent of the flavor.
+   *
+   * Absent means "leave the disk as it is". Present and smaller than the current size is refused;
+   * the flavor's minimum remains a floor either way.
+   */
+  readonly diskGiB?: number;
+}
+
+/**
+ * What happens to an instance's IPv4 address when its lifecycle ends.
+ *
+ * `quarantine_until_purge` keeps the address reserved while the retained VM still exists, so it
+ * cannot be handed to a new instance while an old one is still answering on it.
+ * `release_on_retain` returns it to the pool immediately, which is only safe when the provider
+ * resource's network configuration has genuinely been detached.
+ */
+export type LeaseReleaseMode = 'quarantine_until_purge' | 'release_on_retain';
+
+/** A validated request to create a snapshot of an instance. */
+export interface CreateSnapshotCommand {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  /** Caller-supplied name, already validated against the reserved and malformed sets. */
+  readonly name: string;
+  readonly description?: string;
+}
+
+/** A validated request to roll back to, or delete, an existing snapshot. */
+export interface SnapshotActionCommand {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly instanceId: string;
+  readonly snapshotId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+}
+
+/** A validated request to soft-delete an instance. */
+export interface RetainInstanceCommand {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+}
+
+/** A validated administrator request to destroy a retained instance. */
+export interface PurgeInstanceCommand {
+  readonly actor: Actor;
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  /** Free-text justification, retained in the audit trail. */
+  readonly reason: string;
+  /** The instance id repeated by the caller, guarding against a mis-pasted identifier. */
+  readonly confirmInstanceId: string;
+}
+
+/** One instance a reconciliation sweep should observe, with the desired state to compare. */
+export interface ReconciliationCandidate {
+  readonly instanceId: string;
+  readonly projectId: string;
+  readonly providerProfileId: string;
+  readonly createOperationId: string;
+  readonly providerResourceId: string;
+  readonly lifecycleState: string;
+  readonly desiredPowerState: string;
+  readonly desiredCpuCount: number;
+  readonly desiredMemoryMiB: number;
+  readonly desiredDiskGiB: number;
+}
+
+/** What a reconciliation observed and concluded about one instance. */
+export interface ReconciliationOutcome {
+  readonly instanceId: string;
+  readonly projectId: string;
+  readonly drift: string;
+  readonly dangerous: boolean;
+  readonly exists: boolean;
+  readonly powerState: string;
+  readonly markerMatch: boolean;
+  readonly observedAt: Date;
+}
+
+/**
+ * Persistence for the reconciler.
+ *
+ * Deliberately narrow, and deliberately incapable of destruction. SAFE-029 forbids reconciliation
+ * from destroying, shrinking, detaching, or overwriting a provider resource, and the port a
+ * reconciler is given should make that impossible rather than merely discouraged: there is no
+ * method here that removes anything.
+ */
+export interface ReconciliationStore {
+  /**
+   * Claims the instances least recently reconciled.
+   *
+   * @param limit How many to take in one sweep, bounding both provider load and transaction size.
+   * @param staleAfter Only instances not reconciled within this window are returned.
+   */
+  claimStaleInstances(limit: number, staleAfter: Date): Promise<readonly ReconciliationCandidate[]>;
+  /** Records what a sweep observed, and publishes the drift finding. */
+  recordObservation(outcome: ReconciliationOutcome): Promise<void>;
+}
+
 /** Validated administrator request to replay one governed dead letter. */
 export interface ReplayDeadLetterCommand {
   readonly actor: Actor;
@@ -124,12 +305,25 @@ export interface ReplayDeadLetterCommand {
 }
 
 /**
- * One page of results.
+ * A request for one page of results.
  *
- * `nextCursor` is always `null` in Phase 3 — the catalog and per-project instance counts are
- * bounded by quota, so cursor pagination is not yet needed. The field is present because the
- * REST contract publishes it and clients should be written against it from the start.
+ * PATTERN — Keyset (seek) pagination. The cursor names the last row of the previous page, not
+ * an offset, so a projection updated between two requests cannot make the caller skip or
+ * repeat rows. For these tables that is the normal case, not an edge case.
  */
+export interface PageRequest {
+  /** Clamped page size; the store must never return more than this many rows. */
+  readonly limit: number;
+  /**
+   * Opaque continuation token from a previous `page.nextCursor`.
+   *
+   * Absent on the first page. The store owns its encoding, so the application layer passes it
+   * through without inspecting it.
+   */
+  readonly cursor?: string;
+}
+
+/** One page of read-model rows plus the token needed to continue. */
 export interface Page<T> {
   /** The rows on this page. */
   readonly items: readonly T[];
@@ -166,8 +360,122 @@ export interface ControlPlaneStore {
    *   `PROFILE_DISABLED`, `QUOTA_EXCEEDED`, or `VALIDATION_FAILED`.
    */
   acceptCreate(command: CreateInstanceCommand, requestHash: string): Promise<AcceptedMutation>;
+  /**
+   * Commits a power request as durable intent, or replays a previous identical one.
+   *
+   * Unlike {@link ControlPlaneStore.acceptCreate}, this takes the per-instance concurrency lock:
+   * the instance already exists, so a second concurrent request must be refused with
+   * `INSTANCE_BUSY` rather than queued behind the first.
+   *
+   * @throws DomainError `INSTANCE_NOT_FOUND`, `INSTANCE_BUSY`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  acceptPowerAction(command: PowerInstanceCommand, requestHash: string): Promise<AcceptedMutation>;
+  /**
+   * Commits a resize as durable intent, or replays a previous identical one.
+   *
+   * Quota is checked against the change the resize makes, not its absolute target, because the
+   * instance's current sizing is already counted in the project total.
+   *
+   * @throws DomainError `INSTANCE_NOT_FOUND`, `INSTANCE_BUSY`, `VALIDATION_FAILED`,
+   *   `DISK_SHRINK_FORBIDDEN`, `QUOTA_EXCEEDED`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  acceptResize(command: ResizeInstanceCommand, requestHash: string): Promise<AcceptedMutation>;
+  /**
+   * Moves an instance's IPv4 lease out of `active`.
+   *
+   * Idempotent: a lease already in the requested state is left alone, so a redelivered retention
+   * or purge command cannot double-release an address.
+   *
+   * @param instanceId The instance whose lease is ending.
+   * @param mode Whether the address is held until purge or returned to the pool now.
+   * @returns The lease's resulting state, or `null` when the instance never held one.
+   */
+  releaseIpv4Lease(
+    instanceId: string,
+    mode: LeaseReleaseMode,
+  ): Promise<'quarantined' | 'released' | null>;
+  /** Reads the configured retention policy, which supplies the default release mode. */
+  getRetentionPolicy(): Promise<RetentionPolicyView>;
+  /**
+   * Commits a snapshot creation as durable intent, or replays a previous identical one.
+   *
+   * @throws DomainError `INSTANCE_NOT_FOUND`, `INSTANCE_BUSY`, `QUOTA_EXCEEDED`,
+   *   `VALIDATION_FAILED` for a duplicate name on the instance, or `IDEMPOTENCY_CONFLICT`.
+   */
+  acceptSnapshotCreate(
+    command: CreateSnapshotCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation>;
+  /**
+   * Commits a rollback or delete of an existing snapshot.
+   *
+   * @param action Which of the two destructive snapshot actions to accept.
+   * @throws DomainError `INSTANCE_NOT_FOUND`, `INSTANCE_BUSY`, `SNAPSHOT_NOT_FOUND`,
+   *   `SNAPSHOT_OWNERSHIP_MISMATCH`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  acceptSnapshotAction(
+    action: 'rollback_snapshot' | 'delete_snapshot',
+    command: SnapshotActionCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation>;
+  /**
+   * Commits a soft deletion as durable intent, or replays a previous identical one.
+   *
+   * Reads the retention policy inside the transaction, so the deadline and lease-release mode
+   * recorded on the command are the ones in force at acceptance rather than whatever they become
+   * later.
+   *
+   * @throws DomainError `INSTANCE_NOT_FOUND`, `INSTANCE_BUSY`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  acceptRetention(command: RetainInstanceCommand, requestHash: string): Promise<AcceptedMutation>;
+  /**
+   * Commits an administrative purge as durable intent.
+   *
+   * Enforces the database half of SAFE-006 plus the retention deadline; the live provider
+   * ownership half is proven by the workflow immediately before it destroys anything.
+   *
+   * Not project-scoped: an administrator purges across projects, and the authorization is the
+   * administrator role rather than membership.
+   *
+   * @throws DomainError `INSTANCE_NOT_FOUND`, `VALIDATION_FAILED` when the confirmation does not
+   *   match, `INSTANCE_BUSY` when the instance is not retained or is already working, or
+   *   `IDEMPOTENCY_CONFLICT`.
+   */
+  acceptPurge(command: PurgeInstanceCommand, requestHash: string): Promise<AcceptedMutation>;
+  /**
+   * Marks an instance for reconciliation on the next sweep.
+   *
+   * WHY this does not run an observation itself: reconciliation is a sweep with its own provider
+   * budget and its own non-destructive port. Letting an administrative request trigger an
+   * immediate provider call would put an unbounded, un-batched load behind an HTTP handler.
+   *
+   * @returns `true` when the instance was marked, `false` when it does not exist.
+   */
+  requestReconciliation(instanceId: string): Promise<boolean>;
+  /** Lists an instance's snapshots from the read projection. */
+  listSnapshots(
+    projectId: string,
+    instanceId: string,
+    page: PageRequest,
+  ): Promise<Page<SnapshotView>>;
   /** Lists projected dead-letter evidence for administrators. */
-  listDeadLetters(limit: number): Promise<Page<DeadLetterView>>;
+  listDeadLetters(page: PageRequest): Promise<Page<DeadLetterView>>;
+  /**
+   * Lists attributed audit facts, most recent first.
+   *
+   * The audit trail is append-only and administrator-scoped; there is no project-membership
+   * filter because an administrator reads across projects by design. Narrowing is the caller's
+   * choice, not an access control.
+   */
+  listAuditEvents(filter: AuditEventFilter, page: PageRequest): Promise<Page<AuditEventView>>;
+  /**
+   * Reads one operation with its recovery metadata, across every project, or `null`.
+   *
+   * Distinct from `getOperation`, which is project-scoped and tenant-facing. An administrator
+   * authorizing a replay is frequently not a member of the affected project, so a
+   * project-scoped read would make the `statusUrl` of their own action unreachable.
+   */
+  getAdministrativeOperation(operationId: string): Promise<AdministrativeOperationView | null>;
   /** Reads the failed trace carrier used only to link a new administrative replay trace. */
   getDeadLetterTraceContext(originalEventId: string): Promise<ApplicationTraceContext | null>;
   /** Atomically records replay intent and its outbox command. */
@@ -180,19 +488,19 @@ export interface ControlPlaneStore {
   /** Reads quota limits with freshly measured usage, or `null` when the project has none. */
   getQuota(projectId: string): Promise<QuotaView | null>;
   /** Lists enabled catalog images. Reads `control.*` directly — catalog data is static. */
-  listImages(projectId: string, limit: number): Promise<Page<ImageView>>;
+  listImages(projectId: string, page: PageRequest): Promise<Page<ImageView>>;
   /** Lists enabled catalog flavors. */
-  listFlavors(projectId: string, limit: number): Promise<Page<FlavorView>>;
+  listFlavors(projectId: string, page: PageRequest): Promise<Page<FlavorView>>;
   /** Lists enabled catalog networks. */
-  listNetworks(projectId: string, limit: number): Promise<Page<NetworkView>>;
+  listNetworks(projectId: string, page: PageRequest): Promise<Page<NetworkView>>;
   /** Reads one instance from the read projection, or `null`. */
   getInstance(projectId: string, instanceId: string): Promise<InstanceView | null>;
   /** Lists instances from the read projection, most recently updated first. */
-  listInstances(projectId: string, limit: number): Promise<Page<InstanceView>>;
+  listInstances(projectId: string, page: PageRequest): Promise<Page<InstanceView>>;
   /** Reads one operation from the read projection, or `null`. */
   getOperation(projectId: string, operationId: string): Promise<OperationView | null>;
   /** Lists operations from the read projection, most recently updated first. */
-  listOperations(projectId: string, limit: number): Promise<Page<OperationView>>;
+  listOperations(projectId: string, page: PageRequest): Promise<Page<OperationView>>;
 }
 
 /**
@@ -201,9 +509,39 @@ export interface ControlPlaneStore {
  * Everything needed to execute exactly one transition. The worker must not cache this across
  * transitions — after a checkpoint the lease is released and the state must be re-claimed.
  */
-export interface ClaimedCreateWorkflow {
+/**
+ * Any command that can admit a workflow.
+ *
+ * The union grows with each capability. `action` on the claim is the discriminator, not the
+ * payload's shape, because the dispatcher must route before it narrows.
+ */
+export type LifecycleCommand =
+  | InstanceCreateRequestedV1
+  | InstancePowerRequestedV1
+  | InstanceResizeRequestedV1
+  | SnapshotCreateRequestedV1
+  | SnapshotRollbackRequestedV1
+  | SnapshotDeleteRequestedV1
+  | InstanceRetentionRequestedV1
+  | InstancePurgeRequestedV1;
+
+/**
+ * Everything needed to execute exactly one transition, handed over by a successful claim.
+ *
+ * The worker must not cache this across transitions — after a checkpoint the lease is released
+ * and the state has to be re-claimed, with a fresh fencing token.
+ */
+export interface ClaimedWorkflow<TCommand extends LifecycleCommand = LifecycleCommand> {
+  /**
+   * Which capability this workflow executes.
+   *
+   * Carried on the claim rather than derived from `command.schemaName` so the dispatcher can route
+   * before narrowing the payload, and so a workflow whose action this build does not implement
+   * fails at the claim instead of part-way through execution.
+   */
+  readonly action: WorkflowAction;
   /** The original accepted command, replayed verbatim from the outbox. */
-  readonly command: InstanceCreateRequestedV1;
+  readonly command: TCommand;
   /** Latest durable W3C parent for the next short-lived workflow stage span. */
   readonly traceContext: InstanceCreateRequestedV1['traceContext'];
   /** Persisted position in the state machine — where to resume. */
@@ -227,6 +565,32 @@ export interface ClaimedCreateWorkflow {
   readonly providerTaskReference?: string;
 }
 
+/**
+ * Why a physical command delivery failed its durable authorization check.
+ *
+ * These are distinct operator situations, not severities, and each one names a different
+ * recovery. Collapsing them loses the only signal that separates a forged redelivery from a
+ * legitimate command that arrived against state which has since moved on.
+ */
+export type CommandRejectionCode =
+  /** A receipt already exists for this generation carrying a different canonical payload. */
+  | 'REPLAY_COMMAND_IDENTITY_CONFLICT'
+  /** No live authorization row matches this command's hash and physical outbox identity. */
+  | 'REPLAY_COMMAND_UNAUTHORIZED'
+  /** Authority matched, but the target workflow is no longer in a state this replay can reopen. */
+  | 'REPLAY_COMMAND_STATE_CONFLICT';
+
+/**
+ * Outcome of admitting one physical command delivery.
+ *
+ * A rejection carries its reason so the consumer can attribute the quarantine truthfully
+ * instead of guessing a single hardcoded cause.
+ */
+export type CommandAdmission =
+  | { readonly outcome: 'accepted' }
+  | { readonly outcome: 'duplicate' }
+  | { readonly outcome: 'rejected'; readonly failureCode: CommandRejectionCode };
+
 /** Any event the workflow may emit to the workflow outbox. */
 export type WorkflowEvent =
   | WorkflowProgressedV1
@@ -247,10 +611,10 @@ export type WorkflowEvent =
  */
 export interface WorkflowStore {
   /** Atomically records a Kafka inbox receipt and creates the workflow on first delivery. */
-  admitCreateCommand(
-    command: InstanceCreateRequestedV1,
+  admitCommand(
+    command: LifecycleCommand,
     delivery: MessageDeliveryIdentity,
-  ): Promise<'accepted' | 'duplicate' | 'rejected'>;
+  ): Promise<CommandAdmission>;
   /** Authorizes a replay and atomically writes its restored command to the owner outbox. */
   admitReplayRequest(
     request: ProvisioningReplayRequestedV1,
@@ -284,7 +648,11 @@ export interface WorkflowStore {
    *
    * @throws Error if `workerId` is empty or `leaseSeconds` is outside 5–300.
    */
-  claimNextCreate(workerId: string, leaseSeconds: number): Promise<ClaimedCreateWorkflow | null>;
+  claimNext(
+    workerId: string,
+    leaseSeconds: number,
+    action: WorkflowAction,
+  ): Promise<ClaimedWorkflow | null>;
   /**
    * Advances the workflow to a new stage and records the event that caused it.
    *
@@ -347,7 +715,7 @@ export interface WorkflowStore {
  * Applies workflow events to the read model.
  *
  * PATTERN — Read projection (CQRS). Implemented by `PostgresProjectionStore` and driven by
- * `ProjectionWorker` in `apps/control-api`.
+ * `ProjectionConsumer` in `apps/control-api`, which reads the Kafka event and DLQ topics.
  *
  * @see docs/architecture/glossary.md#read-projection-cqrs
  */
@@ -362,6 +730,17 @@ export interface ProjectionStore {
     event: ProvisioningDeadLetteredV1,
     delivery: MessageDeliveryIdentity,
   ): Promise<'applied' | 'duplicate'>;
+  /**
+   * Projects a reconciliation drift finding for administrator readback.
+   *
+   * Records the classification on the instance document only. It never changes desired state or
+   * lifecycle: SAFE-029 makes reconciliation a reporter, and a projection that acted on a finding
+   * would be the correction that rule forbids.
+   */
+  applyDriftEvent(
+    event: EventEnvelope & { readonly data?: unknown },
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'applied' | 'duplicate'>;
   /** Persists a projection poison-record hash and coordinates without retaining raw bytes. */
   quarantineRecord(input: {
     readonly delivery: MessageDeliveryIdentity;
@@ -371,11 +750,4 @@ export interface ProjectionStore {
     readonly failureCode: string;
     readonly safeMessage: string;
   }): Promise<'quarantined' | 'duplicate'>;
-  /**
-   * Applies the oldest unconsumed workflow event, respecting per-aggregate ordering.
-   *
-   * @returns `true` if an event was applied — the caller should poll again immediately —
-   *   or `false` when the queue is drained and the caller should back off.
-   */
-  applyNextWorkflowEvent(): Promise<boolean>;
 }

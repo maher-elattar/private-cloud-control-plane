@@ -22,10 +22,21 @@ import { randomUUID } from 'node:crypto';
 import {
   NOOP_APPLICATION_TELEMETRY,
   isInstanceCreateRequestedV1,
+  isInstancePowerRequestedV1,
+  isInstancePurgeRequestedV1,
+  isInstanceResizeRequestedV1,
+  isInstanceRetentionRequestedV1,
   isProvisioningReplayRequestedV1,
+  isSnapshotActionRequestedV1,
+  isSnapshotCreateRequestedV1,
+  toWorkflowAction,
+  type WorkflowAction,
   toWorkflowStage,
-  type ClaimedCreateWorkflow,
+  type ClaimedWorkflow,
   type ApplicationTelemetry,
+  type CommandAdmission,
+  type CommandRejectionCode,
+  type LifecycleCommand,
   type MessageDeliveryIdentity,
   type WorkflowEvent,
   type WorkflowStore,
@@ -47,10 +58,96 @@ import { auditRecordedEvent } from './audit-event.js';
 /** Identifies this consumer in `workflow.command_receipts`. */
 const CONSUMER_NAME = 'provisioning-orchestrator.v1';
 
+/**
+ * Maps a command's schema onto the capability that executes it.
+ *
+ * Derived from `schemaName` at admission and then stored, so the dispatcher never has to reach
+ * back into the payload and a database CHECK constraint can guard the result.
+ */
+function workflowActionForSchema(schemaName: string): WorkflowAction | null {
+  switch (schemaName) {
+    case 'instance.create.requested':
+      return 'create_instance';
+    case 'instance.power.requested':
+      return 'power_instance';
+    case 'instance.resize.requested':
+      return 'resize_instance';
+    case 'snapshot.create.requested':
+      return 'create_snapshot';
+    case 'snapshot.rollback.requested':
+      return 'rollback_snapshot';
+    case 'snapshot.delete.requested':
+      return 'delete_snapshot';
+    case 'instance.retention.requested':
+      return 'retain_instance';
+    case 'instance.purge.requested':
+      return 'purge_instance';
+    default:
+      return null;
+  }
+}
+
+/** Resolves the action for a command whose schema admission has already validated. */
+function workflowActionOf(command: LifecycleCommand): string {
+  const action = workflowActionForSchema(command.schemaName);
+  if (!action) {
+    // Admission validates the schema before this point, so reaching here means the union and
+    // this map have drifted apart.
+    throw new Error('No workflow action is registered for this command schema.');
+  }
+  return action;
+}
+
+/**
+ * Operator-facing text for each rejected physical command, bounded and free of payload detail.
+ *
+ * WHY: the quarantine row is the only surviving trace of a rejected delivery — the payload is
+ * never retained — so the message has to carry the distinction between a forged redelivery and
+ * a legitimate one that lost a race, without leaking what the record contained.
+ */
+const REPLAY_REJECTION_MESSAGES: Readonly<Record<CommandRejectionCode, string>> = {
+  REPLAY_COMMAND_IDENTITY_CONFLICT:
+    'A receipt for this replay generation already exists with a different canonical payload.',
+  REPLAY_COMMAND_UNAUTHORIZED: 'The replay command did not match a durable replay authorization.',
+  REPLAY_COMMAND_STATE_CONFLICT:
+    'The replay was authorized, but its target workflow is no longer in a reopenable state.',
+};
+
 /** Shortest lease a caller may request. Below this, normal provider latency outlives it. */
 const MINIMUM_LEASE_SECONDS = 5;
 /** Longest lease a caller may request. Above this, a dead worker blocks an instance too long. */
 const MAXIMUM_LEASE_SECONDS = 300;
+
+/**
+ * The validator that owns each capability's stored command payload.
+ *
+ * WHY a table keyed by action rather than a single create check: every capability persists a
+ * different command shape, and validating all of them against the create contract rejects every
+ * non-create workflow at the moment it is claimed. That failure is not silent — the claim throws
+ * and the worker retries forever — but it is invisible from the API, where the operation simply
+ * stays `accepted` and never progresses.
+ *
+ * `Record<WorkflowAction, …>` is total on purpose: adding a capability to `WORKFLOW_ACTIONS`
+ * without teaching this table how to read its command is a compile error rather than a workflow
+ * that cannot be claimed.
+ */
+const COMMAND_VALIDATORS: Record<
+  WorkflowAction,
+  (command: EventEnvelope & { readonly data?: unknown }) => boolean
+> = {
+  create_instance: isInstanceCreateRequestedV1,
+  power_instance: isInstancePowerRequestedV1,
+  resize_instance: isInstanceResizeRequestedV1,
+  create_snapshot: isSnapshotCreateRequestedV1,
+  rollback_snapshot: (command) =>
+    isSnapshotActionRequestedV1(command, 'snapshot.rollback.requested'),
+  delete_snapshot: (command) => isSnapshotActionRequestedV1(command, 'snapshot.delete.requested'),
+  retain_instance: isInstanceRetentionRequestedV1,
+  purge_instance: isInstancePurgeRequestedV1,
+  // Reconciliation observes; it never persists a workflow command. A row that claims to be one was
+  // not written by any code path in this build, so refusing it is the only safe reading.
+  reconcile_instance: () => false,
+};
 
 /**
  * Validates and narrows a command replayed from the outbox.
@@ -60,11 +157,19 @@ const MAXIMUM_LEASE_SECONDS = 300;
  * cheaper than discovering a missing field midway through provisioning, when a VM may already
  * exist.
  *
+ * The action decides which contract applies, and it comes from the workflow row rather than from
+ * the payload's own `schemaName`. A payload that disagrees with the action its row was admitted
+ * under is exactly the corruption this check exists to catch, so letting the payload nominate its
+ * own validator would defeat it.
+ *
  * Returns `null` while the current deployment does not support the stored command contract.
  */
-function createCommand(value: unknown): InstanceCreateRequestedV1 | null {
+function lifecycleCommand(value: unknown, action: WorkflowAction): LifecycleCommand | null {
   const command = parseJsonColumn<EventEnvelope & { readonly data?: unknown }>(value);
-  return isInstanceCreateRequestedV1(command) ? command : null;
+  // Narrowed by the validator above, which checks every field the contract requires. Only the
+  // create guard is written as a type predicate, so the union is asserted once, here, after the
+  // matching validator has accepted the payload.
+  return COMMAND_VALIDATORS[action](command) ? (command as unknown as LifecycleCommand) : null;
 }
 
 /** Validates the attributed request retained until its authorized command is broker-delivered. */
@@ -78,6 +183,8 @@ interface WorkflowRow {
   readonly operation_id: string;
   readonly event_id: string;
   readonly instance_id: string;
+  /** The capability this workflow executes, decided at admission and stored, never re-derived. */
+  readonly action: string;
   readonly command: unknown;
   readonly stage: string;
   readonly attempt: number;
@@ -106,17 +213,17 @@ export class PostgresWorkflowStore implements WorkflowStore {
   ) {}
 
   /** Records the Kafka delivery and creates a resumable workflow in one transaction. */
-  public admitCreateCommand(
-    command: InstanceCreateRequestedV1,
+  public admitCommand(
+    command: LifecycleCommand,
     delivery: MessageDeliveryIdentity,
-  ): Promise<'accepted' | 'duplicate' | 'rejected'> {
-    return this.db
-      .transaction()
-      .execute((tx) =>
-        delivery.replayGeneration === 0
-          ? this.admitCommand(tx, command, delivery)
-          : this.admitAuthorizedReplayCommand(tx, command, delivery),
-      );
+  ): Promise<CommandAdmission> {
+    return this.db.transaction().execute((tx) =>
+      delivery.replayGeneration === 0
+        ? this.admitOriginalDelivery(tx, command, delivery)
+        : // Governed replay currently restores create commands only, because only create can
+          // reach the retry-exhaustion dead letter that authorises a replay.
+          this.admitAuthorizedReplayCommand(tx, command as InstanceCreateRequestedV1, delivery),
+    );
   }
 
   /** Authorizes a replay and publishes the restored command through the transactional outbox. */
@@ -135,7 +242,17 @@ export class PostgresWorkflowStore implements WorkflowStore {
         .where('original_event_id', '=', request.data.originalEventId)
         .forUpdate()
         .executeTakeFirst();
-      const original = deadLetter ? createCommand(deadLetter.original_payload) : null;
+      // The action comes from the dead-letter row's own `original_schema_name`, recorded when the
+      // record was quarantined, rather than from the payload it holds. A replay must re-admit the
+      // command it actually was; letting the stored payload nominate its own contract would let a
+      // tampered row be validated against whichever contract it claims to satisfy.
+      const originalAction = deadLetter
+        ? workflowActionForSchema(deadLetter.original_schema_name)
+        : null;
+      const original =
+        deadLetter && originalAction
+          ? lifecycleCommand(deadLetter.original_payload, originalAction)
+          : null;
       if (!deadLetter || !deadLetter.replay_allowed || deadLetter.status !== 'open' || !original) {
         await this.persistReplayRequest(tx, request, 'rejected', now);
         await this.writeReplayResolution(
@@ -152,7 +269,9 @@ export class PostgresWorkflowStore implements WorkflowStore {
       }
 
       const replayGeneration = deadLetter.replay_generation + 1;
-      const replayed: InstanceCreateRequestedV1 = {
+      // Typed as the union, not as a create: a dead letter may hold any capability's command, and
+      // the replay re-admits the one that was quarantined rather than converting it.
+      const replayed: LifecycleCommand = {
         ...original,
         correlationId: request.correlationId,
         causationId: request.eventId,
@@ -253,12 +372,13 @@ export class PostgresWorkflowStore implements WorkflowStore {
    * unaware it lost the lease.
    *
    * @returns The claim, or `null` when nothing is ready or the lease could not be taken.
-   * @see WorkflowStore.claimNextCreate for the caller's obligations.
+   * @see WorkflowStore.claimNext for the caller's obligations.
    */
-  public claimNextCreate(
+  public claimNext(
     workerId: string,
     leaseSeconds: number,
-  ): Promise<ClaimedCreateWorkflow | null> {
+    action: WorkflowAction,
+  ): Promise<ClaimedWorkflow | null> {
     if (
       !workerId ||
       !Number.isInteger(leaseSeconds) ||
@@ -270,7 +390,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
     return this.db.transaction().execute(async (tx) => {
       // In-flight work first, so a backlog of new commands cannot starve workflows that have
       // already started — and already have a VM part-built on the provider.
-      const workflow = await this.readyWorkflow(tx, workerId);
+      const workflow = await this.readyWorkflow(tx, workerId, action);
       if (!workflow) return null;
 
       const lease = await sql<{ fencing_token: string }>`
@@ -305,14 +425,22 @@ export class PostgresWorkflowStore implements WorkflowStore {
         .where('operation_id', '=', workflow.operation_id)
         .returningAll()
         .executeTakeFirstOrThrow();
-      const command = createCommand(claimed.command);
+      // Narrowed before the payload is read: an action this build does not implement must fail the
+      // claim outright, never reach `execute` and run the wrong provider calls against a real VM.
+      // Read back from the claimed row rather than reusing the `action` argument, so a row that
+      // somehow carries a different action than the one queried for is rejected instead of executed.
+      const claimedAction = toWorkflowAction(claimed.action);
+      const command = lifecycleCommand(claimed.command, claimedAction);
       if (!command) {
         // Workflow rows are admitted only after validation. Reaching this branch means stored
         // state was corrupted or written by an incompatible deployment, so no provider call is safe.
-        throw new Error('The persisted create workflow is not supported by this deployment.');
+        throw new Error(
+          `The persisted ${claimedAction} workflow command is not supported by this deployment.`,
+        );
       }
 
       return {
+        action: claimedAction,
         command,
         traceContext: parseJsonColumn<InstanceCreateRequestedV1['traceContext']>(
           claimed.trace_context,
@@ -384,7 +512,10 @@ export class PostgresWorkflowStore implements WorkflowStore {
   ): Promise<void> {
     return this.db.transaction().execute(async (tx) => {
       const workflow = await this.assertLease(tx, input);
-      const command = createCommand(workflow.command);
+      // Validated against the action the row was admitted under, for the same reason the claim is:
+      // a retry-exhausted resize must be able to reach the governed dead letter, and checking it
+      // against the create contract would strand it in the retry loop it is trying to leave.
+      const command = lifecycleCommand(workflow.command, toWorkflowAction(workflow.action));
       if (!command) throw new Error('Cannot dead-letter an invalid persisted workflow command.');
       const now = new Date();
       const failure = input.event.data.failure;
@@ -473,10 +604,14 @@ export class PostgresWorkflowStore implements WorkflowStore {
         .where('replay_generation', '=', workflow.replay_generation)
         .executeTakeFirstOrThrow();
       await this.writeEvent(tx, input.event);
+      // The workflow's own action, not a hardcoded one. Every capability terminates through this
+      // method, so a fixed `create_instance` made the audit trail claim a VM had been created once
+      // per power change, resize, snapshot, rollback, snapshot deletion, and retention — an audit
+      // log that describes actions that did not happen is worse than one that is merely incomplete.
       await this.writeServiceAudit(
         tx,
         input.event,
-        'create_instance',
+        workflow.action,
         input.status === 'succeeded' ? 'succeeded' : 'failed',
         now,
       );
@@ -492,12 +627,17 @@ export class PostgresWorkflowStore implements WorkflowStore {
    * them. The join to `instance_leases` filters out instances another worker still holds, so
    * the lease attempt that follows is unlikely to be wasted.
    */
-  private async readyWorkflow(tx: Tx, workerId: string): Promise<WorkflowRow | null> {
+  private async readyWorkflow(
+    tx: Tx,
+    workerId: string,
+    action: WorkflowAction,
+  ): Promise<WorkflowRow | null> {
     const result = await sql<WorkflowRow>`
       SELECT w.*
       FROM workflow.workflows w
       LEFT JOIN workflow.instance_leases l ON l.instance_id = w.instance_id
-      WHERE w.status IN ('running', 'retry_wait')
+      WHERE w.action = ${action}
+        AND w.status IN ('running', 'retry_wait')
         AND w.next_attempt_at <= now()
         AND (l.instance_id IS NULL OR l.leased_until <= now() OR l.owner_id = ${workerId})
       ORDER BY w.next_attempt_at, w.created_at
@@ -508,11 +648,11 @@ export class PostgresWorkflowStore implements WorkflowStore {
   }
 
   /** Inserts the command inbox receipt and initial workflow as one atomic admission. */
-  private async admitCommand(
+  private async admitOriginalDelivery(
     tx: Tx,
-    command: InstanceCreateRequestedV1,
+    command: LifecycleCommand,
     delivery: MessageDeliveryIdentity,
-  ): Promise<'accepted' | 'duplicate'> {
+  ): Promise<CommandAdmission> {
     const now = new Date();
     const existing = await tx
       .selectFrom('workflow.workflows')
@@ -521,11 +661,34 @@ export class PostgresWorkflowStore implements WorkflowStore {
       .executeTakeFirst();
     if (existing) {
       await this.insertCommandReceipt(tx, command, delivery, now);
-      return 'duplicate';
+      return { outcome: 'duplicate' };
     }
 
     const receipt = await this.insertCommandReceipt(tx, command, delivery, null);
-    if (!receipt) return 'duplicate';
+    if (!receipt) return { outcome: 'duplicate' };
+
+    const action = workflowActionOf(command);
+    // A non-create workflow acts on a VM that already exists, and the identifier for that VM was
+    // learned by the create workflow and recorded on its row. Seeding it here is what lets the
+    // first mutation stage of a power, resize, snapshot, retention, or purge workflow address the
+    // provider at all: without it `requiredResource` raises `protocol_error` on the first stage and
+    // the operation fails at 20% having never reached the provider.
+    //
+    // The earliest row carrying a resource id is the create, which is the same rule the
+    // reconciliation sweep uses to resolve the identifier it observes against.
+    const inheritedResource =
+      action === 'create_instance'
+        ? null
+        : ((
+            await sql<{ provider_resource_id: string }>`
+              SELECT provider_resource_id
+                FROM workflow.workflows
+               WHERE instance_id = ${command.aggregateId}::uuid
+                 AND provider_resource_id IS NOT NULL
+               ORDER BY created_at
+               LIMIT 1
+            `.execute(tx)
+          ).rows[0]?.provider_resource_id ?? null);
 
     await tx
       .insertInto('workflow.workflows')
@@ -534,6 +697,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         event_id: command.eventId,
         project_id: command.projectId,
         instance_id: command.aggregateId,
+        action,
         // The command is stored on the workflow so every later transition replays the exact
         // request that was accepted, even if the catalog it referenced has since changed.
         command,
@@ -546,7 +710,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         replay_generation: delivery.replayGeneration,
         trace_context: command.traceContext,
         fencing_token: '0',
-        provider_resource_id: null,
+        provider_resource_id: inheritedResource,
         provider_task_reference: null,
         next_attempt_at: now,
         failure_category: null,
@@ -559,7 +723,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         completed_at: null,
       })
       .executeTakeFirstOrThrow();
-    return 'accepted';
+    return { outcome: 'accepted' };
   }
 
   /** Reopens a failed workflow only after the authorized command returns through Kafka. */
@@ -567,7 +731,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
     tx: Tx,
     command: InstanceCreateRequestedV1,
     delivery: MessageDeliveryIdentity,
-  ): Promise<'accepted' | 'duplicate' | 'rejected'> {
+  ): Promise<CommandAdmission> {
     const payloadHash = canonicalSha256(command);
     const existingReceipt = await tx
       .selectFrom('workflow.command_receipts')
@@ -577,9 +741,9 @@ export class PostgresWorkflowStore implements WorkflowStore {
       .where('replay_generation', '=', delivery.replayGeneration)
       .executeTakeFirst();
     if (existingReceipt) {
-      if (existingReceipt.payload_hash === payloadHash) return 'duplicate';
+      if (existingReceipt.payload_hash === payloadHash) return { outcome: 'duplicate' };
       await this.rejectReplayCommand(tx, delivery, payloadHash, 'REPLAY_COMMAND_IDENTITY_CONFLICT');
-      return 'rejected';
+      return { outcome: 'rejected', failureCode: 'REPLAY_COMMAND_IDENTITY_CONFLICT' };
     }
 
     const authorization = await tx
@@ -595,7 +759,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
       authorization.authorized_outbox_id === delivery.outboxId;
     if (!authorized) {
       await this.rejectReplayCommand(tx, delivery, payloadHash, 'REPLAY_COMMAND_UNAUTHORIZED');
-      return 'rejected';
+      return { outcome: 'rejected', failureCode: 'REPLAY_COMMAND_UNAUTHORIZED' };
     }
 
     const request = storedReplayRequest(authorization.request_payload);
@@ -612,12 +776,19 @@ export class PostgresWorkflowStore implements WorkflowStore {
         workflow.status !== 'failed' ||
         delivery.replayGeneration !== workflow.replay_generation + 1)
     ) {
-      throw new Error('Authorized replay cannot reopen the current workflow state.');
+      // WHY: this used to throw a bare Error. The consumer rethrows anything that is not a
+      // classified message failure, so the offset was never committed and Kafka redelivered the
+      // same record forever. The delivery is not an infrastructure fault — its authority matched,
+      // but the workflow it names has moved on — so it is terminal for this record. Quarantining
+      // by hash and coordinates commits the offset, retains no payload, and deliberately leaves
+      // the authorization row `authorized` so an operator can still see the unconsumed authority.
+      await this.rejectReplayCommand(tx, delivery, payloadHash, 'REPLAY_COMMAND_STATE_CONFLICT');
+      return { outcome: 'rejected', failureCode: 'REPLAY_COMMAND_STATE_CONFLICT' };
     }
 
     const now = new Date();
     const receipt = await this.insertCommandReceipt(tx, command, delivery, null);
-    if (!receipt) return 'duplicate';
+    if (!receipt) return { outcome: 'duplicate' };
     if (workflow) {
       // The replay is a fresh provider attempt. Clearing stale handles ensures the idempotency key,
       // rather than an ambiguous pre-exhaustion task reference, determines provider-effect safety.
@@ -655,6 +826,9 @@ export class PostgresWorkflowStore implements WorkflowStore {
           event_id: command.eventId,
           project_id: command.projectId,
           instance_id: command.aggregateId,
+          // Derived from the command, not fixed: a dead letter may hold any capability's command,
+          // and an authorized replay must start the workflow the original request asked for.
+          action: workflowActionOf(command),
           command,
           status: 'running',
           stage: 'accepted',
@@ -692,7 +866,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
       .where('status', '=', 'authorized')
       .executeTakeFirstOrThrow();
     await this.writeReplayResolution(tx, request, 'completed', delivery.replayGeneration, now);
-    return 'accepted';
+    return { outcome: 'accepted' };
   }
 
   /** Persists a rejected physical replay by hash and coordinates without retaining its payload. */
@@ -700,7 +874,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
     tx: Tx,
     delivery: MessageDeliveryIdentity,
     payloadHash: string,
-    failureCode: 'REPLAY_COMMAND_IDENTITY_CONFLICT' | 'REPLAY_COMMAND_UNAUTHORIZED',
+    failureCode: CommandRejectionCode,
   ): Promise<void> {
     await tx
       .insertInto('workflow.poison_records')
@@ -712,7 +886,7 @@ export class PostgresWorkflowStore implements WorkflowStore {
         source_offset: delivery.offset,
         payload_hash: payloadHash,
         failure_code: failureCode,
-        safe_message: 'The replay command did not match a durable replay authorization.',
+        safe_message: REPLAY_REJECTION_MESSAGES[failureCode],
         quarantined_at: new Date(),
       })
       .onConflict((conflict) =>

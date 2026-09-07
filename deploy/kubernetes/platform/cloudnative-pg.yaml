@@ -1,0 +1,50 @@
+# Sync wave 1 — CloudNativePG.
+#
+# The PostgreSQL operator. It owns the database's lifecycle, generates its credentials, and
+# publishes them as Secrets that the workloads consume by reference — which is why no database
+# password appears anywhere in this repository.
+#
+# WHY an operator rather than a StatefulSet: the control plane depends on logical replication for
+# change data capture, and a replication slot that survives a failover is the difference between a
+# restart and a lost outbox. That behaviour is exactly what a database operator exists to provide.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-cloudnative-pg
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '1'
+spec:
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    targetRevision: 0.29.0
+    helm:
+      releaseName: cloudnative-pg
+      valuesObject:
+        crds:
+          create: true
+        monitoring:
+          # The cluster Prometheus selects on this label in every namespace; without it the
+          # operator's own metrics are collected by nothing.
+          podMonitorEnabled: false
+        resources:
+          requests: { cpu: 50m, memory: 128Mi }
+          limits: { cpu: 500m, memory: 512Mi }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      # CRDs in this chart exceed the annotation size limit that a client-side apply writes.
+      - ServerSideApply=true
+      # See `argocd/applications.yaml`: without a server-side diff, an operator CRD is reported
+      # OutOfSync forever over defaults the API server added.
+      - ServerSideDiff=true
+    retry:
+      limit: 5
+      backoff: { duration: 10s, factor: 2, maxDuration: 3m }

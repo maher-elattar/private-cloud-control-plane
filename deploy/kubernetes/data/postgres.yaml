@@ -1,0 +1,117 @@
+# Sync wave 2 — the authoritative database.
+#
+# Everything the control plane treats as true lives here: the write model, the transactional
+# outbox, workflow leases and fencing tokens, and the read projections. The outbox is read by
+# change data capture, which is why `wal_level` and the replication slot budget are part of the
+# cluster definition rather than an afterthought.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: control-plane-postgres
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  # One instance, because this cluster has one node. WHY that is a real limitation and not merely
+  # a local convenience is written up in `docs/architecture/phase-6-gitops-deployment.md`: a
+  # replica scheduled onto the same node as its primary survives a process failure and nothing
+  # else, and a hostPath volume it depends on cannot move.
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.10
+
+  postgresql:
+    parameters:
+      # Change data capture reads the outbox through a logical replication slot. Without this the
+      # outbox is written correctly and published to nobody.
+      wal_level: logical
+      max_replication_slots: '4'
+      max_wal_senders: '4'
+
+  bootstrap:
+    initdb:
+      database: private_cloud
+      owner: private_cloud
+      postInitApplicationSQL:
+        # The connector reads the outbox as the application role, which also owns the tables the
+        # publication covers. WHY not a superuser: change data capture that runs as superuser can
+        # read every table in the instance, and the whole point of the outbox pattern is that one
+        # table is the contract.
+        - ALTER ROLE private_cloud REPLICATION
+
+  storage:
+    size: 2Gi
+    # Named here in one place so a cluster with real replicated storage substitutes its class
+    # without any other manifest changing.
+    storageClass: standard
+
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 2000m, memory: 1Gi }
+
+  # Argo CD must not fight the operator over fields the operator owns and recomputes.
+  enableSuperuserAccess: false
+
+  affinity:
+    # Single-node cluster: a hard anti-affinity rule would leave replicas unschedulable. This
+    # expresses the intent so that adding nodes changes behaviour without changing the manifest.
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred
+---
+# The database is inside the namespace's default-deny boundary like everything else, so its own
+# traffic has to be allowed explicitly.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '2' }
+spec:
+  podSelector:
+    matchLabels: { cnpg.io/cluster: control-plane-postgres }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Application traffic, schema migrations, and change data capture.
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+        - podSelector:
+            matchLabels: { strimzi.io/cluster: control-plane-connect }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # Instance-to-instance replication and the operator's own connections.
+    - from:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: control-plane-postgres }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: cnpg-system }
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 8000 }
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - { protocol: TCP, port: 9187 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: control-plane-postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # The instance manager talks to the Kubernetes API to publish cluster status.
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0 }
+      ports:
+        - { protocol: TCP, port: 6443 }
+        - { protocol: TCP, port: 8443 }

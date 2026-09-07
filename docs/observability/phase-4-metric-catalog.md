@@ -24,7 +24,7 @@ a business transaction.
 | `controlplane.projection.event_age` | Histogram | `s` | `event.schema.name`, `outcome` | How stale are facts when projections finish? |
 | `controlplane.dead_letter` | Counter | `{message}` | `event.schema.name`, `error.category`, `replay.allowed` | Which governed dead-letter decisions occur? |
 | `controlplane.quarantine` | Counter | `{message}` | `failure.code` | Which untrusted records are quarantined? |
-| `controlplane.replay` | Counter | `{replay}` | outcome | Which authorized replay outcomes occur? |
+| `controlplane.replay` | Counter | `{replay}` | `outcome`, `phase` | Which authorized replay outcomes occur, and in which half of the two-phase loop? |
 | `controlplane.outbox.pending` | Observable gauge | `{record}` | `outbox.owner` | How many owner records lack durable consumer results? |
 | `controlplane.outbox.oldest_age` | Observable gauge | `s` | `outbox.owner` | How old is the oldest pending owner record? |
 
@@ -65,6 +65,38 @@ Curated JMX rules keep topic and partition as bounded labels instead of generati
 suffixes. The Collector removes hostnames, container IDs, process commands, executable paths, owners,
 PIDs, and service-instance IDs before export.
 
+## What "Pending" Excludes
+
+`controlplane.outbox.pending` and `controlplane.outbox.oldest_age` count owner records that **no
+in-scope consumer has acknowledged**, which is narrower than "not yet published". Two exclusions
+make that precise, and both exist because the gauge otherwise rises forever on a healthy stack:
+
+| Excluded | Why | When to revisit |
+| --- | --- | --- |
+| `audit.events.v1` rows in either outbox | Published for an audit archive that does not exist in this phase, so no receipt will ever appear | When the audit archive ships it needs a receipt table, and this exclusion must be **replaced by a real check**, not deleted |
+| `provisioning.commands.v1` rows in `workflow.outbox` matched against event receipts | Governed replay routes restored commands through the workflow outbox; the orchestrator acknowledges them in `workflow.command_receipts`, not the Control API projection | Not applicable; this is the correct permanent matching |
+
+Both gauges must read zero on a settled stack. The runtime verifier asserts that directly and
+cross-checks the exported gauge against the database, so the dashboard cannot disagree with the
+tables it claims to describe.
+
+## Bounded Attribute Values
+
+Two attributes carry an enumeration small enough to state exhaustively, because both are read
+during incident triage and a wrong value is indistinguishable from a wrong conclusion.
+
+| Attribute | Instrument | Values | Meaning |
+| --- | --- | --- | --- |
+| `phase` | `controlplane.replay` | `request` | An administrator's replay request was authorized, deduplicated, or denied. |
+| `phase` | `controlplane.replay` | `command` | The restored command returned through Kafka and was admitted, deduplicated, or rejected. |
+| `failure.code` | `controlplane.quarantine` | `REPLAY_COMMAND_IDENTITY_CONFLICT` | A receipt for this generation exists with a different canonical payload. |
+| `failure.code` | `controlplane.quarantine` | `REPLAY_COMMAND_UNAUTHORIZED` | No live authorization matches the command's hash and physical outbox identity. |
+| `failure.code` | `controlplane.quarantine` | `REPLAY_COMMAND_STATE_CONFLICT` | Authority matched, but the target workflow is no longer reopenable. |
+
+`failure.code` also carries the message-decode codes raised at the transport boundary. Both
+attributes stay within the 128-series cap because every value is drawn from a closed union in
+`packages/application/src/ports.ts` and `packages/messaging/src/message-codec.ts`.
+
 ## Cardinality Rules
 
 Never use project, tenant, instance, operation, event, aggregate, provider-resource, provider-task,
@@ -89,7 +121,7 @@ histogram_quantile(0.95,
 sum by (event_schema_name, outcome) (rate(controlplane_messaging_processed_total[5m]))
 sum(increase(controlplane_dead_letter_total[1h]))
 sum(increase(controlplane_quarantine_total[1h]))
-sum(increase(controlplane_replay_total[1h]))
+sum by (phase, outcome) (increase(controlplane_replay_total[1h]))
 ```
 
 These queries are diagnostic views, not SLOs. Alert thresholds, recording rules, retention, and

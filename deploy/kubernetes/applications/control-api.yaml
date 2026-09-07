@@ -1,0 +1,170 @@
+# Sync wave 4 — the API, deployed blue-green.
+#
+# A `Rollout`, not a `Deployment`. The difference is the point: a Deployment replaces pods and
+# hopes, while a Rollout stands the new version up beside the old one, sends it real traffic that
+# nobody depends on, measures the result, and only then moves the Service. Everything the
+# promotion decision needs — the preview environment, the header route that reaches it, and the
+# analysis that judges it — is declared here and in the two files beside it.
+#
+# The rollout sequence this produces:
+#
+#   1. Green pods start. The preview Service selects them; the active Service still selects blue.
+#   2. `X-Canary: green` requests reach green through the Gateway. Everything else stays on blue.
+#   3. Pre-promotion analysis measures green's HTTP 200 rate, its request rate, and how many of
+#      its pods are ready and answering. Below 90% success, or with no traffic at all, the rollout
+#      aborts and green is discarded without a single production request having reached it.
+#   4. On success the active Service moves to green.
+#   5. Post-promotion analysis measures green again, now serving everything. A failure here aborts
+#      the rollout and puts the active Service back on blue, which is still running because
+#      `scaleDownDelaySeconds` has not elapsed.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: control-api
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: control-api
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  # A green environment that cannot become ready inside this window is not going to. Paired with
+  # `progressDeadlineAbort`, this is the self-healing path for a failure the analysis never gets
+  # to see, because the pods never joined the preview Service in the first place.
+  progressDeadlineSeconds: 420
+  progressDeadlineAbort: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: control-api
+  strategy:
+    blueGreen:
+      activeService: control-api
+      previewService: control-api-preview
+      # Automatic, because the analysis *is* the gate. A human confirmation step in front of a
+      # passing analysis adds latency without adding evidence; a human step behind a failing one
+      # is not reached at all.
+      autoPromotionEnabled: true
+      # Blue stays up for a minute after promotion. This is what makes an abort a rollback rather
+      # than a cold start, and it is the reason post-promotion analysis is worth running.
+      scaleDownDelaySeconds: 60
+      abortScaleDownDelaySeconds: 60
+      prePromotionAnalysis:
+        templates:
+          - templateName: green-scrape-health
+          - templateName: green-traffic-floor
+          - templateName: green-http-success-rate
+        args:
+          - name: preview-service
+            value: control-api-preview
+          - name: minimum-ready-replicas
+            value: '2'
+      postPromotionAnalysis:
+        templates:
+          - templateName: green-scrape-health
+          - templateName: green-http-success-rate
+        args:
+          - name: preview-service
+            value: control-api-preview
+          - name: minimum-ready-replicas
+            value: '2'
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: control-api
+        app.kubernetes.io/part-of: private-cloud-control-plane
+    spec:
+      serviceAccountName: control-api
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Numeric, because the kubelet cannot verify that a symbolic `USER node` is non-root and
+        # refuses to start the container at all. 1000 is what `node` resolves to in the official
+        # Node.js images this service is built from.
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        # `ScheduleAnyway` because this cluster has one node: `DoNotSchedule` would leave the
+        # second replica permanently pending and turn a resilience constraint into an outage. The
+        # constraint is still declared so that adding nodes changes the placement without changing
+        # this file.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: control-api }
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: control-api }
+      containers:
+        - name: control-api
+          image: private-cloud/control-api:phase6
+          # The image is loaded into the node's store rather than pulled from a registry, so a
+          # pull policy of Always would fail on a cluster with no registry to pull from.
+          imagePullPolicy: IfNotPresent
+          ports:
+            # `protocol: TCP` is the API server's default and is written out deliberately. Argo CD
+            # normalises defaults for built-in kinds but not for a CustomResourceDefinition, so a
+            # field left implicit here shows up as permanent drift on a Rollout and buries real
+            # drift in the noise.
+            - { name: http, containerPort: 3000, protocol: TCP }
+            - { name: grpc, containerPort: 50051, protocol: TCP }
+            - { name: metrics, containerPort: 9464, protocol: TCP }
+          envFrom:
+            - configMapRef: { name: control-plane-config }
+          env:
+            - { name: PORT, value: '3000' }
+            - { name: GRPC_LISTEN_URL, value: 0.0.0.0:50051 }
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: control-plane-postgres-app, key: uri }
+          volumeMounts:
+            - { name: kafka-credentials, mountPath: /etc/private-cloud/kafka, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+          # Three probes, three different questions.
+          startupProbe:
+            # The process connects three Kafka consumers before it begins listening, so the first
+            # successful answer can be a minute after the container starts. Without a startup
+            # probe the liveness probe would kill it mid-connect, forever.
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            # Never consults a dependency. A database outage is not something a restart fixes, and
+            # a liveness probe that failed on one would restart every replica at the worst moment.
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            # Does consult the database, because this is what decides whether the pod receives
+            # traffic — and, during a blue-green promotion, whether green counts as available.
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 1000m, memory: 768Mi }
+      volumes:
+        - name: kafka-credentials
+          projected:
+            # Both halves of the broker identity, mounted as files. Strimzi generated both; this
+            # repository names them and never holds them.
+            sources:
+              - secret:
+                  name: control-plane-kafka-cluster-ca-cert
+                  items: [{ key: ca.crt, path: ca.crt }]
+              - secret:
+                  name: control-plane
+                  items: [{ key: password, path: password }]
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }

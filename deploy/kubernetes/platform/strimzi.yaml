@@ -1,0 +1,64 @@
+# Sync wave 1 — Strimzi.
+#
+# The Kafka operator. It runs the broker, generates the cluster certificate authority, and issues
+# SCRAM credentials per `KafkaUser`. The roadmap's "use Strimzi-generated Kafka credentials" is a
+# direct consequence: the repository names a `KafkaUser`, and the operator — not a human, and not
+# a committed file — decides what its password is.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-strimzi
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '1'
+spec:
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: strimzi-system
+  source:
+    repoURL: https://strimzi.io/charts/
+    chart: strimzi-kafka-operator
+    targetRevision: 1.2.0
+    helm:
+      releaseName: strimzi
+      valuesObject:
+        # The operator only watches the namespaces it is told to. Cluster-wide watch would let a
+        # Kafka CR in any namespace be reconciled by this operator, which is a wider blast radius
+        # than this deployment needs.
+        watchNamespaces:
+          - private-cloud
+        extraEnvs:
+          # The control-plane namespace enforces the `restricted` Pod Security profile, and
+          # Strimzi's default provider produces pod specs that the profile rejects outright — no
+          # broker pod is ever created, and the only sign is a `StrimziPodSet` stuck at zero pods
+          # with the admission error buried in its status. The restricted provider makes Strimzi
+          # emit `runAsNonRoot`, `allowPrivilegeEscalation: false`, a `RuntimeDefault` seccomp
+          # profile, and dropped capabilities on every pod it manages.
+          - name: STRIMZI_POD_SECURITY_PROVIDER_CLASS
+            value: restricted
+        resources:
+          requests: { cpu: 100m, memory: 256Mi }
+          limits: { cpu: 1000m, memory: 512Mi }
+  # The API server prunes one empty sub-schema out of the Kafka CRD as it stores it, so the chart's
+  # rendered CRD and the stored one can never be byte-identical and the application would report
+  # drift forever over a field nothing sets. Diff-only: the full CRD is still applied on every
+  # sync, so a chart upgrade that genuinely changes this schema still lands.
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      name: kafkas.kafka.strimzi.io
+      jqPathExpressions:
+        - .spec.versions[].schema.openAPIV3Schema.properties.status.properties.clusterSecurity
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # See `argocd/applications.yaml`: without a server-side diff, an operator CRD is reported
+      # OutOfSync forever over defaults the API server added.
+      - ServerSideDiff=true
+    retry:
+      limit: 5
+      backoff: { duration: 10s, factor: 2, maxDuration: 3m }

@@ -14,13 +14,27 @@
  * @see docs/architecture/data-ownership.md
  * @see docs/architecture/phase-3-persistence.md
  */
-import { Kysely, PostgresDialect, type ColumnType } from 'kysely';
+import { Kysely, PostgresDialect, sql, type ColumnType, type Generated } from 'kysely';
 import { Pool } from 'pg';
 
 /** `timestamptz`: read as `Date`, accepted as `Date` or ISO string on write. */
 type Timestamp = ColumnType<Date, Date | string, Date | string>;
 /** `json`/`jsonb`: decode with `parseJsonColumn`, since `json` arrives as text. */
 type Json<T> = ColumnType<T, T | string, T | string>;
+/**
+ * A nullable column with no database default.
+ *
+ * Distinct from a bare `T | null`, which Kysely requires the caller to supply explicitly on every
+ * insert. These columns are genuinely optional at insert time — PostgreSQL stores NULL when they
+ * are omitted — so the insert type admits `undefined`.
+ */
+type Nullable<T> = ColumnType<T | null, T | null | undefined, T | null>;
+/** A nullable `timestamptz` with no default. */
+type NullableTimestamp = ColumnType<
+  Date | null,
+  Date | string | null | undefined,
+  Date | string | null
+>;
 
 interface ProjectTable {
   id: string;
@@ -108,9 +122,74 @@ interface InstanceTable {
   desired_disk_gib: string;
   desired_power_state: string;
   lifecycle_state: string;
-  active_operation_id: string | null;
-  version: string;
+  active_operation_id: Nullable<string>;
+  version: Generated<string>;
   created_at: Timestamp;
+  updated_at: Timestamp;
+  /*
+   * Retention, drift, and observed state. The `Instance` API document has always published these,
+   * but before Phase 5 they existed only inside `projection.instances.document` jsonb. Purge and
+   * reconciliation must query them, and a guard that decides whether a VM may be destroyed does
+   * not belong in a document body.
+   */
+  /** Operation whose id is written into this instance's provider ownership markers. */
+  create_operation_id: Nullable<string>;
+  retention_deadline: NullableTimestamp;
+  purge_eligible: Generated<boolean>;
+  drift: Generated<string>;
+  last_reconciled_at: NullableTimestamp;
+  observed_exists: Nullable<boolean>;
+  observed_power_state: Nullable<string>;
+  observed_cpu_count: Nullable<number>;
+  observed_memory_mib: Nullable<string>;
+  observed_disk_gib: Nullable<string>;
+  observed_marker_match: Nullable<boolean>;
+  observed_at: NullableTimestamp;
+}
+
+interface SnapshotTable {
+  id: string;
+  project_id: string;
+  instance_id: string;
+  name: string;
+  description: string | null;
+  state: string;
+  /** Provider-side name, kept so an interrupted delete resumes against the right object. */
+  provider_snapshot_name: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+interface ManualReviewTable {
+  id: string;
+  project_id: string;
+  instance_id: string;
+  operation_id: string;
+  category: string;
+  summary: string;
+  state: Generated<string>;
+  evidence_reference: string | null;
+  resolution: string | null;
+  resolved_by: string | null;
+  created_at: Timestamp;
+  resolved_at: Timestamp | null;
+}
+
+/** Single-row configuration; the primary key CHECK is what keeps it single-row. */
+interface RetentionPolicyTable {
+  id: Generated<boolean>;
+  retention_hours: number;
+  lease_release_mode: string;
+  version: Generated<string>;
+  updated_at: Timestamp;
+  updated_by: string;
+}
+
+interface ProjectionSnapshotTable {
+  snapshot_id: string;
+  project_id: string;
+  instance_id: string;
+  document: Json<unknown>;
   updated_at: Timestamp;
 }
 
@@ -201,6 +280,19 @@ interface ProjectionOperationTable {
   target_id: string;
   document: Json<unknown>;
   updated_at: Timestamp;
+  /*
+   * Administrative recovery metadata. These live beside the document rather than inside it
+   * because `Operation` declares `additionalProperties: false`; the tenant document must stay
+   * byte-identical to its published schema while the administrator route composes these on top.
+   */
+  correlation_id: string | null;
+  causation_id: string | null;
+  trace_id: string | null;
+  retry_count: Generated<number>;
+  checkpoint: string | null;
+  dead_letter_event_id: string | null;
+  /** Restricted-operational; never returned on a tenant route. */
+  provider_task_reference: string | null;
 }
 
 interface ProjectionReceiptTable {
@@ -238,6 +330,8 @@ interface WorkflowTable {
   event_id: string;
   project_id: string;
   instance_id: string;
+  /** Which lifecycle capability this workflow executes; the dispatcher routes on it. */
+  action: string;
   command: Json<unknown>;
   status: string;
   stage: string;
@@ -358,7 +452,11 @@ export interface PostgresDatabase {
   'workflow.replay_requests': WorkflowReplayRequestTable;
   'workflow.poison_records': PoisonRecordTable;
   'projection.instances': ProjectionInstanceTable;
+  'control.snapshots': SnapshotTable;
+  'control.manual_reviews': ManualReviewTable;
+  'control.retention_policy': RetentionPolicyTable;
   'projection.operations': ProjectionOperationTable;
+  'projection.snapshots': ProjectionSnapshotTable;
   'projection.event_receipts': ProjectionReceiptTable;
   'projection.dead_letters': ProjectionDeadLetterTable;
   'projection.poison_records': PoisonRecordTable;
@@ -390,3 +488,39 @@ export function createPostgresDatabase(connectionString: string): Kysely<Postgre
 
 /** A connected, schema-typed Kysely client. */
 export type PostgresClient = Kysely<PostgresDatabase>;
+
+/** Longest a readiness probe will wait for the database before reporting the pod not ready. */
+const READINESS_PROBE_TIMEOUT_MS = 2_000;
+
+/**
+ * Answers whether the database is reachable, for a Kubernetes readiness probe.
+ *
+ * Bounded by its own timeout rather than the pool's 5-second connection timeout. WHY: a readiness
+ * probe that outlives its own probe interval stacks up in the kubelet and turns a slow database
+ * into an apparently hung pod, which is a different and much harder incident than a database
+ * being slow.
+ *
+ * The query is `SELECT 1` on purpose. Anything that touches a real table would make readiness
+ * depend on migration state, and a pod that reports itself unready because a migration has not run
+ * yet cannot be the pod that tells an operator why.
+ *
+ * @param {PostgresClient} database Connected client to probe.
+ * @param {number} [timeoutMs] Deadline; defaults to {@link READINESS_PROBE_TIMEOUT_MS}.
+ * @returns {Promise<boolean>} `true` when the database answered inside the deadline.
+ */
+export async function isDatabaseReachable(
+  database: PostgresClient,
+  timeoutMs: number = READINESS_PROBE_TIMEOUT_MS,
+): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<false>((resolvePromise) => {
+    timer = setTimeout(() => resolvePromise(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([sql`SELECT 1`.execute(database).then(() => true), deadline]).catch(
+      () => false,
+    );
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

@@ -27,8 +27,12 @@ INSERT INTO control.images (id, name, provider_profile_id, enabled, architecture
 VALUES ('ubuntu-24-04-cloud', 'Ubuntu 24.04 Cloud', 'fake-lab', true, 'x86_64', now(), now())
 ON CONFLICT (id) DO NOTHING;
 
+-- Two flavors, because one cannot exercise a resize. `lab-medium` grows every dimension so a
+-- single resize covers the compute change and the disk grow together.
 INSERT INTO control.flavors (id, name, cpu_count, memory_mib, minimum_disk_gib, enabled, created_at, updated_at)
-VALUES ('lab-small', 'Lab Small', 2, 4096, 32, true, now(), now())
+VALUES
+  ('lab-small', 'Lab Small', 2, 4096, 32, true, now(), now()),
+  ('lab-medium', 'Lab Medium', 4, 8192, 64, true, now(), now())
 ON CONFLICT (id) DO NOTHING;
 
 COMMIT;

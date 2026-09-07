@@ -1,20 +1,228 @@
 {
   "schemaVersion": 1,
-  "startedAt": "2026-09-01T12:14:43.692Z",
+  "startedAt": "2026-09-04T19:24:57.070Z",
   "composeProject": "private-cloud-phase4",
-  "reset": false,
+  "reset": true,
   "checks": {
     "environment": {
       "healthyServices": 12,
       "prometheusTargets": 1
+    },
+    "proxmoxHappyPath": {
+      "operationState": "succeeded",
+      "workflowRows": 1,
+      "commandReceipts": 1,
+      "projections": 1,
+      "providerResources": 1,
+      "duplicateBusinessEvents": 0,
+      "traceSpans": 312,
+      "proxmoxHttpSpans": 14,
+      "kafkaProducerSpans": 11,
+      "kafkaProducerDestinations": [
+        "audit.events.v1",
+        "provisioning.commands.v1",
+        "provisioning.events.v1"
+      ],
+      "requiredSpanNames": [
+        "InstancesController.create",
+        "controlplane.command.accept",
+        "controlplane.transaction.accept_create",
+        "controlplane.outbox.write",
+        "db-log-write",
+        "debezium-read",
+        "provisioning.commands.v1 process",
+        "controlplane.transaction.command_admission",
+        "controlplane.workflow.stage",
+        "grpc.privatecloud.provider.v1.ProviderService/SubmitCreateInstance",
+        "controlplane.provider.adapter",
+        "provisioning.events.v1 process",
+        "controlplane.projection.apply"
+      ]
+    },
+    "recovery": {
+      "kafkaOutageAcceptedWithoutReceipt": true,
+      "kafkaOutageRecovered": true,
+      "consumerBuffered": true,
+      "checkpointStage": "polling_create",
+      "resumedStage": "completed",
+      "providerResourceStable": true
+    },
+    "failurePolicy": {
+      "retryWaitEvents": 1,
+      "permanentState": "failed",
+      "permanentDeadLetters": 0,
+      "ambiguousState": "manual_review",
+      "retryAttempts": 8,
+      "deniedReplayStatus": 403,
+      "successfulReplayGeneration": 1,
+      "originalEventIdRetained": "5e1a409a-f486-40b5-8088-9ef08a33ce9b",
+      "replayTraceLinks": 1,
+      "replayReceiptTopic": "provisioning.commands.v1",
+      "replayReceiptPartition": 2,
+      "replayReceiptOffset": "4",
+      "replayAuthorizationStatus": "completed",
+      "replayAuthorizationOutboxMatched": true,
+      "replayBrokerGeneration": 1,
+      "replayTraceCarrierPreserved": true,
+      "unauthorizedReplayQuarantines": 1,
+      "identityConflictQuarantines": 1,
+      "duplicateReplayRequestAuthorizations": 0
+    },
+    "quarantine": {
+      "recordsAdded": 1,
+      "rawPayloadStored": false
+    },
+    "telemetry": {
+      "requiredMetrics": [
+        "controlplane_command_accepted_total",
+        "controlplane_messaging_processed_total",
+        "controlplane_messaging_queue_residence_seconds_bucket",
+        "controlplane_outbox_publish_delay_seconds_bucket",
+        "controlplane_workflow_transition_total",
+        "controlplane_workflow_retry_total",
+        "controlplane_workflow_active",
+        "controlplane_workflow_oldest_ready_age_seconds",
+        "controlplane_provider_operation_duration_seconds_bucket",
+        "controlplane_projection_apply_duration_seconds_bucket",
+        "controlplane_projection_event_age_seconds_bucket",
+        "controlplane_dead_letter_total",
+        "controlplane_quarantine_total",
+        "controlplane_replay_total",
+        "controlplane_trace_duration_seconds_bucket",
+        "kafka_server_brokertopicmetrics_messagesin_total",
+        "kafka_connect_task_running_ratio",
+        "debezium_postgres_connected",
+        "postgresql_commits_total",
+        "postgresql_database_locks",
+        "postgresql_replication_slot_active",
+        "otelcol_receiver_accepted_metric_points_total",
+        "otelcol_receiver_refused_metric_points_total",
+        "otelcol_exporter_sent_spans_total"
+      ],
+      "exemplarTraceId": "e44432cec41089621b2664ed4a83fbb1",
+      "metricSeriesInspected": 7107,
+      "prohibitedMetricLabels": 0,
+      "restrictedValuesInMetrics": 0,
+      "restrictedValuesInTraces": 0
+    },
+    "grafana": {
+      "dashboardUid": "private-cloud-phase4-event-pipeline",
+      "panels": [
+        "Pending outbox records",
+        "Oldest pending outbox age",
+        "Queue residence p95",
+        "Message handling rate",
+        "Recovery signals (1h)"
+      ],
+      "datasources": [
+        "prometheus",
+        "tempo"
+      ],
+      "exemplarTraceDestination": "tempo",
+      "livePanelQueries": [
+        {
+          "panel": "Pending outbox records",
+          "series": 2
+        },
+        {
+          "panel": "Oldest pending outbox age",
+          "series": 2
+        },
+        {
+          "panel": "Queue residence p95",
+          "series": 4
+        },
+        {
+          "panel": "Message handling rate",
+          "series": 11
+        },
+        {
+          "panel": "Recovery signals (1h)",
+          "series": 1
+        },
+        {
+          "panel": "Recovery signals (1h)",
+          "series": 1
+        },
+        {
+          "panel": "Recovery signals (1h)",
+          "series": 1
+        }
+      ],
+      "screenshots": {
+        "captured": true,
+        "files": [
+          {
+            "file": "docs/verification/evidence/phase4-grafana-dashboard.png",
+            "bytes": 95232
+          },
+          {
+            "file": "docs/verification/evidence/phase4-tempo-trace.png",
+            "bytes": 182996
+          }
+        ]
+      }
+    },
+    "outboxDrained": {
+      "controlPending": 0,
+      "workflowPending": 0,
+      "exportedMaxPending": 0,
+      "auditFactsExcluded": true
     }
   },
   "fixtures": {
     "proxmox-happy": {
-      "operationId": "7abf4e26-a834-46a9-9997-f9c28ccd5a9a",
-      "instanceId": "a0cb5b5f-79b3-490e-a8ec-fe0ee806e3c0",
-      "traceId": "60e000be1a839c495c1c2279a3c1c273",
-      "hostname": "p4-proxmox-happy-20260901121443"
+      "operationId": "deb470e9-635d-4202-ab88-9e94839544b4",
+      "instanceId": "f1db80dd-321d-4855-8b10-90da959921bb",
+      "traceId": "e44432cec41089621b2664ed4a83fbb1",
+      "hostname": "p4-proxmox-happy-20260904192457"
+    },
+    "kafka-outage": {
+      "operationId": "eeb0c06c-06ac-4093-93a7-cd622585b745",
+      "instanceId": "c92e98c2-1453-447e-ae93-d27121e1068a",
+      "traceId": "48045e8d534a25222fe2790b7c877520",
+      "hostname": "p4-kafka-outage-20260904192457"
+    },
+    "consumer-outage": {
+      "operationId": "25ab4507-8954-4342-bd41-392cac24766e",
+      "instanceId": "61d85343-5f05-4cbf-8685-78e8a82f3347",
+      "traceId": "14875ec9d7d750b8d5c41520adc96bee",
+      "hostname": "p4-consumer-outage-20260904192457"
+    },
+    "checkpoint": {
+      "operationId": "98aeb39b-f5d9-4dc4-9cb7-70109c5e7b80",
+      "instanceId": "730785ea-03ee-453f-bf19-2875a4671777",
+      "traceId": "2abc71159c2cf2fe8fa303f0fe200c5c",
+      "hostname": "p4-checkpoint-20260904192457"
+    },
+    "retry": {
+      "operationId": "03a5dea8-6c8f-4786-8ed0-87cb3966e4e2",
+      "instanceId": "14a3b6d6-0383-4529-ab04-f8cd9643e1cf",
+      "traceId": "521c4dc7625318f80ff690cf999473d7",
+      "hostname": "p4-retry-20260904192457"
+    },
+    "permanent": {
+      "operationId": "92b244e0-5eb7-4696-b2f8-799aaefbfb0f",
+      "instanceId": "b3824e44-9ab7-417e-9ac1-969421c6e9e0",
+      "traceId": "bfce55dfb4e3f0283e582e7c31934859",
+      "hostname": "p4-permanent-20260904192457"
+    },
+    "ambiguous": {
+      "operationId": "642abe7c-d32a-4be3-8686-4e81e5bd2830",
+      "instanceId": "16c5e9e8-61a1-46db-99b7-74d758c3b3cd",
+      "traceId": "0221d7371627fcec00f138c0191a6db0",
+      "hostname": "p4-ambiguous-20260904192457"
+    },
+    "exhausted": {
+      "operationId": "25e7e41a-d2db-40f3-94da-e55a8e2a3777",
+      "instanceId": "be154672-d8f9-4ec4-817b-f8ac9b03c05c",
+      "traceId": "192cac4d21da395f3f0efa9bb5a0a384",
+      "hostname": "p4-exhausted-20260904192457"
+    },
+    "authorized-replay": {
+      "operationId": "25e7e41a-d2db-40f3-94da-e55a8e2a3777",
+      "originalEventId": "5e1a409a-f486-40b5-8088-9ef08a33ce9b",
+      "traceId": "b6249a0dd69ae4f8e70921de26a10766"
     }
   },
   "urls": {
@@ -24,8 +232,7 @@
     "tempo": "http://127.0.0.1:3200",
     "kafkaConnect": "http://127.0.0.1:8083"
   },
-  "status": "failed",
-  "failure": "Error: duplicate message metric did not become true within 30000 ms\n    at waitFor (file:///home/Data/private-cloud-control-plane/tools/verification/verify-phase4-runtime.mjs:89:9)\n    at async verifyProxmoxHappyPath (file:///home/Data/private-cloud-control-plane/tools/verification/verify-phase4-runtime.mjs:430:3)\n    at async file:///home/Data/private-cloud-control-plane/tools/verification/verify-phase4-runtime.mjs:903:17",
+  "status": "passed",
   "finalStack": {
     "healthy": true,
     "persistent": true,
@@ -34,6 +241,6 @@
     "initializationJobs": 5,
     "stabilityWindowSeconds": 10
   },
-  "completedAt": "2026-09-01T12:17:04.914Z",
-  "durationSeconds": 141.2
+  "completedAt": "2026-09-04T19:37:27.525Z",
+  "durationSeconds": 750.5
 }

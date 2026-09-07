@@ -11,7 +11,6 @@
  * @see docs/architecture/glossary.md
  */
 import { createHash } from 'node:crypto';
-import ipaddr from 'ipaddr.js';
 
 /**
  * Every business failure the control plane can express.
@@ -24,6 +23,7 @@ import ipaddr from 'ipaddr.js';
 export type DomainErrorCode =
   | 'ADMIN_REQUIRED'
   | 'DEAD_LETTER_NOT_FOUND'
+  | 'DISK_SHRINK_FORBIDDEN'
   | 'IDEMPOTENCY_CONFLICT'
   | 'INSTANCE_BUSY'
   | 'INSTANCE_NOT_FOUND'
@@ -33,6 +33,8 @@ export type DomainErrorCode =
   | 'PROJECT_NOT_FOUND'
   | 'QUOTA_EXCEEDED'
   | 'REPLAY_NOT_ALLOWED'
+  | 'SNAPSHOT_NOT_FOUND'
+  | 'SNAPSHOT_OWNERSHIP_MISMATCH'
   | 'VALIDATION_FAILED';
 
 /**
@@ -128,8 +130,8 @@ export interface Ipv4Pool {
  * callers receiving the same address.
  *
  * @param leased Addresses already taken, including quarantined ones.
- * @throws DomainError `VALIDATION_FAILED` for a malformed or non-IPv4 pool, or `QUOTA_EXCEEDED`
- *   when the pool is exhausted.
+ * @throws DomainError `VALIDATION_FAILED` for a malformed or non-IPv4 pool, a pool whose address
+ *   is not the network address for its prefix, or `QUOTA_EXCEEDED` when the pool is exhausted.
  */
 export function allocateIpv4(pool: Ipv4Pool, leased: ReadonlySet<string>): string {
   const [networkAddress, prefixLengthText] = pool.cidr.split('/');
@@ -140,16 +142,24 @@ export function allocateIpv4(pool: Ipv4Pool, leased: ReadonlySet<string>): strin
     throw new DomainError('VALIDATION_FAILED', 'The configured IPv4 pool is invalid.');
   }
 
-  const parsed = ipaddr.parse(networkAddress);
-  if (parsed.kind() !== 'ipv4' || ipaddr.parse(pool.gateway).kind() !== 'ipv4') {
+  const network = strictIpv4(networkAddress);
+  const gateway = strictIpv4(pool.gateway);
+  if (network === null || gateway === null) {
     throw new DomainError('VALIDATION_FAILED', 'The configured network must use IPv4.');
   }
 
-  const bytes = parsed.toByteArray();
-  const network =
-    ((bytes[0] ?? 0) << 24) | ((bytes[1] ?? 0) << 16) | ((bytes[2] ?? 0) << 8) | (bytes[3] ?? 0);
   const unsignedNetwork = network >>> 0;
   const hostCount = 2 ** (32 - prefixLength);
+
+  // WHY reject host bits rather than mask them off: a CIDR like `192.0.2.5/24` is an operator
+  // typo, and silently treating it as `192.0.2.0/24` would allocate from a range nobody wrote
+  // down. Failing here surfaces the mistake while it is still a configuration error.
+  if ((unsignedNetwork & (hostCount - 1)) !== 0) {
+    throw new DomainError(
+      'VALIDATION_FAILED',
+      'The configured IPv4 pool must name a network address.',
+    );
+  }
   const excluded = new Set([...pool.exclusions, pool.gateway]);
 
   for (let offset = 1; offset < hostCount - 1; offset += 1) {
@@ -159,6 +169,30 @@ export function allocateIpv4(pool: Ipv4Pool, leased: ReadonlySet<string>): strin
   }
 
   throw new DomainError('QUOTA_EXCEEDED', 'No IPv4 address is available in the selected network.');
+}
+
+/**
+ * Parses exactly four dotted decimal octets, or returns `null`.
+ *
+ * WHY not `ipaddr.parse`: it accepts the legacy `inet_aton` short forms, so `192.0.2` is read as
+ * `192.0.0.2`. A provider profile carrying `192.0.2/24` would then allocate from `192.0.0.0`
+ * instead of the network the operator wrote — addresses outside the project network, which
+ * SAFE-024 forbids. It also throws a bare `Error` on malformed input, which would surface to a
+ * caller as an unclassified failure rather than `VALIDATION_FAILED`.
+ *
+ * @returns The address as a signed 32-bit integer, or `null` when it is not a dotted quad.
+ */
+function strictIpv4(value: string): number | null {
+  const octets = value.split('.');
+  if (octets.length !== 4) return null;
+  let result = 0;
+  for (const octet of octets) {
+    if (!/^(0|[1-9][0-9]{0,2})$/.test(octet)) return null;
+    const parsed = Number(octet);
+    if (parsed > 255) return null;
+    result = (result << 8) | parsed;
+  }
+  return result;
 }
 
 /** The user-supplied portion of a create request, as validated by the domain. */
@@ -216,4 +250,182 @@ export function validateCreateInstance(values: CreateInstanceValues): void {
       throw new DomainError('VALIDATION_FAILED', 'An SSH public key is invalid.');
     }
   }
+}
+
+/** The power transitions a tenant may request on a running instance. */
+export const POWER_ACTIONS = ['start', 'shutdown', 'stop', 'reboot'] as const;
+
+/** A requested power transition. */
+export type PowerAction = (typeof POWER_ACTIONS)[number];
+
+/**
+ * Validates a requested power action.
+ *
+ * `shutdown` and `stop` are deliberately distinct rather than one action with a `force` flag.
+ * `shutdown` asks the guest to stop itself and may take as long as the guest needs; `stop` cuts
+ * power and can lose unflushed writes. Collapsing them would let a caller destroy data through a
+ * parameter default.
+ *
+ * @throws DomainError `VALIDATION_FAILED` when the action is not one of the four.
+ */
+export function validatePowerAction(action: string): PowerAction {
+  if (!(POWER_ACTIONS as readonly string[]).includes(action)) {
+    throw new DomainError('VALIDATION_FAILED', 'The requested power action is not supported.');
+  }
+  return action as PowerAction;
+}
+
+/** A requested change to an instance's compute and disk sizing. */
+export interface ResizeRequest {
+  /** Sizing the instance currently has, read under the acceptance lock. */
+  readonly current: {
+    readonly cpuCount: number;
+    readonly memoryMiB: number;
+    readonly diskGiB: number;
+  };
+  /** Sizing the selected flavor defines. */
+  readonly target: {
+    readonly cpuCount: number;
+    readonly memoryMiB: number;
+    readonly diskGiB: number;
+  };
+}
+
+/**
+ * Validates a resize against the rules that hold regardless of provider.
+ *
+ * The disk rule is the important one and is asymmetric on purpose. Growing a disk is additive and
+ * reversible in the sense that nothing is lost; shrinking one discards whatever lived in the
+ * removed extent, and no provider can undo that. SAFE-026 therefore forbids shrink outright rather
+ * than gating it behind a confirmation, because a confirmation is exactly the thing an automated
+ * client would send by default.
+ *
+ * @throws DomainError `DISK_SHRINK_FORBIDDEN` for any reduction in disk size, or
+ *   `VALIDATION_FAILED` when the request changes nothing.
+ */
+export function validateResize(request: ResizeRequest): void {
+  if (request.target.diskGiB < request.current.diskGiB) {
+    throw new DomainError('DISK_SHRINK_FORBIDDEN', 'Disk size can grow but never shrink.');
+  }
+  const unchanged =
+    request.target.cpuCount === request.current.cpuCount &&
+    request.target.memoryMiB === request.current.memoryMiB &&
+    request.target.diskGiB === request.current.diskGiB;
+  if (unchanged) {
+    // WHY reject rather than accept as a no-op: a resize that changes nothing still takes the
+    // instance lock, submits a provider mutation, and blocks other operations for its duration.
+    // Refusing it keeps a retry loop from holding an instance busy indefinitely.
+    throw new DomainError('VALIDATION_FAILED', 'The requested sizing matches the current sizing.');
+  }
+}
+
+/** Snapshot names Proxmox accepts, and which cannot collide with its synthetic `current` entry. */
+const snapshotNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/;
+
+/**
+ * Validates a caller-supplied snapshot name.
+ *
+ * `current` is refused because Proxmox injects an entry by that name into every snapshot listing
+ * to mark the live state. A real snapshot sharing the name would be indistinguishable from it, and
+ * a rollback targeting the wrong one is not recoverable.
+ *
+ * @throws DomainError `VALIDATION_FAILED` for a malformed or reserved name.
+ */
+export function validateSnapshotName(name: string): void {
+  if (!snapshotNamePattern.test(name)) {
+    throw new DomainError(
+      'VALIDATION_FAILED',
+      'Snapshot name must be 1 to 63 characters of letters, digits, dot, dash, or underscore.',
+    );
+  }
+  if (name.toLowerCase() === 'current') {
+    throw new DomainError('VALIDATION_FAILED', 'The snapshot name "current" is reserved.');
+  }
+}
+
+/** The desired state a reconciliation compares against, as recorded by the control plane. */
+export interface DesiredSnapshot {
+  readonly lifecycleState: string;
+  readonly powerState: 'running' | 'stopped' | 'unchanged';
+  readonly cpuCount: number;
+  readonly memoryMiB: number;
+  readonly diskGiB: number;
+}
+
+/** What the provider actually reports, or absence. */
+export interface ObservedSnapshot {
+  readonly exists: boolean;
+  readonly powerState: 'running' | 'stopped' | 'suspended' | 'unknown';
+  readonly markerMatch: boolean;
+  readonly cpuCount?: number | undefined;
+  readonly memoryMiB?: number | undefined;
+  readonly diskGiB?: number | undefined;
+}
+
+/** How a reconciliation classifies the difference it found. */
+export type DriftClassification =
+  | 'none'
+  | 'missing_resource'
+  | 'identity_mismatch'
+  | 'stale_task'
+  | 'late_success'
+  | 'power_drift'
+  | 'network_drift'
+  | 'ambiguous';
+
+/** A classified difference, and whether correcting it would destroy anything. */
+export interface DriftFinding {
+  readonly classification: DriftClassification;
+  /**
+   * Whether an automatic correction would be destructive.
+   *
+   * SAFE-029 forbids reconciliation from correcting destructive drift automatically, so this flag
+   * is what a consumer uses to decide between acting and raising a manual review. It is not a
+   * severity: `power_drift` is often more urgent than `identity_mismatch`, but only one of them is
+   * safe to fix without a human.
+   */
+  readonly dangerous: boolean;
+}
+
+/**
+ * Classifies the difference between desired and observed state.
+ *
+ * Pure, so the interesting cases can be enumerated in tests rather than staged against a provider.
+ *
+ * The ordering matters and is not arbitrary. Identity is checked before absence, because a VM
+ * whose ownership markers do not match is not evidence about *our* instance at all — treating it
+ * as present would be worse than treating it as missing. Absence is checked before sizing, because
+ * comparing the CPU count of a machine that does not exist is meaningless.
+ */
+export function classifyDrift(desired: DesiredSnapshot, observed: ObservedSnapshot): DriftFinding {
+  // A provider resource carrying someone else's markers, or none. Never safe to touch.
+  if (observed.exists && !observed.markerMatch) {
+    return { classification: 'identity_mismatch', dangerous: true };
+  }
+  if (!observed.exists) {
+    // Absence is expected once an instance has been purged; anywhere else it is the most serious
+    // finding reconciliation can make, and it is never automatically correctable.
+    if (desired.lifecycleState === 'purged') return { classification: 'none', dangerous: false };
+    return { classification: 'missing_resource', dangerous: true };
+  }
+  if (observed.powerState === 'unknown') {
+    return { classification: 'ambiguous', dangerous: true };
+  }
+  if (desired.powerState !== 'unchanged' && observed.powerState !== desired.powerState) {
+    // Correctable: starting or stopping a VM to match accepted intent destroys nothing, though a
+    // consumer may still choose to act only on an operator's instruction.
+    return { classification: 'power_drift', dangerous: false };
+  }
+  if (
+    (observed.cpuCount !== undefined && observed.cpuCount !== desired.cpuCount) ||
+    (observed.memoryMiB !== undefined && observed.memoryMiB !== desired.memoryMiB)
+  ) {
+    return { classification: 'network_drift', dangerous: false };
+  }
+  if (observed.diskGiB !== undefined && observed.diskGiB < desired.diskGiB) {
+    // A disk smaller than desired can be grown; a disk *larger* is not drift, because growth is
+    // the only direction this system permits and a tenant may have grown it outside our record.
+    return { classification: 'network_drift', dangerous: false };
+  }
+  return { classification: 'none', dangerous: false };
 }

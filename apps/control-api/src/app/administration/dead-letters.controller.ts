@@ -33,8 +33,9 @@ export class DeadLettersController {
   public list(
     @CurrentActor() actor: Actor,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.application.listDeadLetters(actor, limit);
+    return this.application.listDeadLetters(actor, limit, cursor);
   }
 
   /** Accepts attributed replay intent into the transactional outbox. */

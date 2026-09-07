@@ -1,0 +1,57 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+flowchart LR
+  subgraph SRC["Repository"]
+    S1["apps/*, packages/*"]
+    S2["tools/docker/service.Dockerfile<br/>multi-stage, pinned by digest"]
+    S3["tools/docker/kafka-connect.Dockerfile<br/>tools/docker/gitops-repo.Dockerfile"]
+  end
+
+  subgraph BUILD["pnpm run k8s:build-images"]
+    B0["Resolve minikube docker-env<br/>DOCKER_HOST points at the node"]
+    B1["target: runtime<br/>APP=control-api / orchestrator /<br/>proxmox-provider / reconciler"]
+    B2["target: local-runtime<br/>adds OIDC fixture, Proxmox simulator,<br/>migration tooling"]
+    B0 --> B1
+    B0 --> B2
+  end
+
+  subgraph NODE["minikube node Docker daemon"]
+    N1["private-cloud/control-api:phase6"]
+    N2["private-cloud/provisioning-orchestrator:phase6"]
+    N3["private-cloud/proxmox-provider:phase6"]
+    N4["private-cloud/reconciler:phase6"]
+    N5["private-cloud/local-runner:phase6"]
+    N6["private-cloud/kafka-connect:phase6<br/>private-cloud/gitops-repo:phase6"]
+  end
+
+  subgraph RUN["Consumed by"]
+    R1["Rollout control-api"]
+    R2["Rollout workers"]
+    R3["Deployment local-oidc<br/>Job schema-migrations"]
+    R4["KafkaConnect / gitops-repo"]
+  end
+
+  S1 --> S2 --> B1
+  S1 --> S3
+  S2 --> B2
+  S3 --> B0
+  B1 --> N1 & N2 & N3 & N4
+  B2 --> N5
+  B0 --> N6
+  N1 --> R1
+  N2 & N3 & N4 --> R2
+  N5 --> R3
+  N6 --> R4
+
+  NOTE["No registry, no push, no image load.<br/>imagePullPolicy: IfNotPresent finds<br/>what the node already holds."]
+  NODE -.-> NOTE
+
+  classDef src fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+  classDef build fill:#fef3c7,stroke:#b45309,color:#78350f
+  classDef node fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+  classDef run fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef note fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  class S1,S2,S3 src
+  class B0,B1,B2 build
+  class N1,N2,N3,N4,N5,N6 node
+  class R1,R2,R3,R4 run
+  class NOTE note

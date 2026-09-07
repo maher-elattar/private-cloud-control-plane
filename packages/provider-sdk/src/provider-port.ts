@@ -164,3 +164,30 @@ export type CreateInstanceProviderPort = Pick<
   | 'observeInstance'
   | 'startInstance'
 >;
+
+/**
+ * The provider surface every persisted lifecycle saga needs, regardless of capability.
+ *
+ * `getTask` polls an asynchronous provider task and `observeInstance` proves the intended result
+ * actually happened. Both are reads, which is why they are safe for the shared engine to call on
+ * any capability's behalf.
+ */
+export type LifecycleProviderPort = Pick<ProviderPort, 'getTask' | 'observeInstance'>;
+
+/** The provider surface exercised by the power capability. */
+export type PowerProviderPort = LifecycleProviderPort &
+  Pick<ProviderPort, 'startInstance' | 'shutdownInstance' | 'stopInstance' | 'rebootInstance'>;
+
+/** The provider surface exercised by the resize capability. */
+export type ResizeProviderPort = LifecycleProviderPort & Pick<ProviderPort, 'resizeInstance'>;
+
+/** The provider surface exercised by the snapshot capabilities. */
+export type SnapshotProviderPort = LifecycleProviderPort &
+  Pick<ProviderPort, 'listSnapshots' | 'createSnapshot' | 'rollbackSnapshot' | 'deleteSnapshot'>;
+
+/** The provider surface exercised by the soft-deletion capability. */
+export type RetentionProviderPort = LifecycleProviderPort &
+  Pick<ProviderPort, 'markInstanceRetained'>;
+
+/** The provider surface exercised by the administrative purge capability. */
+export type PurgeProviderPort = LifecycleProviderPort & Pick<ProviderPort, 'purgeInstance'>;

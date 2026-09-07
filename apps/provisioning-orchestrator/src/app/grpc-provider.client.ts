@@ -34,8 +34,28 @@ import type {
   GetTaskResponse,
   ObserveInstanceRequest,
   ObserveInstanceResponse,
+  RebootInstanceRequest,
+  RebootInstanceResponse,
+  CreateSnapshotRequest,
+  CreateSnapshotResponse,
+  DeleteSnapshotRequest,
+  DeleteSnapshotResponse,
+  ListSnapshotsRequest,
+  ListSnapshotsResponse,
+  MarkInstanceRetainedRequest,
+  MarkInstanceRetainedResponse,
+  PurgeInstanceRequest,
+  PurgeInstanceResponse,
+  ResizeInstanceRequest,
+  ResizeInstanceResponse,
+  RollbackSnapshotRequest,
+  RollbackSnapshotResponse,
+  ShutdownInstanceRequest,
+  ShutdownInstanceResponse,
   StartInstanceRequest,
   StartInstanceResponse,
+  StopInstanceRequest,
+  StopInstanceResponse,
   SubmitCreateInstanceRequest,
   SubmitCreateInstanceResponse,
   ValidateProfileRequest,
@@ -44,6 +64,11 @@ import type {
 import {
   ProviderTransportError,
   type CreateInstanceProviderPort,
+  type PowerProviderPort,
+  type ResizeProviderPort,
+  type PurgeProviderPort,
+  type RetentionProviderPort,
+  type SnapshotProviderPort,
   type ProviderCallOptions,
 } from '@private-cloud/provider-sdk';
 
@@ -67,6 +92,16 @@ interface Phase3ProviderClient extends Client {
   getTask: UnaryMethod<GetTaskRequest, GetTaskResponse>;
   observeInstance: UnaryMethod<ObserveInstanceRequest, ObserveInstanceResponse>;
   startInstance: UnaryMethod<StartInstanceRequest, StartInstanceResponse>;
+  shutdownInstance: UnaryMethod<ShutdownInstanceRequest, ShutdownInstanceResponse>;
+  stopInstance: UnaryMethod<StopInstanceRequest, StopInstanceResponse>;
+  rebootInstance: UnaryMethod<RebootInstanceRequest, RebootInstanceResponse>;
+  resizeInstance: UnaryMethod<ResizeInstanceRequest, ResizeInstanceResponse>;
+  listSnapshots: UnaryMethod<ListSnapshotsRequest, ListSnapshotsResponse>;
+  createSnapshot: UnaryMethod<CreateSnapshotRequest, CreateSnapshotResponse>;
+  rollbackSnapshot: UnaryMethod<RollbackSnapshotRequest, RollbackSnapshotResponse>;
+  deleteSnapshot: UnaryMethod<DeleteSnapshotRequest, DeleteSnapshotResponse>;
+  markInstanceRetained: UnaryMethod<MarkInstanceRetainedRequest, MarkInstanceRetainedResponse>;
+  purgeInstance: UnaryMethod<PurgeInstanceRequest, PurgeInstanceResponse>;
 }
 
 /** Constructor shape produced by `makeGenericClientConstructor`. */
@@ -87,6 +122,42 @@ function timestamp(value: unknown): string | undefined {
   const wire = value as WireTimestamp;
   const milliseconds = Number(wire.seconds ?? 0) * 1_000 + Number(wire.nanos ?? 0) / 1_000_000;
   return new Date(milliseconds).toISOString();
+}
+
+/**
+ * Converts an ISO string from the contract into the protobuf `Timestamp` the wire expects.
+ *
+ * The inverse of {@link timestamp}, and it exists because only the decoding half was written.
+ * Sending the raw string makes proto-loader reject the message before it leaves this process —
+ * "retentionDeadline: object expected" — which surfaces as gRPC `INTERNAL`, is classified as a
+ * `protocol_error`, and fails the workflow permanently at its first mutation stage. The provider
+ * never sees the call, so nothing in its logs explains the failure.
+ *
+ * Only two request fields are timestamps: the retention deadline on `MarkInstanceRetained` and on
+ * `PurgeInstance`. Both are encoded here rather than at the two call sites so the pair cannot drift.
+ */
+function wireTimestamp(value: string | undefined): WireTimestamp | undefined {
+  if (!value) return undefined;
+  const milliseconds = Date.parse(value);
+  if (Number.isNaN(milliseconds)) return undefined;
+  return {
+    seconds: String(Math.floor(milliseconds / 1_000)),
+    nanos: (milliseconds % 1_000) * 1_000_000,
+  };
+}
+
+/**
+ * Re-encodes a request's `retentionDeadline` for the wire.
+ *
+ * The cast is the point of this function, and it is confined to it. The generated request types
+ * describe the *port* — where a deadline is an ISO string — while the wire carries a protobuf
+ * `Timestamp` message. The two disagree by design, so exactly one place has to say so, rather than
+ * each call site quietly asserting it.
+ */
+function withWireDeadline<TRequest extends { readonly retentionDeadline?: string | undefined }>(
+  request: TRequest,
+): TRequest {
+  return { ...request, retentionDeadline: wireTimestamp(request.retentionDeadline) } as TRequest;
 }
 
 /**
@@ -119,7 +190,15 @@ function transportError(error: ServiceError): ProviderTransportError {
 /** Fallback per-call deadline when the caller does not supply one. */
 const DEFAULT_DEADLINE_MS = 10_000;
 
-export class GrpcProviderClient implements CreateInstanceProviderPort {
+export class GrpcProviderClient
+  implements
+    CreateInstanceProviderPort,
+    PowerProviderPort,
+    ResizeProviderPort,
+    SnapshotProviderPort,
+    RetentionProviderPort,
+    PurgeProviderPort
+{
   private readonly client: Phase3ProviderClient;
 
   /**
@@ -231,6 +310,94 @@ export class GrpcProviderClient implements CreateInstanceProviderPort {
     options?: ProviderCallOptions,
   ): Promise<StartInstanceResponse> {
     return this.call(this.client.startInstance.bind(this.client), request, options);
+  }
+
+  /** Asks the guest to shut itself down. Mutation. */
+  public shutdownInstance(
+    request: ShutdownInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<ShutdownInstanceResponse> {
+    return this.call(this.client.shutdownInstance.bind(this.client), request, options);
+  }
+
+  /** Cuts power without waiting for the guest. Mutation. */
+  public stopInstance(
+    request: StopInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<StopInstanceResponse> {
+    return this.call(this.client.stopInstance.bind(this.client), request, options);
+  }
+
+  /** Restarts the guest. Mutation. */
+  public rebootInstance(
+    request: RebootInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<RebootInstanceResponse> {
+    return this.call(this.client.rebootInstance.bind(this.client), request, options);
+  }
+
+  /** Applies new sizing. Mutation. */
+  public resizeInstance(
+    request: ResizeInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<ResizeInstanceResponse> {
+    return this.call(this.client.resizeInstance.bind(this.client), request, options);
+  }
+
+  /** Lists snapshots. Read-only. */
+  public listSnapshots(
+    request: ListSnapshotsRequest,
+    options?: ProviderCallOptions,
+  ): Promise<ListSnapshotsResponse> {
+    return this.call(this.client.listSnapshots.bind(this.client), request, options);
+  }
+
+  /** Captures a snapshot. Mutation. */
+  public createSnapshot(
+    request: CreateSnapshotRequest,
+    options?: ProviderCallOptions,
+  ): Promise<CreateSnapshotResponse> {
+    return this.call(this.client.createSnapshot.bind(this.client), request, options);
+  }
+
+  /** Restores a snapshot, discarding everything written since. Mutation. */
+  public rollbackSnapshot(
+    request: RollbackSnapshotRequest,
+    options?: ProviderCallOptions,
+  ): Promise<RollbackSnapshotResponse> {
+    return this.call(this.client.rollbackSnapshot.bind(this.client), request, options);
+  }
+
+  /** Destroys a snapshot. Mutation. */
+  public deleteSnapshot(
+    request: DeleteSnapshotRequest,
+    options?: ProviderCallOptions,
+  ): Promise<DeleteSnapshotResponse> {
+    return this.call(this.client.deleteSnapshot.bind(this.client), request, options);
+  }
+
+  /** Detaches access and marks the VM retained. Mutation, but destroys nothing. */
+  public markInstanceRetained(
+    request: MarkInstanceRetainedRequest,
+    options?: ProviderCallOptions,
+  ): Promise<MarkInstanceRetainedResponse> {
+    return this.call(
+      this.client.markInstanceRetained.bind(this.client),
+      withWireDeadline(request),
+      options,
+    );
+  }
+
+  /** Destroys the VM. Irreversible. */
+  public purgeInstance(
+    request: PurgeInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<PurgeInstanceResponse> {
+    return this.call(
+      this.client.purgeInstance.bind(this.client),
+      withWireDeadline(request),
+      options,
+    );
   }
 
   /** Closes the channel on shutdown. */

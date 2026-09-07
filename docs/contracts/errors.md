@@ -15,7 +15,7 @@ REST failures use RFC 9457 `application/problem+json`. The stable `code` is safe
 | PROFILE_NOT_FOUND | getProviderProfile, updateProviderProfile, validateProviderProfile, activateProviderProfile, disableProviderProfile |
 | DEAD_LETTER_NOT_FOUND | replayDeadLetter |
 | MANUAL_REVIEW_NOT_FOUND | getManualReview, resolveManualReview |
-| VALIDATION_FAILED | createInstance, mutateInstance, upsertImage, upsertFlavor, upsertNetwork, createProviderProfile, updateProviderProfile, updateRetentionPolicy |
+| VALIDATION_FAILED | listImages, listFlavors, listNetworks, createInstance, listInstances, mutateInstance, listSnapshots, listOperations, upsertImage, upsertFlavor, upsertNetwork, listProviderProfiles, createProviderProfile, updateProviderProfile, listDeadLetters, listManualReviews, updateRetentionPolicy, listAuditEvents |
 | QUOTA_EXCEEDED | createInstance, mutateInstance, createSnapshot |
 | IDEMPOTENCY_CONFLICT | createInstance, retainInstance, mutateInstance, createSnapshot, rollbackSnapshot, deleteSnapshot, upsertImage, upsertFlavor, upsertNetwork, createProviderProfile, updateProviderProfile, validateProviderProfile, activateProviderProfile, disableProviderProfile, replayDeadLetter, purgeInstance, requestReconciliation, resolveManualReview, updateRetentionPolicy |
 | INSTANCE_BUSY | retainInstance, mutateInstance, createSnapshot, rollbackSnapshot, deleteSnapshot, purgeInstance |

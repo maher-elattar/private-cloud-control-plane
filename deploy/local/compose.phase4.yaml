@@ -362,10 +362,15 @@ services:
       <<: *service-build
       args: { APP: reconciler }
     environment:
-      <<: *runtime-environment
+      <<: [*runtime-environment, *database-environment]
       PORT: '3003'
+      # Reads only. The reconciler's client exposes one RPC and its store cannot express a
+      # correction, which is how SAFE-029's non-destructive rule is enforced.
+      PROVIDER_ADDRESS: proxmox-provider:50052
     depends_on:
       otel-collector: { condition: service_healthy }
+      seed: { condition: service_completed_successfully }
+      proxmox-provider: { condition: service_healthy }
     healthcheck:
       <<: *service-healthcheck
       test:

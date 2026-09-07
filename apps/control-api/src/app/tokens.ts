@@ -13,5 +13,5 @@
 export const CONTROL_PLANE_APPLICATION = Symbol('CONTROL_PLANE_APPLICATION');
 /** The shared Kysely connection pool. */
 export const POSTGRES_DATABASE = Symbol('POSTGRES_DATABASE');
-/** `ProjectionStore` — read-model writer driven by `ProjectionWorker`. */
+/** `ProjectionStore` — read-model writer driven by `ProjectionConsumer`. */
 export const PROJECTION_STORE = Symbol('PROJECTION_STORE');

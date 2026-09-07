@@ -1,0 +1,11 @@
+# Sync wave 1 — operators and custom resource definitions.
+#
+# These are Argo CD `Application` objects rather than vendored manifests. An operator is upstream
+# software with an upstream release cadence, and pinning a chart version records exactly as much
+# as vendoring its rendered output would while leaving the rendering to the tool that owns it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cloudnative-pg.yaml
+  - strimzi.yaml
+  - keda.yaml

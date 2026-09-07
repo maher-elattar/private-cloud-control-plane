@@ -1,0 +1,49 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+flowchart TD
+  START(["Fresh machine"]) --> C1
+
+  subgraph HOST["On the host, imperative and run by a person"]
+    C1["minikube start<br/>cluster, Gateway, storage class"]
+    C2["pnpm run k8s:build-images<br/>7 images into the node's Docker daemon"]
+    C3["pnpm run k8s:bootstrap<br/>Argo CD, Argo Rollouts, gitops-repo,<br/>AppProject, root Application"]
+    C4["pnpm run k8s:publish<br/>packs deploy/kubernetes into the<br/>in-cluster repository and syncs"]
+    C1 --> C2 --> C3 --> C4
+  end
+
+  C4 --> R1
+
+  subgraph CLUSTER["In the cluster, declarative and continuous"]
+    R1["Argo CD reconciles waves 0 to 5"]
+    R2["Rollouts promote through<br/>the analysis gate"]
+    R3["Steady state:<br/>10 Applications Synced and Healthy"]
+    R1 --> R2 --> R3
+  end
+
+  R3 --> V1
+
+  subgraph VERIFY["Proving it works"]
+    V1["pnpm run k8s:render-check<br/>161 objects, 8 policies"]
+    V2["pnpm run verify:phase6-runtime<br/>12 deployment checks and drills"]
+    V3["pnpm run postman:run<br/>62 API requests, full lifecycle"]
+    V1 --> V2 --> V3
+  end
+
+  V3 --> D1
+
+  subgraph DOWN["Coming down"]
+    D1["minikube stop<br/>everything persists, nothing is lost"]
+    D2["Argo CD prunes what<br/>the repository stops describing"]
+    D3["minikube delete<br/>destroys the cluster and its images"]
+    D1 -.-> D3
+  end
+
+  D2 -.-> R1
+
+  classDef host fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+  classDef cluster fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+  classDef verify fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef down fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+  class C1,C2,C3,C4 host
+  class R1,R2,R3 cluster
+  class V1,V2,V3 verify
+  class D1,D2,D3 down

@@ -1,0 +1,9 @@
+# Argo CD's own namespace. Kept in its own document so `kubectl apply` can create it before the
+# vendored install manifest, which declares namespaced objects but not the namespace itself.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+    pod-security.kubernetes.io/enforce: baseline

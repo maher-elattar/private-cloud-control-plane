@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import pg from 'pg';
 
@@ -361,6 +361,48 @@ async function publishRecord(payload, overrides = {}) {
   }
 }
 
+/**
+ * Consumes a topic from the beginning and returns records matching `predicate`.
+ *
+ * Uses a run-unique consumer group so it never disturbs a service's committed offsets, and
+ * stops as soon as `minimum` matches are seen rather than draining the whole topic.
+ */
+async function readRecords(topic, predicate, { minimum = 1, timeoutMs = 30_000 } = {}) {
+  const requireFromMessaging = createRequire(`${root}packages/messaging/package.json`);
+  const { Kafka, logLevel } = requireFromMessaging('kafkajs');
+  const kafka = new Kafka({
+    clientId: `phase4-reader-${runId}`,
+    brokers: ['127.0.0.1:9092'],
+    logLevel: logLevel.NOTHING,
+  });
+  const consumer = kafka.consumer({ groupId: `phase4-reader-${runId}-${randomUUID()}` });
+  const matches = [];
+  await consumer.connect();
+  try {
+    await consumer.subscribe({ topic, fromBeginning: true });
+    await consumer.run({
+      eachMessage: async ({ message }) => {
+        const headers = Object.fromEntries(
+          Object.entries(message.headers ?? {}).map(([key, value]) => [key, value?.toString()]),
+        );
+        const record = { headers, key: message.key?.toString(), value: message.value?.toString() };
+        if (predicate(record)) matches.push(record);
+      },
+    });
+    const deadline = Date.now() + timeoutMs;
+    while (matches.length < minimum && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  } finally {
+    await consumer.disconnect();
+  }
+  assert(
+    matches.length >= minimum,
+    `expected at least ${minimum} record(s) on ${topic}; saw ${matches.length}`,
+  );
+  return matches;
+}
+
 async function mockProxmoxState() {
   const output = await compose([
     'exec',
@@ -715,6 +757,8 @@ async function verifyFailurePolicy(tenant, admin) {
   const replaySpan = await tempoSpan(traceId(replayLabel), 'controlplane.replay.request', 60_000);
   assert((replaySpan.links ?? []).length >= 1, 'Replay span did not link the failed trace.');
 
+  const replayDelivery = await verifyAuthorizedReplayDelivery(deadLetter, replayReason, admin);
+
   evidence.checks.failurePolicy = {
     retryWaitEvents: retryRows[0].count,
     permanentState: permanentOperation.state,
@@ -725,8 +769,199 @@ async function verifyFailurePolicy(tenant, admin) {
     successfulReplayGeneration: replayed.replay_generation,
     originalEventIdRetained: deadLetter.original_event_id,
     replayTraceLinks: replaySpan.links.length,
+    ...replayDelivery,
   };
   return { exhausted, replayReason };
+}
+
+/**
+ * Publishes one deliberately invalid replay command and waits for its quarantine row.
+ *
+ * Returns the number of new rows carrying `failureCode`, so the caller can assert the exact
+ * classification rather than that "something was quarantined".
+ */
+async function quarantineDrill(failureCode, record, headerOverrides, value) {
+  const before = Number(
+    (
+      await query(
+        `SELECT count(*)::int AS count FROM workflow.poison_records WHERE failure_code = $1`,
+        [failureCode],
+      )
+    )[0].count,
+  );
+  await publishRecord(JSON.parse(value), {
+    key: record.key,
+    value,
+    headers: { ...record.headers, ...headerOverrides },
+  });
+  const after = await waitFor(
+    `${failureCode} quarantine row`,
+    async () => {
+      const count = Number(
+        (
+          await query(
+            `SELECT count(*)::int AS count FROM workflow.poison_records WHERE failure_code = $1`,
+            [failureCode],
+          )
+        )[0].count,
+      );
+      return count > before ? count : false;
+    },
+    30_000,
+    500,
+  );
+  return after - before;
+}
+
+/**
+ * Proves the authorized replay actually crossed the broker.
+ *
+ * WHY this exists separately from the assertions above: those check database end state, which a
+ * direct in-transaction insert would satisfy just as well. The whole point of checkpoint 9 was
+ * that the restored command must travel through `provisioning.commands.v1` and be re-admitted
+ * from a physical delivery, so the evidence has to come from broker coordinates and the record
+ * itself, not from the outcome.
+ */
+async function verifyAuthorizedReplayDelivery(deadLetter, replayReason, admin) {
+  log('verifying authorized replay delivery, durable authority, and rejection paths');
+
+  // 1. The generation-one receipt must carry real broker coordinates. Migration 0005 made these
+  //    NOT NULL precisely so a coordinate-free receipt can no longer represent a replay.
+  const receipt = (
+    await query(
+      `SELECT source_topic, source_partition, source_offset
+         FROM workflow.command_receipts
+        WHERE event_id = $1 AND replay_generation = 1
+          AND consumer_name = 'provisioning-orchestrator.v1'`,
+      [deadLetter.original_event_id],
+    )
+  )[0];
+  assert(receipt, 'No generation-one command receipt was recorded.');
+  assert.equal(receipt.source_topic, 'provisioning.commands.v1');
+  assert(receipt.source_partition !== null, 'Generation-one receipt has no partition.');
+  assert(receipt.source_offset !== null, 'Generation-one receipt has no offset.');
+
+  // 2. The durable authorization must be consumed, and must name the exact outbox row that was
+  //    published. A completed authorization pointing at a different row would mean the workflow
+  //    reopened on something other than the command the administrator authorized.
+  const authorization = (
+    await query(
+      `SELECT r.status, r.authorized_outbox_id, o.topic, o.replay_generation
+         FROM workflow.replay_requests r
+         JOIN workflow.outbox o ON o.outbox_id = r.authorized_outbox_id
+        WHERE r.original_event_id = $1 AND r.replay_generation = 1`,
+      [deadLetter.original_event_id],
+    )
+  )[0];
+  assert(authorization, 'No durable replay authorization was recorded.');
+  assert.equal(authorization.status, 'completed');
+  assert.equal(authorization.topic, 'provisioning.commands.v1');
+  assert.equal(Number(authorization.replay_generation), 1);
+
+  // 3. The broker record itself must carry generation one and the authorized outbox identity.
+  const [record] = await readRecords(
+    'provisioning.commands.v1',
+    (candidate) =>
+      candidate.headers['event-id'] === deadLetter.original_event_id &&
+      candidate.headers['replay-generation'] === '1',
+  );
+  assert.equal(record.headers['outbox-id'], authorization.authorized_outbox_id);
+  assert.equal(record.headers['schema-name'], 'instance.create.requested');
+  assert(record.headers.traceparent, 'Replayed command lost its W3C trace carrier.');
+
+  // 4. A replay command that does not match durable authority must be quarantined, not applied.
+  //    This is the only runtime exercise of `rejectReplayCommand`; without it the branch is
+  //    unproven.
+  //
+  //    WHY generation two rather than a forged generation-one header: admission deduplicates on
+  //    `(event_id, replay_generation)` and the payload hash *before* it consults authority, so a
+  //    byte-identical redelivery of generation one is correctly a duplicate and never reaches the
+  //    authority check. Only a generation with no receipt yet exercises the rejection.
+  const unauthorized = await quarantineDrill(
+    'REPLAY_COMMAND_UNAUTHORIZED',
+    record,
+    { 'replay-generation': '2', 'outbox-id': randomUUID() },
+    record.value,
+  );
+
+  //    The sibling branch: generation one already has a receipt, so a *different* payload under
+  //    the same identity is an identity conflict rather than an unauthorized replay. These two
+  //    codes were indistinguishable before checkpoint 9, which is what made them worth proving.
+  const conflictingCommand = JSON.parse(record.value);
+  const identityConflict = await quarantineDrill(
+    'REPLAY_COMMAND_IDENTITY_CONFLICT',
+    record,
+    { 'replay-generation': '1' },
+    JSON.stringify({
+      ...conflictingCommand,
+      data: { ...conflictingCommand.data, hostname: `forged-${runId}` },
+    }),
+  );
+
+  // The consumed authorization must stay consumed, and no second workflow may appear.
+  const unchanged = (
+    await query(
+      `SELECT r.status, w.replay_generation
+         FROM workflow.replay_requests r
+         JOIN workflow.workflows w ON w.event_id = r.original_event_id
+        WHERE r.original_event_id = $1 AND r.replay_generation = 1`,
+      [deadLetter.original_event_id],
+    )
+  )[0];
+  assert.equal(unchanged.status, 'completed');
+  assert.equal(Number(unchanged.replay_generation), 1);
+
+  // 5. A repeated replay request under the same idempotency key must replay the stored response
+  //    rather than authorize a second generation.
+  const authorizationsBefore = Number(
+    (
+      await query(
+        `SELECT count(*)::int AS count FROM workflow.replay_requests WHERE original_event_id = $1`,
+        [deadLetter.original_event_id],
+      )
+    )[0].count,
+  );
+  const duplicate = await jsonRequest(
+    `${apiBase}/v1/admin/dead-letters/${deadLetter.original_event_id}/replays`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${admin}`,
+        'content-type': 'application/json',
+        'idempotency-key': `replay-${runId}`,
+        traceparent: traceparent('duplicate-replay-request'),
+      },
+      body: JSON.stringify({ reason: replayReason }),
+    },
+    202,
+  );
+  assert.equal(duplicate.replayed, true, 'Repeated replay request was not reported as a replay.');
+  const authorizationsAfter = Number(
+    (
+      await query(
+        `SELECT count(*)::int AS count FROM workflow.replay_requests WHERE original_event_id = $1`,
+        [deadLetter.original_event_id],
+      )
+    )[0].count,
+  );
+  assert.equal(
+    authorizationsAfter,
+    authorizationsBefore,
+    'A duplicate replay request created a second authorization.',
+  );
+
+  return {
+    replayReceiptTopic: receipt.source_topic,
+    replayReceiptPartition: Number(receipt.source_partition),
+    replayReceiptOffset: String(receipt.source_offset),
+    replayAuthorizationStatus: authorization.status,
+    replayAuthorizationOutboxMatched: true,
+    replayBrokerGeneration: Number(record.headers['replay-generation']),
+    replayTraceCarrierPreserved: true,
+    unauthorizedReplayQuarantines: unauthorized,
+    identityConflictQuarantines: identityConflict,
+    duplicateReplayRequestAuthorizations: authorizationsAfter - authorizationsBefore,
+  };
 }
 
 async function verifyQuarantine() {
@@ -863,16 +1098,131 @@ async function verifyGrafanaProvisioning() {
   assert.deepEqual(datasources.map((source) => source.uid).sort(), ['prometheus', 'tempo']);
   const prometheus = datasources.find((source) => source.uid === 'prometheus');
   assert.equal(prometheus.jsonData.exemplarTraceIdDestinations[0].datasourceUid, 'tempo');
+  // WHY query through Grafana rather than Prometheus directly: a provisioned dashboard whose
+  // datasource proxy is misconfigured looks identical to a working one from the Prometheus side.
+  // Executing each panel's own query through Grafana proves the path an operator actually uses.
+  const panelQueries = dashboard.dashboard.panels.flatMap((panel) =>
+    (panel.targets ?? [])
+      .filter((target) => target.expr)
+      .map((target) => ({ panel: panel.title, expr: target.expr })),
+  );
+
+  // WHY this waits instead of sampling once: several panels use `increase(...[1h])`, which needs
+  // two scrapes before it yields anything. The counters these drills create are seconds old when
+  // this runs, so a single instantaneous check races the scrape interval and fails on a dashboard
+  // that is working correctly.
+  const livePanels = await waitFor(
+    'every dashboard panel to return data',
+    async () => {
+      const results = [];
+      for (const query of panelQueries) {
+        const result = await jsonRequest(
+          `http://127.0.0.1:3101/api/datasources/proxy/uid/prometheus/api/v1/query?query=${encodeURIComponent(query.expr)}`,
+        );
+        assert.equal(result.status, 'success', `Panel "${query.panel}" query failed.`);
+        results.push({ panel: query.panel, series: result.data.result.length });
+      }
+      return results.every((entry) => entry.series >= 1) ? results : false;
+    },
+    120_000,
+    5_000,
+  );
+
+  const screenshots = await captureScreenshots();
+
   evidence.checks.grafana = {
     dashboardUid: dashboard.dashboard.uid,
     panels: dashboard.dashboard.panels.map((panel) => panel.title),
     datasources: ['prometheus', 'tempo'],
     exemplarTraceDestination: 'tempo',
-    screenshots: [
-      'docs/verification/evidence/phase4-grafana-dashboard.png',
-      'docs/verification/evidence/phase4-tempo-trace.png',
-    ],
+    livePanelQueries: livePanels,
+    screenshots,
   };
+}
+
+/**
+ * Captures the dashboard and a trace waterfall with headless Chrome.
+ *
+ * Previously this function recorded two file paths as though the run had produced them, while the
+ * PNGs on disk were months-old and taken by hand. Evidence that names an artefact the run did not
+ * create is worse than no evidence, so this either captures the files or records why it could not.
+ *
+ * Grafana runs with anonymous viewer access in the local topology, so no credential is needed and
+ * none is embedded here.
+ */
+async function captureScreenshots() {
+  let chrome;
+  for (const candidate of [
+    'google-chrome-stable',
+    'google-chrome',
+    'chromium',
+    'chromium-browser',
+  ]) {
+    try {
+      await execFile(candidate, ['--version'], { ...execOptions, timeout: 15_000 });
+      chrome = candidate;
+      break;
+    } catch {
+      // Not installed under this name; try the next.
+    }
+  }
+  if (!chrome) return { captured: false, reason: 'No headless Chrome binary was found on PATH.' };
+
+  const happyTraceId = evidence.fixtures['proxmox-happy']?.traceId;
+  const targets = [
+    {
+      name: 'phase4-grafana-dashboard.png',
+      url: 'http://127.0.0.1:3101/d/private-cloud-phase4-event-pipeline/private-cloud-event-pipeline?kiosk&from=now-1h&to=now',
+    },
+    ...(happyTraceId
+      ? [
+          {
+            name: 'phase4-tempo-trace.png',
+            url: `http://127.0.0.1:3101/explore?schemaVersion=1&panes=${encodeURIComponent(
+              JSON.stringify({
+                a: {
+                  datasource: 'tempo',
+                  queries: [{ query: happyTraceId, queryType: 'traceql' }],
+                },
+              }),
+            )}&orgId=1`,
+          },
+        ]
+      : []),
+  ];
+
+  const captured = [];
+  for (const target of targets) {
+    const destination = new URL(target.name, evidenceDirectory).pathname;
+    try {
+      await execFile(
+        chrome,
+        [
+          '--headless=new',
+          '--disable-gpu',
+          '--no-sandbox',
+          '--hide-scrollbars',
+          '--window-size=1920,1200',
+          // Panels need time to run their queries and paint before the frame is grabbed.
+          '--virtual-time-budget=20000',
+          `--screenshot=${destination}`,
+          target.url,
+        ],
+        { ...execOptions, timeout: 120_000 },
+      );
+      const { size } = await stat(destination);
+      // A blank or truncated capture is not evidence; fail loudly rather than record the path.
+      assert(size > 20_000, `${target.name} is ${size} bytes, which is too small to be a render.`);
+      captured.push({ file: `docs/verification/evidence/${target.name}`, bytes: size });
+    } catch (error) {
+      return {
+        captured: false,
+        reason: `Capturing ${target.name} failed: ${error instanceof Error ? error.message : String(error)}`,
+        files: captured,
+      };
+    }
+  }
+  return { captured: true, files: captured };
 }
 
 async function restoreHealthyStack() {
@@ -900,6 +1250,87 @@ async function restoreHealthyStack() {
   }
 }
 
+/**
+ * Proves every owner outbox record reached an in-scope consumer once the drills settle.
+ *
+ * This is the roadmap's own "pending outbox records drain after recovery" criterion, asserted
+ * rather than assumed. It also guards the gauge definition itself: before this check existed the
+ * backlog counted `audit.events.v1` facts, which have no consumer in this phase, so the gauge rose
+ * forever on a perfectly healthy stack and the dashboard panel it feeds was a standing false
+ * alarm.
+ */
+async function verifyOutboxDrained() {
+  log('verifying both owner outboxes drain to zero');
+  const drained = await waitFor(
+    'owner outboxes to drain',
+    async () => {
+      const rows = await query(
+        `SELECT
+           (SELECT count(*)::int
+              FROM control.outbox o
+             WHERE o.topic <> 'audit.events.v1'
+               AND CASE
+                 WHEN o.topic = 'reconciliation.events.v1' THEN NOT EXISTS (
+                   SELECT 1 FROM projection.event_receipts r
+                    WHERE r.event_id = o.event_id
+                      AND r.replay_generation = o.replay_generation
+                      AND r.consumer_name = 'control-api.reconciliation-events.v1')
+                 ELSE NOT EXISTS (
+                   SELECT 1 FROM workflow.command_receipts r
+                    WHERE r.consumer_name = 'provisioning-orchestrator.v1'
+                      AND r.event_id = o.event_id
+                      AND r.replay_generation = o.replay_generation) END
+               AND NOT EXISTS (
+                 SELECT 1 FROM workflow.dead_letters d
+                  WHERE d.original_event_id = o.event_id)) AS control_pending,
+           (SELECT count(*)::int
+              FROM workflow.outbox o
+             WHERE o.topic <> 'audit.events.v1'
+               AND CASE
+                 WHEN o.topic = 'provisioning.commands.v1' THEN NOT EXISTS (
+                   SELECT 1 FROM workflow.command_receipts r
+                    WHERE r.consumer_name = 'provisioning-orchestrator.v1'
+                      AND r.event_id = o.event_id
+                      AND r.replay_generation = o.replay_generation)
+                 ELSE NOT EXISTS (
+                   SELECT 1 FROM projection.event_receipts r
+                    WHERE r.event_id = o.event_id
+                      AND r.replay_generation = o.replay_generation
+                      AND r.consumer_name = CASE
+                        WHEN o.topic = 'provisioning.dlq.v1' THEN 'control-api.provisioning-dlq.v1'
+                        ELSE 'control-api.provisioning-events.v1' END)
+               END) AS workflow_pending`,
+      );
+      const row = rows[0];
+      return row.control_pending === 0 && row.workflow_pending === 0 ? row : false;
+    },
+    120_000,
+    5_000,
+  );
+
+  // The exported gauge must agree with the query, or the dashboard is telling a different story
+  // from the database.
+  const gauges = await waitFor(
+    'exported outbox gauges to reach zero',
+    async () => {
+      const result = await jsonRequest(
+        `${prometheusBase}/api/v1/query?query=${encodeURIComponent('max(controlplane_outbox_pending)')}`,
+      );
+      const value = Number(result.data.result[0]?.value?.[1] ?? NaN);
+      return value === 0 ? value : false;
+    },
+    120_000,
+    5_000,
+  );
+
+  evidence.checks.outboxDrained = {
+    controlPending: drained.control_pending,
+    workflowPending: drained.workflow_pending,
+    exportedMaxPending: gauges,
+    auditFactsExcluded: true,
+  };
+}
+
 let failure;
 try {
   await verifyInitialEnvironment();
@@ -919,6 +1350,7 @@ try {
     ],
   );
   await verifyGrafanaProvisioning();
+  await verifyOutboxDrained();
   evidence.status = 'passed';
 } catch (error) {
   failure = error;

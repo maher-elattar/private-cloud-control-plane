@@ -1,0 +1,51 @@
+# Sync wave 1 — KEDA.
+#
+# Event-driven autoscaling. The orchestrator's work arrives as Kafka records, so the honest signal
+# for how many orchestrators to run is consumer-group lag, not CPU. A CPU-driven autoscaler on a
+# worker that spends its time waiting on a provider scales down exactly when the backlog is
+# growing.
+#
+# What KEDA scales here is a `Rollout`, not a `Deployment`. KEDA addresses it through
+# `scaleTargetRef.apiVersion: argoproj.io/v1alpha1`, and Argo Rollouts hands over replica control
+# for the duration; see `applications/autoscaling.yaml`.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-keda
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '1'
+spec:
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keda
+  source:
+    repoURL: https://kedacore.github.io/charts
+    chart: keda
+    targetRevision: 2.20.2
+    helm:
+      releaseName: keda
+      valuesObject:
+        resources:
+          operator:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          metricServer:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          webhooks:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # See `argocd/applications.yaml`: without a server-side diff, an operator CRD is reported
+      # OutOfSync forever over defaults the API server added.
+      - ServerSideDiff=true
+    retry:
+      limit: 5
+      backoff: { duration: 10s, factor: 2, maxDuration: 3m }

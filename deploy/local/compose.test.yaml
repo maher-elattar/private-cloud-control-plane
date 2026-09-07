@@ -1,0 +1,117 @@
+# Ephemeral integration-test stack.
+#
+# Deliberately separate from `compose.phase4.yaml`. That stack is long-lived, holds the evidence a
+# passing verification run left behind, and is bound to fixed host ports. Integration tests must be
+# able to run repeatedly, in parallel with it, and to destroy their own state without touching any
+# of that — so this file uses its own project name, its own host ports, and no named volumes at all.
+#
+# Storage is tmpfs rather than a volume. A test database that survives a crash is a liability: the
+# next run inherits rows it did not create, which is exactly the failure that made an early Phase 4
+# drill report 28 audit rows instead of 7.
+#
+# Postgres starts by default because every store-level test needs it. Kafka and Connect sit behind
+# the `broker` profile so a store-only run does not pay to start a JVM:
+#
+#   docker compose -f deploy/local/compose.test.yaml up -d
+#   docker compose -f deploy/local/compose.test.yaml --profile broker up -d
+name: private-cloud-test
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    command:
+      - postgres
+      # Matches the phase-4 stack so logical decoding behaves identically under test, and so a
+      # Debezium-backed test needs no different server configuration.
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=4
+      - -c
+      - max_wal_senders=4
+      # Durability is worthless for a throwaway database and costs real time per transaction.
+      - -c
+      - fsync=off
+      - -c
+      - full_page_writes=off
+      - -c
+      - synchronous_commit=off
+    environment:
+      POSTGRES_DB: private_cloud_test
+      POSTGRES_USER: private_cloud_test
+      POSTGRES_PASSWORD: private_cloud_test
+    # 55433 rather than 55432: the phase-4 database keeps that port and must stay reachable.
+    ports: ['55433:5432']
+    tmpfs: ['/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U private_cloud_test -d private_cloud_test']
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
+  kafka:
+    profiles: ['broker']
+    image: private-cloud/kafka:test
+    build:
+      context: ../..
+      dockerfile: tools/docker/kafka.Dockerfile
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: CONTROLLER://:9093,INTERNAL://:29092,HOST://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,HOST://127.0.0.1:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports: ['9094:9094']
+    tmpfs: ['/var/lib/kafka/data']
+    healthcheck:
+      test: ['CMD', 'nc', '-z', '127.0.0.1', '29092']
+      interval: 2s
+      timeout: 2s
+      retries: 60
+      start_period: 5s
+
+  kafka-init:
+    profiles: ['broker']
+    image: private-cloud/kafka:test
+    depends_on:
+      kafka: { condition: service_healthy }
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+    entrypoint: ['/bin/bash', '/scripts/create-topics.sh']
+    volumes: ['./kafka:/scripts:ro']
+
+  debezium-connect:
+    profiles: ['broker']
+    image: private-cloud/debezium-connect:test
+    build:
+      context: ../..
+      dockerfile: tools/docker/debezium-connect.Dockerfile
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: private-cloud-test-connect
+      CONFIG_STORAGE_TOPIC: connect-configs
+      OFFSET_STORAGE_TOPIC: connect-offsets
+      STATUS_STORAGE_TOPIC: connect-status
+      CONFIG_STORAGE_REPLICATION_FACTOR: '1'
+      OFFSET_STORAGE_REPLICATION_FACTOR: '1'
+      STATUS_STORAGE_REPLICATION_FACTOR: '1'
+      CONNECT_SCHEDULED_REBALANCE_MAX_DELAY_MS: '5000'
+    ports: ['8084:8083']
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:8083/connectors || exit 1']
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 10s

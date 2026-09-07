@@ -1,0 +1,100 @@
+# Sync wave 2 — application topics.
+#
+# Declared as `KafkaTopic` objects rather than created by a shell script against a broker, which
+# is the substantive difference between this deployment and the local Compose stack: a topic's
+# partition count and retention are reviewable in a diff, and a hand-made topic that drifts from
+# this file is reverted by the topic operator.
+#
+# Six partitions each. Ordering in this system is per instance, not per topic, and the partition
+# key is the aggregate identifier, so six partitions buy parallelism without weakening any
+# ordering guarantee the workflows rely on.
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: provisioning-commands-v1
+  namespace: private-cloud
+  labels:
+    strimzi.io/cluster: control-plane-kafka
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  # Commands republished from the outbox by change data capture. The orchestrator's only ingress.
+  topicName: provisioning.commands.v1
+  partitions: 6
+  replicas: 1
+  config:
+    message.timestamp.type: LogAppendTime
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: provisioning-events-v1
+  namespace: private-cloud
+  labels:
+    strimzi.io/cluster: control-plane-kafka
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  # Workflow facts. Read by the projection consumer to build the read model.
+  topicName: provisioning.events.v1
+  partitions: 6
+  replicas: 1
+  config:
+    message.timestamp.type: LogAppendTime
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: provisioning-dlq-v1
+  namespace: private-cloud
+  labels:
+    strimzi.io/cluster: control-plane-kafka
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  # Governed dead letters. Nothing is deleted here; a record leaves only by authorized replay.
+  topicName: provisioning.dlq.v1
+  partitions: 6
+  replicas: 1
+  config:
+    message.timestamp.type: LogAppendTime
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: audit-events-v1
+  namespace: private-cloud
+  labels:
+    strimzi.io/cluster: control-plane-kafka
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  # Append-only record of who asked for what. Written by the outbox, consumed by nothing in this deployment.
+  topicName: audit.events.v1
+  partitions: 6
+  replicas: 1
+  config:
+    message.timestamp.type: LogAppendTime
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: reconciliation-events-v1
+  namespace: private-cloud
+  labels:
+    strimzi.io/cluster: control-plane-kafka
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  # Drift reported by the reconciliation sweep. Never a correction, only an observation.
+  topicName: reconciliation.events.v1
+  partitions: 6
+  replicas: 1
+  config:
+    message.timestamp.type: LogAppendTime

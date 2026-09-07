@@ -1,0 +1,11 @@
+# Argo CD v3.5.1, vendored from the pinned upstream release.
+#
+# WHY vendored rather than referenced: a GitOps root must be reproducible without reaching the
+# public internet at apply time, and the version that is running has to be readable from the
+# repository rather than inferred from a live cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - namespace.yaml
+  - install.yaml

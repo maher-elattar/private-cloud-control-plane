@@ -5,15 +5,8 @@ import {
   type OnApplicationBootstrap,
   type OnModuleDestroy,
 } from '@nestjs/common';
-import {
-  isInstanceCreateRequestedV1,
-  isProvisioningReplayRequestedV1,
-  type WorkflowStore,
-} from '@private-cloud/application';
-import type {
-  InstanceCreateRequestedV1,
-  ProvisioningReplayRequestedV1,
-} from '@private-cloud/contracts';
+import { isProvisioningReplayRequestedV1, type WorkflowStore } from '@private-cloud/application';
+import type { ProvisioningReplayRequestedV1 } from '@private-cloud/contracts';
 import {
   KafkaConsumerRunner,
   MessageDecodeError,
@@ -30,28 +23,11 @@ import {
   structuredLog,
   withSpan,
 } from '@private-cloud/observability';
+import { isSupportedCommandSchema, narrowCommand } from './command-routing';
 import { WORKFLOW_STORE } from './tokens';
 
 const COMMAND_TOPIC = 'provisioning.commands.v1';
 const CONSUMER_GROUP = 'provisioning-orchestrator.v1';
-
-/** Rejects malformed create commands before a workflow can be partially admitted. */
-function createCommand(record: IncomingKafkaRecord): InstanceCreateRequestedV1 {
-  const event = decodeEventEnvelope(record.value);
-  if (event.schemaName !== 'instance.create.requested' || event.schemaVersion !== 1) {
-    throw new PermanentMessageError(
-      'COMMAND_SCHEMA_UNSUPPORTED',
-      'Create command schema or version is unsupported.',
-    );
-  }
-  if (!isInstanceCreateRequestedV1(event)) {
-    throw new PermanentMessageError(
-      'COMMAND_PAYLOAD_INVALID',
-      'Create command payload does not satisfy the supported contract.',
-    );
-  }
-  return event;
-}
 
 /** Narrows a governed replay request. */
 function replayRequest(record: IncomingKafkaRecord): ProvisioningReplayRequestedV1 {
@@ -92,28 +68,32 @@ export class CommandConsumer implements OnApplicationBootstrap, OnModuleDestroy 
 
   private async handle(record: IncomingKafkaRecord): Promise<MessageHandlingResult> {
     const envelope = decodeEventEnvelope(record.value);
-    if (envelope.schemaName === 'instance.create.requested') {
-      const command = createCommand(record);
-      const outcome = await withSpan(
+    if (isSupportedCommandSchema(envelope.schemaName)) {
+      const command = narrowCommand(record);
+      const admission = await withSpan(
         'controlplane.transaction.command_admission',
         { 'event.schema.name': command.schemaName },
-        () => this.store.admitCreateCommand(command, record.delivery),
+        () => this.store.admitCommand(command, record.delivery),
       );
       structuredLog('info', 'provisioning_command_admitted', {
         schema_name: command.schemaName,
-        outcome,
+        outcome: admission.outcome,
         operation_id: command.operationId,
         instance_id: command.aggregateId,
+        ...(admission.outcome === 'rejected' ? { failure_code: admission.failureCode } : {}),
       });
-      if (outcome === 'rejected') {
-        recordQuarantine('REPLAY_COMMAND_UNAUTHORIZED');
-        recordReplay('rejected');
+      if (admission.outcome === 'rejected') {
+        // WHY: the reason travels with the admission result. Hardcoding one cause here made every
+        // identity conflict and state conflict report itself as an unauthorized replay, which is
+        // the one signal an operator has for telling a forged redelivery from a lost race.
+        recordQuarantine(admission.failureCode);
+        recordReplay('rejected', 'command');
       }
       return {
         outcome:
-          outcome === 'accepted'
+          admission.outcome === 'accepted'
             ? 'handled'
-            : outcome === 'duplicate'
+            : admission.outcome === 'duplicate'
               ? 'duplicate'
               : 'quarantined',
         schemaName: command.schemaName,
@@ -127,7 +107,7 @@ export class CommandConsumer implements OnApplicationBootstrap, OnModuleDestroy 
         { 'event.schema.name': request.schemaName },
         () => this.store.admitReplayRequest(request, record.delivery),
       );
-      recordReplay(outcome);
+      recordReplay(outcome, 'request');
       return {
         outcome: outcome === 'duplicate' ? 'duplicate' : 'handled',
         schemaName: request.schemaName,

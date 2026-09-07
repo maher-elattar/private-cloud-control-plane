@@ -1,0 +1,72 @@
+# The blast radius of the GitOps control loop, written down.
+#
+# An `AppProject` is the only place where "what is this pipeline allowed to change" is a rule
+# rather than a convention. Without one, every `Application` runs with the controller's full
+# cluster-admin, and the difference between "deploys the control plane" and "can delete the
+# monitoring stack" is that nobody has tried.
+#
+# The lists below are deliberately narrow and will need editing when the deployment grows. That is
+# the point: adding a namespace or a cluster-scoped kind should be a visible decision.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: private-cloud
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    # Ahead of every Application, because an Application naming a project that does not exist is
+    # rejected outright. `tools/kubernetes/bootstrap.mjs` applies this file directly for the same
+    # reason, on the first install where no root application exists yet to order anything.
+    argocd.argoproj.io/sync-wave: '-1'
+  finalizers:
+    # Without this, deleting the project orphans its applications' resources instead of removing
+    # them, and the cluster keeps running workloads no manifest describes any more.
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Private cloud control plane and the operators it depends on
+
+  sourceRepos:
+    # The in-cluster repository this deployment publishes to.
+    - git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git
+    # The upstream operator charts, pinned by version in `platform/`.
+    - https://cloudnative-pg.github.io/charts
+    - https://strimzi.io/charts/
+    - https://kedacore.github.io/charts
+
+  destinations:
+    - { server: https://kubernetes.default.svc, namespace: private-cloud }
+    - { server: https://kubernetes.default.svc, namespace: cnpg-system }
+    - { server: https://kubernetes.default.svc, namespace: strimzi-system }
+    - { server: https://kubernetes.default.svc, namespace: keda }
+    # Dashboards and alert rules are discovered by the monitoring stack from its own namespace.
+    - { server: https://kubernetes.default.svc, namespace: monitoring }
+    # The applications that describe the other applications.
+    - { server: https://kubernetes.default.svc, namespace: argocd }
+    # KEDA runs an aggregated metrics API server, and every aggregated API server needs one
+    # RoleBinding in kube-system against `extension-apiserver-authentication-reader` so the API
+    # server can authenticate to it. That single object — `keda-operator-auth-reader` — is the
+    # only thing this destination is here for, and `namespaceResourceBlacklist` below is what
+    # keeps it from becoming a general grant.
+    - { server: https://kubernetes.default.svc, namespace: kube-system }
+
+  clusterResourceWhitelist:
+    # Namespaces the operators need, and the CRDs they install. Everything else cluster-scoped —
+    # ClusterRoleBindings that are not the operators' own, ValidatingWebhookConfigurations,
+    # PersistentVolumes — is refused.
+    - { group: '', kind: Namespace }
+    - { group: apiextensions.k8s.io, kind: CustomResourceDefinition }
+    - { group: rbac.authorization.k8s.io, kind: ClusterRole }
+    - { group: rbac.authorization.k8s.io, kind: ClusterRoleBinding }
+    - { group: admissionregistration.k8s.io, kind: ValidatingWebhookConfiguration }
+    - { group: admissionregistration.k8s.io, kind: MutatingWebhookConfiguration }
+    - { group: apiregistration.k8s.io, kind: APIService }
+    - { group: storage.k8s.io, kind: StorageClass }
+
+  namespaceResourceBlacklist:
+    # Cluster-wide admission and scheduling policy is never this pipeline's to set. A manifest
+    # that could write a ResourceQuota or a LimitRange into `kube-system` could starve the control
+    # plane of the cluster itself, which is a much larger failure than anything it deploys.
+    - { group: '', kind: ResourceQuota }
+    - { group: '', kind: LimitRange }
+    - { group: policy, kind: PodSecurityPolicy }
+    - { group: node.k8s.io, kind: RuntimeClass }

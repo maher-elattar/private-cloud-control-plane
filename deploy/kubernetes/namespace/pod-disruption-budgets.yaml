@@ -1,0 +1,72 @@
+# Voluntary-disruption floors.
+#
+# `minAvailable: 1` rather than a percentage: the interesting question during a node drain is not
+# what fraction survives but whether *anything* survives, and a percentage on two replicas rounds
+# in ways that are easy to get wrong.
+#
+# Every workload below runs at least two replicas so that this budget can be satisfied without
+# blocking a drain outright. A single-replica workload with a budget is a workload that can never
+# be evicted, which is worse than having no budget at all.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: control-api
+  namespace: private-cloud
+  labels:
+    { app.kubernetes.io/name: control-api, app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: control-api }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: provisioning-orchestrator
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: provisioning-orchestrator
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: provisioning-orchestrator }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: proxmox-provider
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: proxmox-provider
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  # Zero, because this rollout runs a single replica while the in-memory fake provider is the
+  # configured adapter. `minAvailable: 1` against one replica blocks every voluntary eviction
+  # outright — a node drain would hang rather than proceed — which trades a process that loses its
+  # in-memory ledger on any restart for a cluster that cannot be maintained.
+  #
+  # WHY this stays `minAvailable` rather than becoming `maxUnavailable: 1`, which reads better: the
+  # two are mutually exclusive, and a Server-Side Apply that introduces one while the stored object
+  # still carries the other is rejected by the API server. Keeping the same field makes this a value
+  # change that applies cleanly. Restore `minAvailable: 1` when the Proxmox adapter restores two
+  # replicas.
+  minAvailable: 0
+  selector:
+    matchLabels: { app.kubernetes.io/name: proxmox-provider }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: reconciler
+  namespace: private-cloud
+  labels:
+    { app.kubernetes.io/name: reconciler, app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: reconciler }

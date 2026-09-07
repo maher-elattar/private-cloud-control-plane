@@ -1,0 +1,2155 @@
+{
+  "capturedAt": "2026-09-07T14:51:07.275Z",
+  "collection": "Private Cloud Control Plane — Phase 6 (minikube)",
+  "gateway": "http://192.168.49.2:30000",
+  "gatewayHost": "control-plane.test",
+  "summary": {
+    "requests": 63,
+    "skipped": 1,
+    "failedRequests": 0,
+    "assertionsPassed": 100
+  },
+  "exchanges": [
+    {
+      "folder": "00 Identity",
+      "name": "Mint tenant token",
+      "method": "GET",
+      "url": "http://127.0.0.1:18085/token?roles=tenant_developer&projects=00000000-0000-4000-8000-000000000001",
+      "requestHeaders": {},
+      "status": 200,
+      "responseBody": {
+        "access_token": "<redacted>",
+        "expires_in": 900
+      }
+    },
+    {
+      "folder": "00 Identity",
+      "name": "Mint administrator token",
+      "method": "GET",
+      "url": "http://127.0.0.1:18085/token?roles=platform_administrator&projects=00000000-0000-4000-8000-000000000001",
+      "requestHeaders": {},
+      "status": 200,
+      "responseBody": {
+        "access_token": "<redacted>",
+        "expires_in": 900
+      }
+    },
+    {
+      "folder": "00 Identity",
+      "name": "Mint foreign-project token",
+      "method": "GET",
+      "url": "http://127.0.0.1:18085/token?roles=tenant_developer&projects=00000000-0000-4000-8000-0000000000ff",
+      "requestHeaders": {},
+      "status": 200,
+      "responseBody": {
+        "access_token": "<redacted>",
+        "expires_in": 900
+      }
+    },
+    {
+      "folder": "01 Health and routing",
+      "name": "Liveness (active / blue)",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/health/live",
+      "requestHeaders": {
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "service": "control-api",
+        "status": "ok"
+      }
+    },
+    {
+      "folder": "01 Health and routing",
+      "name": "Readiness (active / blue)",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/health/ready",
+      "requestHeaders": {
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "service": "control-api",
+        "status": "ok"
+      }
+    },
+    {
+      "folder": "01 Health and routing",
+      "name": "Liveness through the green header",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/health/live",
+      "requestHeaders": {
+        "Host": "control-plane.test",
+        "X-Canary": "green"
+      },
+      "status": 200,
+      "responseBody": {
+        "service": "control-api",
+        "status": "ok"
+      }
+    },
+    {
+      "folder": "02 Project, quota, and catalog",
+      "name": "Get project",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "name": "lab-sandbox",
+        "enabled": true,
+        "createdAt": "2026-09-05T14:37:33.883Z",
+        "updatedAt": "2026-09-05T14:37:33.883Z"
+      }
+    },
+    {
+      "folder": "02 Project, quota, and catalog",
+      "name": "Get project quota",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/quota",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "limits": {
+          "instances": 20,
+          "cpuCount": 160,
+          "memoryMiB": 327680,
+          "diskGiB": 2560,
+          "ipv4Addresses": 20,
+          "snapshots": 60
+        },
+        "usage": {
+          "instances": 16,
+          "cpuCount": 48,
+          "memoryMiB": 98304,
+          "diskGiB": 768,
+          "ipv4Addresses": 16,
+          "snapshots": 4
+        },
+        "measuredAt": "2026-09-07T14:50:39.219Z"
+      }
+    },
+    {
+      "folder": "02 Project, quota, and catalog",
+      "name": "List images",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/catalog/images",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "items": [
+          {
+            "id": "ubuntu-24-04-cloud",
+            "name": "Ubuntu 24.04 Cloud",
+            "providerProfileId": "fake-lab",
+            "enabled": true,
+            "architecture": "x86_64",
+            "createdAt": "2026-09-05T14:37:33.883Z",
+            "updatedAt": "2026-09-05T14:37:33.883Z"
+          }
+        ],
+        "page": {
+          "limit": 50,
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "folder": "02 Project, quota, and catalog",
+      "name": "List flavors",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/catalog/flavors",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "items": [
+          {
+            "id": "lab-medium",
+            "name": "Lab Medium",
+            "cpuCount": 4,
+            "memoryMiB": 8192,
+            "minimumDiskGiB": 64,
+            "enabled": true,
+            "createdAt": "2026-09-05T14:37:33.883Z",
+            "updatedAt": "2026-09-05T14:37:33.883Z"
+          },
+          {
+            "id": "lab-small",
+            "name": "Lab Small",
+            "cpuCount": 2,
+            "memoryMiB": 4096,
+            "minimumDiskGiB": 32,
+            "enabled": true,
+            "createdAt": "2026-09-05T14:37:33.883Z",
+            "updatedAt": "2026-09-05T14:37:33.883Z"
+          }
+        ],
+        "page": {
+          "limit": 50,
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "folder": "02 Project, quota, and catalog",
+      "name": "List networks",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/catalog/networks",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "items": [
+          {
+            "id": "lab-primary",
+            "name": "Lab primary",
+            "ipv4Cidr": "192.0.2.0/27",
+            "gateway": "192.0.2.1",
+            "dnsServers": [
+              "192.0.2.53"
+            ],
+            "exclusions": [
+              "192.0.2.2"
+            ],
+            "enabled": true,
+            "createdAt": "2026-09-05T14:37:33.883Z",
+            "updatedAt": "2026-09-05T14:37:33.883Z"
+          }
+        ],
+        "page": {
+          "limit": 50,
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "folder": "03 Create an instance",
+      "name": "Create instance",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "dd43fe39-6532-45d9-94a7-fa4777780532",
+        "X-Correlation-Id": "cddc603d-412f-4e1a-9771-9bfa6df5f72d",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "imageId": "ubuntu-24-04-cloud",
+        "flavorId": "lab-small",
+        "networkId": "lab-primary",
+        "hostname": "postman-mtrcya3s",
+        "sshPublicKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKeyForDocumentationOnly000000000000 lab@example.invalid"
+        ]
+      },
+      "status": 202,
+      "responseBody": {
+        "operationId": "759f1a2c-f01c-415f-b186-bcd3255422cd",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "acceptedAt": "2026-09-07T14:50:39.894Z",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/759f1a2c-f01c-415f-b186-bcd3255422cd",
+        "replayed": false
+      }
+    },
+    {
+      "folder": "03 Create an instance",
+      "name": "Create instance again with the same key (replay)",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "dd43fe39-6532-45d9-94a7-fa4777780532",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "imageId": "ubuntu-24-04-cloud",
+        "flavorId": "lab-small",
+        "networkId": "lab-primary",
+        "hostname": "postman-mtrcya3s",
+        "sshPublicKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKeyForDocumentationOnly000000000000 lab@example.invalid"
+        ]
+      },
+      "status": 202,
+      "responseBody": {
+        "replayed": true,
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/759f1a2c-f01c-415f-b186-bcd3255422cd",
+        "acceptedAt": "2026-09-07T14:50:39.894Z",
+        "operationId": "759f1a2c-f01c-415f-b186-bcd3255422cd"
+      }
+    },
+    {
+      "folder": "03 Create an instance",
+      "name": "Create instance with the same key but a different payload",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "dd43fe39-6532-45d9-94a7-fa4777780532",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "imageId": "ubuntu-24-04-cloud",
+        "flavorId": "lab-medium",
+        "networkId": "lab-primary",
+        "hostname": "postman-mtrcya3s"
+      },
+      "status": 409,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/idempotency_conflict",
+        "title": "IDEMPOTENCY CONFLICT",
+        "status": 409,
+        "detail": "The idempotency key is already bound to different input.",
+        "code": "IDEMPOTENCY_CONFLICT",
+        "instance": "/v1/projects/00000000-0000-4000-8000-000000000001/instances"
+      }
+    },
+    {
+      "folder": "03 Create an instance",
+      "name": "Poll the create operation until it settles",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations/759f1a2c-f01c-415f-b186-bcd3255422cd",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "759f1a2c-f01c-415f-b186-bcd3255422cd",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "create_instance",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:50:40.847Z",
+        "updatedAt": "2026-09-07T14:50:44.429Z",
+        "acceptedAt": "2026-09-07T14:50:39.894Z",
+        "targetType": "instance",
+        "completedAt": "2026-09-07T14:50:44.429Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false
+      }
+    },
+    {
+      "folder": "03 Create an instance",
+      "name": "Get instance",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "drift": "none",
+        "desired": {
+          "imageId": "ubuntu-24-04-cloud",
+          "flavorId": "lab-small",
+          "hostname": "postman-mtrcya3s",
+          "networkId": "lab-primary",
+          "powerState": "running",
+          "retentionRequested": false
+        },
+        "observed": {
+          "exists": true,
+          "diskGiB": 32,
+          "cpuCount": 2,
+          "memoryMiB": 4096,
+          "observedAt": "2026-09-07T14:50:44.416Z",
+          "powerState": "running",
+          "markerMatch": true
+        },
+        "createdAt": "2026-09-07T14:50:39.894Z",
+        "ipv4Lease": {
+          "state": "active",
+          "address": "192.0.2.19",
+          "gateway": "192.0.2.1",
+          "prefixLength": 27
+        },
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "updatedAt": "2026-09-07T14:50:44.429Z",
+        "purgeEligible": false,
+        "lifecycleState": "active",
+        "lastReconciledAt": "2026-09-07T14:50:44.429Z",
+        "activeOperationId": null,
+        "retentionDeadline": null
+      }
+    },
+    {
+      "folder": "03 Create an instance",
+      "name": "List instances",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances?limit=10",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "items": [
+          {
+            "id": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "drift": "none",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-mtrcya3s",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": {
+              "exists": true,
+              "diskGiB": 32,
+              "cpuCount": 2,
+              "memoryMiB": 4096,
+              "observedAt": "2026-09-07T14:50:44.416Z",
+              "powerState": "running",
+              "markerMatch": true
+            },
+            "createdAt": "2026-09-07T14:50:39.894Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.19",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:50:44.429Z",
+            "purgeEligible": false,
+            "lifecycleState": "active",
+            "lastReconciledAt": "2026-09-07T14:50:44.429Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "4e276263-2fcd-47f7-a35f-27caae4f9f0a",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-demo-01",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": {
+              "exists": true,
+              "diskGiB": 32,
+              "cpuCount": 2,
+              "memoryMiB": 4096,
+              "observedAt": "2026-09-05T23:41:39.930Z",
+              "powerState": "running",
+              "markerMatch": true
+            },
+            "createdAt": "2026-09-05T23:41:34.685Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.3",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:50:32.336Z",
+            "purgeEligible": false,
+            "lifecycleState": "active",
+            "lastReconciledAt": "2026-09-07T14:50:32.336Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "b46e533e-f9b3-45bd-ac57-1b02153328ab",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-mtq7f9c7",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": {
+              "exists": true,
+              "diskGiB": 32,
+              "cpuCount": 2,
+              "memoryMiB": 4096,
+              "observedAt": "2026-09-06T19:28:10.067Z",
+              "powerState": "running",
+              "markerMatch": true
+            },
+            "createdAt": "2026-09-06T19:28:07.702Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.8",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:50:32.302Z",
+            "purgeEligible": false,
+            "lifecycleState": "active",
+            "lastReconciledAt": "2026-09-07T14:50:32.302Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "4532dc04-b226-49ac-ac01-4032a78fc035",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-mtq8sqsr",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": {
+              "exists": true,
+              "diskGiB": 64,
+              "cpuCount": 4,
+              "memoryMiB": 8192,
+              "observedAt": "2026-09-06T20:06:51.041Z",
+              "powerState": "unknown",
+              "markerMatch": true
+            },
+            "createdAt": "2026-09-06T20:06:36.504Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.13",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:49:31.751Z",
+            "purgeEligible": false,
+            "lifecycleState": "failed",
+            "lastReconciledAt": "2026-09-07T14:49:31.751Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "671c5725-6d2d-40fb-9c6d-4c6f39eec9cc",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-mtq6u1jt",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": {
+              "exists": true,
+              "diskGiB": 32,
+              "cpuCount": 2,
+              "memoryMiB": 4096,
+              "observedAt": "2026-09-06T19:11:40.581Z",
+              "powerState": "running",
+              "markerMatch": true
+            },
+            "createdAt": "2026-09-06T19:11:37.952Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.4",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:49:31.744Z",
+            "purgeEligible": false,
+            "lifecycleState": "active",
+            "lastReconciledAt": "2026-09-07T14:49:31.744Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "3df1fbab-644d-4895-8975-188c1e214127",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-mtq7cuzt",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": null,
+            "createdAt": "2026-09-06T19:26:15.828Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.6",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:49:31.728Z",
+            "purgeEligible": false,
+            "lifecycleState": "manual_review",
+            "lastReconciledAt": "2026-09-07T14:49:31.728Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "8ac8857b-51f2-4a58-b62b-295ed7682f08",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-mtq8a3jh",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": {
+              "exists": true,
+              "diskGiB": 32,
+              "cpuCount": 2,
+              "memoryMiB": 4096,
+              "observedAt": "2026-09-06T19:52:09.058Z",
+              "powerState": "running",
+              "markerMatch": true
+            },
+            "createdAt": "2026-09-06T19:52:06.552Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.11",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:49:31.721Z",
+            "purgeEligible": false,
+            "lifecycleState": "failed",
+            "lastReconciledAt": "2026-09-07T14:49:31.721Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "8fd4e2af-9897-481c-9ec0-9182e547defa",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "shape-probe-01",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": null,
+            "createdAt": "2026-09-06T19:26:36.940Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.7",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:49:31.714Z",
+            "purgeEligible": false,
+            "lifecycleState": "manual_review",
+            "lastReconciledAt": "2026-09-07T14:49:31.714Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "d7d4500a-5aed-4eed-bbd8-5242430ca1e5",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-mtq7mpdu",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": {
+              "exists": true,
+              "diskGiB": 32,
+              "cpuCount": 2,
+              "memoryMiB": 4096,
+              "observedAt": "2026-09-06T19:33:57.278Z",
+              "powerState": "running",
+              "markerMatch": true
+            },
+            "createdAt": "2026-09-06T19:33:55.090Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.10",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:49:31.707Z",
+            "purgeEligible": false,
+            "lifecycleState": "failed",
+            "lastReconciledAt": "2026-09-07T14:49:31.707Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          },
+          {
+            "id": "7336905e-6d0a-47ce-9a14-54cd1ed17ab1",
+            "drift": "missing_resource",
+            "desired": {
+              "imageId": "ubuntu-24-04-cloud",
+              "flavorId": "lab-small",
+              "hostname": "postman-mtq7gf49",
+              "networkId": "lab-primary",
+              "powerState": "running",
+              "retentionRequested": false
+            },
+            "observed": null,
+            "createdAt": "2026-09-06T19:29:01.854Z",
+            "ipv4Lease": {
+              "state": "active",
+              "address": "192.0.2.9",
+              "gateway": "192.0.2.1",
+              "prefixLength": 27
+            },
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "updatedAt": "2026-09-07T14:49:31.699Z",
+            "purgeEligible": false,
+            "lifecycleState": "manual_review",
+            "lastReconciledAt": "2026-09-07T14:49:31.699Z",
+            "activeOperationId": null,
+            "retentionDeadline": null
+          }
+        ],
+        "page": {
+          "limit": 10,
+          "nextCursor": "eyJ2IjoxLCJzIjoiMjAyNi0wOS0wN1QxNDo0OTozMS42OTlaIiwiaSI6IjczMzY5MDVlLTZkMGEtNDdjZS05YTE0LTU0Y2QxZWQxN2FiMSJ9"
+        }
+      }
+    },
+    {
+      "folder": "03 Create an instance",
+      "name": "List operations",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations?limit=10",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "items": [
+          {
+            "id": "759f1a2c-f01c-415f-b186-bcd3255422cd",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "create_instance",
+            "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-07T14:50:40.847Z",
+            "updatedAt": "2026-09-07T14:50:44.429Z",
+            "acceptedAt": "2026-09-07T14:50:39.894Z",
+            "targetType": "instance",
+            "completedAt": "2026-09-07T14:50:44.429Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "ba2e9f28-f313-4ca1-856a-55fb3d8b3afd",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "retain_instance",
+            "targetId": "3f2021d0-f53e-42ed-b912-59f231f087cb",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:51:55.700Z",
+            "updatedAt": "2026-09-06T20:51:56.320Z",
+            "acceptedAt": "2026-09-06T20:51:55.037Z",
+            "targetType": "instance",
+            "completedAt": "2026-09-06T20:51:56.320Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "eccf9c94-d749-4ac5-8d03-f2a97060bf10",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "delete_snapshot",
+            "targetId": "886d8a4d-b051-4f28-9973-4c2a6987bfe9",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:51:51.691Z",
+            "updatedAt": "2026-09-06T20:51:52.391Z",
+            "acceptedAt": "2026-09-06T20:51:50.964Z",
+            "targetType": "snapshot",
+            "completedAt": "2026-09-06T20:51:52.391Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "f22e8c21-d6bf-4ab7-82f2-7469a5e2851f",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "rollback_snapshot",
+            "targetId": "886d8a4d-b051-4f28-9973-4c2a6987bfe9",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:51:47.573Z",
+            "updatedAt": "2026-09-06T20:51:48.203Z",
+            "acceptedAt": "2026-09-06T20:51:46.877Z",
+            "targetType": "snapshot",
+            "completedAt": "2026-09-06T20:51:48.203Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "a246b1b9-84cf-4519-9e79-5268312524b7",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "create_snapshot",
+            "targetId": "886d8a4d-b051-4f28-9973-4c2a6987bfe9",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:51:43.542Z",
+            "updatedAt": "2026-09-06T20:51:44.223Z",
+            "acceptedAt": "2026-09-06T20:51:42.807Z",
+            "targetType": "snapshot",
+            "completedAt": "2026-09-06T20:51:44.223Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "c2c80f03-7f13-467f-a5ba-8b6c78bb61f9",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "resize_instance",
+            "targetId": "3f2021d0-f53e-42ed-b912-59f231f087cb",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:51:39.508Z",
+            "updatedAt": "2026-09-06T20:51:40.208Z",
+            "acceptedAt": "2026-09-06T20:51:38.724Z",
+            "targetType": "instance",
+            "completedAt": "2026-09-06T20:51:40.208Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "b5e86946-c386-44e6-b5d5-4d830bfc8cdf",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "power_instance",
+            "targetId": "3f2021d0-f53e-42ed-b912-59f231f087cb",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:51:37.014Z",
+            "updatedAt": "2026-09-06T20:51:37.605Z",
+            "acceptedAt": "2026-09-06T20:51:36.681Z",
+            "targetType": "instance",
+            "completedAt": "2026-09-06T20:51:37.605Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "47aae10c-9357-42a6-b891-e46addc1e410",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "power_instance",
+            "targetId": "3f2021d0-f53e-42ed-b912-59f231f087cb",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:51:35.044Z",
+            "updatedAt": "2026-09-06T20:51:35.670Z",
+            "acceptedAt": "2026-09-06T20:51:34.639Z",
+            "targetType": "instance",
+            "completedAt": "2026-09-06T20:51:35.670Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "a4a88138-a4fb-47f9-9640-925fa2fa1739",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "create_instance",
+            "targetId": "3f2021d0-f53e-42ed-b912-59f231f087cb",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:51:31.007Z",
+            "updatedAt": "2026-09-06T20:51:32.892Z",
+            "acceptedAt": "2026-09-06T20:51:30.513Z",
+            "targetType": "instance",
+            "completedAt": "2026-09-06T20:51:32.892Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          },
+          {
+            "id": "38667262-2d42-4191-9578-e13d0d4dec89",
+            "stage": "completed",
+            "state": "succeeded",
+            "action": "retain_instance",
+            "targetId": "3f663187-7a88-4425-949d-19ddadd95d70",
+            "errorCode": null,
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "startedAt": "2026-09-06T20:41:40.037Z",
+            "updatedAt": "2026-09-06T20:41:40.936Z",
+            "acceptedAt": "2026-09-06T20:41:38.948Z",
+            "targetType": "instance",
+            "completedAt": "2026-09-06T20:41:40.936Z",
+            "errorMessage": null,
+            "errorCategory": null,
+            "progressPercent": 100,
+            "manualReviewRequired": false
+          }
+        ],
+        "page": {
+          "limit": 10,
+          "nextCursor": "eyJ2IjoxLCJzIjoiMjAyNi0wOS0wNlQyMDo0MTo0MC45MzZaIiwiaSI6IjM4NjY3MjYyLTJkNDItNDE5MS05NTc4LWUxM2QwZDRkZWM4OSJ9"
+        }
+      }
+    },
+    {
+      "folder": "04 Power and resize",
+      "name": "Shutdown",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/actions",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "7fe15f4e-b24b-4601-becb-9eb740dea6c4",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "action": "shutdown"
+      },
+      "status": 202,
+      "responseBody": {
+        "operationId": "f3fd379f-cc86-4c2f-ab0c-24d90890a082",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "acceptedAt": "2026-09-07T14:50:46.729Z",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/f3fd379f-cc86-4c2f-ab0c-24d90890a082",
+        "replayed": false
+      }
+    },
+    {
+      "folder": "04 Power and resize",
+      "name": "Poll the shutdown operation",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations/f3fd379f-cc86-4c2f-ab0c-24d90890a082",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "f3fd379f-cc86-4c2f-ab0c-24d90890a082",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "power_instance",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:50:47.096Z",
+        "updatedAt": "2026-09-07T14:50:48.046Z",
+        "acceptedAt": "2026-09-07T14:50:46.729Z",
+        "targetType": "instance",
+        "completedAt": "2026-09-07T14:50:48.046Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false
+      }
+    },
+    {
+      "folder": "04 Power and resize",
+      "name": "Start",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/actions",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "da409b5d-1d9c-49d8-9222-7394877fb1c0",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "action": "start"
+      },
+      "status": 202,
+      "responseBody": {
+        "operationId": "6df8e2c8-9a6e-49ba-ad45-23425b2774bf",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "acceptedAt": "2026-09-07T14:50:48.793Z",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/6df8e2c8-9a6e-49ba-ad45-23425b2774bf",
+        "replayed": false
+      }
+    },
+    {
+      "folder": "04 Power and resize",
+      "name": "Poll the start operation",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations/6df8e2c8-9a6e-49ba-ad45-23425b2774bf",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "6df8e2c8-9a6e-49ba-ad45-23425b2774bf",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "power_instance",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:50:48.885Z",
+        "updatedAt": "2026-09-07T14:50:49.496Z",
+        "acceptedAt": "2026-09-07T14:50:48.793Z",
+        "targetType": "instance",
+        "completedAt": "2026-09-07T14:50:49.496Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false
+      }
+    },
+    {
+      "folder": "04 Power and resize",
+      "name": "Resize to a larger flavor",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/actions",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "0c9e75ac-5be0-4529-adb5-67cdd0e7c17c",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "action": "resize",
+        "flavorId": "lab-medium"
+      },
+      "status": 202,
+      "responseBody": {
+        "operationId": "13424896-683a-4835-8edf-933ecd87f8a8",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "acceptedAt": "2026-09-07T14:50:50.846Z",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/13424896-683a-4835-8edf-933ecd87f8a8",
+        "replayed": false
+      }
+    },
+    {
+      "folder": "04 Power and resize",
+      "name": "Poll the resize operation",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations/13424896-683a-4835-8edf-933ecd87f8a8",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "13424896-683a-4835-8edf-933ecd87f8a8",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "resize_instance",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:50:51.417Z",
+        "updatedAt": "2026-09-07T14:50:52.116Z",
+        "acceptedAt": "2026-09-07T14:50:50.846Z",
+        "targetType": "instance",
+        "completedAt": "2026-09-07T14:50:52.116Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false
+      }
+    },
+    {
+      "folder": "04 Power and resize",
+      "name": "Refuse a disk shrink",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/actions",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "ac04c001-2e16-4b5e-84dc-135285ed9bec",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "action": "resize",
+        "flavorId": "lab-medium",
+        "diskGiB": 8
+      },
+      "status": 422,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/disk_shrink_forbidden",
+        "title": "DISK SHRINK FORBIDDEN",
+        "status": 422,
+        "detail": "Disk size can grow but never shrink.",
+        "code": "DISK_SHRINK_FORBIDDEN",
+        "instance": "/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/actions"
+      }
+    },
+    {
+      "folder": "05 Snapshots",
+      "name": "Create snapshot",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/snapshots",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "f16f74a8-4b65-46d6-91e7-dac556a2cecc",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "name": "postman-snap-mtrcya3s",
+        "description": "Taken by the Postman collection run."
+      },
+      "status": 202,
+      "responseBody": {
+        "operationId": "9b472e03-9c24-4870-9619-f941381f5ee2",
+        "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+        "acceptedAt": "2026-09-07T14:50:52.926Z",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/9b472e03-9c24-4870-9619-f941381f5ee2",
+        "replayed": false
+      }
+    },
+    {
+      "folder": "05 Snapshots",
+      "name": "Poll the snapshot operation",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations/9b472e03-9c24-4870-9619-f941381f5ee2",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "9b472e03-9c24-4870-9619-f941381f5ee2",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "create_snapshot",
+        "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:50:54.001Z",
+        "updatedAt": "2026-09-07T14:50:54.670Z",
+        "acceptedAt": "2026-09-07T14:50:52.926Z",
+        "targetType": "snapshot",
+        "completedAt": "2026-09-07T14:50:54.670Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false
+      }
+    },
+    {
+      "folder": "05 Snapshots",
+      "name": "List snapshots",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/snapshots",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "items": [
+          {
+            "id": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+            "name": "postman-snap-mtrcya3s",
+            "state": "available",
+            "createdAt": "2026-09-07T14:50:52.926Z",
+            "updatedAt": "2026-09-07T14:50:54.670Z",
+            "instanceId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "description": "Taken by the Postman collection run."
+          }
+        ],
+        "page": {
+          "limit": 50,
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "folder": "05 Snapshots",
+      "name": "Roll back to the snapshot",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/snapshots/3d3b0910-dbb1-43c4-b6b2-9c97327072b9/actions",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "af488432-71e2-48ce-96e2-a90f7cb130fb",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "action": "rollback"
+      },
+      "status": 202,
+      "responseBody": {
+        "operationId": "5b534a4a-68e5-49c9-a240-ad6d4320426b",
+        "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+        "acceptedAt": "2026-09-07T14:50:57.000Z",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/5b534a4a-68e5-49c9-a240-ad6d4320426b",
+        "replayed": false
+      }
+    },
+    {
+      "folder": "05 Snapshots",
+      "name": "Poll the rollback operation",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations/5b534a4a-68e5-49c9-a240-ad6d4320426b",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "5b534a4a-68e5-49c9-a240-ad6d4320426b",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "rollback_snapshot",
+        "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:50:57.937Z",
+        "updatedAt": "2026-09-07T14:50:58.612Z",
+        "acceptedAt": "2026-09-07T14:50:57.000Z",
+        "targetType": "snapshot",
+        "completedAt": "2026-09-07T14:50:58.612Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false
+      }
+    },
+    {
+      "folder": "05 Snapshots",
+      "name": "Delete the snapshot",
+      "method": "DELETE",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/snapshots/3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "ef800e84-7c23-457e-aef0-f04bea2dc2f1"
+      },
+      "status": 202,
+      "responseBody": {
+        "operationId": "2b69c18c-6546-42fd-ba25-b2793b46299c",
+        "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+        "acceptedAt": "2026-09-07T14:51:01.055Z",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/2b69c18c-6546-42fd-ba25-b2793b46299c",
+        "replayed": false
+      }
+    },
+    {
+      "folder": "05 Snapshots",
+      "name": "Poll the snapshot deletion",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations/2b69c18c-6546-42fd-ba25-b2793b46299c",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "2b69c18c-6546-42fd-ba25-b2793b46299c",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "delete_snapshot",
+        "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:51:01.935Z",
+        "updatedAt": "2026-09-07T14:51:02.682Z",
+        "acceptedAt": "2026-09-07T14:51:01.055Z",
+        "targetType": "snapshot",
+        "completedAt": "2026-09-07T14:51:02.682Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false
+      }
+    },
+    {
+      "folder": "06 Retention and purge",
+      "name": "Retain (soft delete) the instance",
+      "method": "DELETE",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "52d0559c-fb0c-4de8-bdc8-7fc022fdce60"
+      },
+      "status": 202,
+      "responseBody": {
+        "operationId": "95a0d57e-e070-4a70-b55b-f797302dffae",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "acceptedAt": "2026-09-07T14:51:05.105Z",
+        "statusUrl": "/v1/projects/00000000-0000-4000-8000-000000000001/operations/95a0d57e-e070-4a70-b55b-f797302dffae",
+        "replayed": false
+      }
+    },
+    {
+      "folder": "06 Retention and purge",
+      "name": "Poll the retention operation",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/operations/95a0d57e-e070-4a70-b55b-f797302dffae",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "95a0d57e-e070-4a70-b55b-f797302dffae",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "retain_instance",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:51:05.968Z",
+        "updatedAt": "2026-09-07T14:51:06.569Z",
+        "acceptedAt": "2026-09-07T14:51:05.105Z",
+        "targetType": "instance",
+        "completedAt": "2026-09-07T14:51:06.569Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false
+      }
+    },
+    {
+      "folder": "06 Retention and purge",
+      "name": "Confirm the instance is retained, not gone",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "drift": "none",
+        "desired": {
+          "imageId": "ubuntu-24-04-cloud",
+          "flavorId": "lab-small",
+          "hostname": "postman-mtrcya3s",
+          "networkId": "lab-primary",
+          "powerState": "running",
+          "retentionRequested": false
+        },
+        "observed": {
+          "exists": true,
+          "diskGiB": null,
+          "cpuCount": null,
+          "memoryMiB": null,
+          "observedAt": "2026-09-07T14:51:06.568Z",
+          "powerState": "running",
+          "markerMatch": true
+        },
+        "createdAt": "2026-09-07T14:50:39.894Z",
+        "ipv4Lease": {
+          "state": "active",
+          "address": "192.0.2.19",
+          "gateway": "192.0.2.1",
+          "prefixLength": 27
+        },
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "updatedAt": "2026-09-07T14:51:06.569Z",
+        "purgeEligible": false,
+        "lifecycleState": "retained",
+        "lastReconciledAt": "2026-09-07T14:51:06.569Z",
+        "activeOperationId": null,
+        "retentionDeadline": "2026-09-14T14:51:05.105Z"
+      }
+    },
+    {
+      "folder": "06 Retention and purge",
+      "name": "Purge is refused inside the retention window",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/admin/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/purges",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "73a959d4-f009-4d12-beaf-9f23fcf6f93a",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "reason": "Postman collection run: proving the retention window is enforced.",
+        "confirmInstanceId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171"
+      },
+      "status": 409,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/instance_busy",
+        "title": "INSTANCE BUSY",
+        "status": 409,
+        "detail": "The retention period has not expired.",
+        "code": "INSTANCE_BUSY",
+        "instance": "/v1/admin/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/purges"
+      }
+    },
+    {
+      "folder": "06 Retention and purge",
+      "name": "Purge refuses a mismatched confirmation",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/admin/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/purges",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "9bf89003-b64e-48e1-ba30-c2aeba086075",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "reason": "Postman collection run: proving the confirmation guard is enforced.",
+        "confirmInstanceId": "00000000-0000-4000-8000-00000000dead"
+      },
+      "status": 422,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/validation_failed",
+        "title": "VALIDATION FAILED",
+        "status": 422,
+        "detail": "The confirmation identifier does not match the instance being purged.",
+        "code": "VALIDATION_FAILED",
+        "instance": "/v1/admin/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/purges"
+      }
+    },
+    {
+      "folder": "07 Administration",
+      "name": "Get an operation as an administrator",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/operations/95a0d57e-e070-4a70-b55b-f797302dffae",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "id": "95a0d57e-e070-4a70-b55b-f797302dffae",
+        "stage": "completed",
+        "state": "succeeded",
+        "action": "retain_instance",
+        "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "errorCode": null,
+        "projectId": "00000000-0000-4000-8000-000000000001",
+        "startedAt": "2026-09-07T14:51:05.968Z",
+        "updatedAt": "2026-09-07T14:51:06.569Z",
+        "acceptedAt": "2026-09-07T14:51:05.105Z",
+        "targetType": "instance",
+        "completedAt": "2026-09-07T14:51:06.569Z",
+        "errorMessage": null,
+        "errorCategory": null,
+        "progressPercent": 100,
+        "manualReviewRequired": false,
+        "correlationId": "6a5fce55-c6db-4808-a60e-df98df00a67c",
+        "causationId": "6743d34b-6a69-445b-9ef4-c45e9715fdaa",
+        "traceId": "f7a9db3f7d6e5a5ccefc3888d71f7cc9",
+        "retryCount": 3,
+        "checkpoint": "completed",
+        "deadLetterEventId": null,
+        "providerTaskReference": null
+      }
+    },
+    {
+      "folder": "07 Administration",
+      "name": "List audit events",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/audit-events?limit=10",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "items": [
+          {
+            "id": "54b2391e-b370-4298-9da0-78c965be5e64",
+            "actorId": "provisioning-orchestrator",
+            "actorRole": "service",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "retain_instance",
+            "targetType": "instance",
+            "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "operationId": "95a0d57e-e070-4a70-b55b-f797302dffae",
+            "outcome": "succeeded",
+            "occurredAt": "2026-09-07T14:51:06.572Z"
+          },
+          {
+            "id": "632f5e7d-7afd-4f6b-9f44-2319c35adcaf",
+            "actorId": "phase4-local-user",
+            "actorRole": "tenant_developer",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "retain_instance",
+            "targetType": "instance",
+            "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "operationId": "95a0d57e-e070-4a70-b55b-f797302dffae",
+            "outcome": "accepted",
+            "occurredAt": "2026-09-07T14:51:05.105Z"
+          },
+          {
+            "id": "34d106ea-c5b7-41ad-8a95-363900040213",
+            "actorId": "provisioning-orchestrator",
+            "actorRole": "service",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "delete_snapshot",
+            "targetType": "instance",
+            "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "operationId": "2b69c18c-6546-42fd-ba25-b2793b46299c",
+            "outcome": "succeeded",
+            "occurredAt": "2026-09-07T14:51:02.685Z"
+          },
+          {
+            "id": "ecb5a324-90fa-43bf-ad75-ea25fa4c85e2",
+            "actorId": "phase4-local-user",
+            "actorRole": "tenant_developer",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "delete_snapshot",
+            "targetType": "snapshot",
+            "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+            "operationId": "2b69c18c-6546-42fd-ba25-b2793b46299c",
+            "outcome": "accepted",
+            "occurredAt": "2026-09-07T14:51:01.055Z"
+          },
+          {
+            "id": "4ddf227e-0699-440c-a04a-15abf3feb0bd",
+            "actorId": "provisioning-orchestrator",
+            "actorRole": "service",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "rollback_snapshot",
+            "targetType": "instance",
+            "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "operationId": "5b534a4a-68e5-49c9-a240-ad6d4320426b",
+            "outcome": "succeeded",
+            "occurredAt": "2026-09-07T14:50:58.615Z"
+          },
+          {
+            "id": "a22c1d31-f9fe-4e95-aefe-b211ee7edb28",
+            "actorId": "phase4-local-user",
+            "actorRole": "tenant_developer",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "rollback_snapshot",
+            "targetType": "snapshot",
+            "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+            "operationId": "5b534a4a-68e5-49c9-a240-ad6d4320426b",
+            "outcome": "accepted",
+            "occurredAt": "2026-09-07T14:50:57.000Z"
+          },
+          {
+            "id": "fa5905d7-9b3f-4ddb-ad2e-2c60ba869fa8",
+            "actorId": "provisioning-orchestrator",
+            "actorRole": "service",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "create_snapshot",
+            "targetType": "instance",
+            "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "operationId": "9b472e03-9c24-4870-9619-f941381f5ee2",
+            "outcome": "succeeded",
+            "occurredAt": "2026-09-07T14:50:54.676Z"
+          },
+          {
+            "id": "ac4737fb-ace0-4a4f-9f53-06b5376f3aa1",
+            "actorId": "phase4-local-user",
+            "actorRole": "tenant_developer",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "create_snapshot",
+            "targetType": "snapshot",
+            "targetId": "3d3b0910-dbb1-43c4-b6b2-9c97327072b9",
+            "operationId": "9b472e03-9c24-4870-9619-f941381f5ee2",
+            "outcome": "accepted",
+            "occurredAt": "2026-09-07T14:50:52.926Z"
+          },
+          {
+            "id": "31bf555a-5777-480f-bf53-cdfaf60f7210",
+            "actorId": "provisioning-orchestrator",
+            "actorRole": "service",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "resize_instance",
+            "targetType": "instance",
+            "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "operationId": "13424896-683a-4835-8edf-933ecd87f8a8",
+            "outcome": "succeeded",
+            "occurredAt": "2026-09-07T14:50:52.118Z"
+          },
+          {
+            "id": "627afd89-6d84-4288-96a0-297ecf7f36da",
+            "actorId": "phase4-local-user",
+            "actorRole": "tenant_developer",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "action": "resize_instance",
+            "targetType": "instance",
+            "targetId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+            "operationId": "13424896-683a-4835-8edf-933ecd87f8a8",
+            "outcome": "accepted",
+            "occurredAt": "2026-09-07T14:50:50.846Z"
+          }
+        ],
+        "page": {
+          "limit": 10,
+          "nextCursor": "eyJ2IjoxLCJzIjoiMjAyNi0wOS0wN1QxNDo1MDo1MC44NDZaIiwiaSI6IjYyN2FmZDg5LTZkODQtNDI4OC05NmEwLTI5N2VjZjdmMzZkYSJ9"
+        }
+      }
+    },
+    {
+      "folder": "07 Administration",
+      "name": "List dead letters",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/dead-letters?limit=10",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 200,
+      "responseBody": {
+        "items": [],
+        "page": {
+          "limit": 10,
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "folder": "07 Administration",
+      "name": "Request reconciliation",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/admin/instances/5b74d325-6d9c-4cb0-aa47-e5a4cc11d171/reconciliations",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "c04c9a04-012f-4fd6-ab5b-cae73e1fe127",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "reason": "Postman collection run: observe and report drift, change nothing."
+      },
+      "status": 202,
+      "responseBody": {
+        "instanceId": "5b74d325-6d9c-4cb0-aa47-e5a4cc11d171",
+        "accepted": true
+      }
+    },
+    {
+      "folder": "08 Authorization and validation",
+      "name": "No token is rejected",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances",
+      "requestHeaders": {
+        "Host": "control-plane.test"
+      },
+      "status": 401,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/authentication_required",
+        "title": "AUTHENTICATION REQUIRED",
+        "status": 401,
+        "detail": "The request could not be completed.",
+        "code": "AUTHENTICATION_REQUIRED",
+        "instance": "/v1/projects/00000000-0000-4000-8000-000000000001/instances"
+      }
+    },
+    {
+      "folder": "08 Authorization and validation",
+      "name": "A token for another project is rejected",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 403,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/project_access_denied",
+        "title": "PROJECT ACCESS DENIED",
+        "status": 403,
+        "detail": "Project access is denied.",
+        "code": "PROJECT_ACCESS_DENIED",
+        "instance": "/v1/projects/00000000-0000-4000-8000-000000000001/instances"
+      }
+    },
+    {
+      "folder": "08 Authorization and validation",
+      "name": "A tenant token cannot reach the admin surface",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/audit-events",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 403,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/admin_required",
+        "title": "ADMIN REQUIRED",
+        "status": 403,
+        "detail": "Platform administrator access is required.",
+        "code": "ADMIN_REQUIRED",
+        "instance": "/v1/admin/audit-events"
+      }
+    },
+    {
+      "folder": "08 Authorization and validation",
+      "name": "An unknown instance is a 404",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances/00000000-0000-4000-8000-00000000dead",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/instance_not_found",
+        "title": "INSTANCE NOT FOUND",
+        "status": 404,
+        "detail": "The requested resource was not found.",
+        "code": "INSTANCE_NOT_FOUND",
+        "instance": "/v1/projects/00000000-0000-4000-8000-000000000001/instances/00000000-0000-4000-8000-00000000dead"
+      }
+    },
+    {
+      "folder": "08 Authorization and validation",
+      "name": "A malformed create body is rejected",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "96cc36db-d831-42c6-be28-8526ef664e64",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "imageId": "ubuntu-24-04-cloud",
+        "hostname": "missing-required-fields"
+      },
+      "status": 400,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/validation_failed",
+        "title": "VALIDATION FAILED",
+        "status": 400,
+        "detail": "The request could not be completed.",
+        "code": "VALIDATION_FAILED",
+        "instance": "/v1/projects/00000000-0000-4000-8000-000000000001/instances"
+      }
+    },
+    {
+      "folder": "08 Authorization and validation",
+      "name": "A create without an Idempotency-Key is rejected",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/projects/00000000-0000-4000-8000-000000000001/instances",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "imageId": "ubuntu-24-04-cloud",
+        "flavorId": "lab-small",
+        "networkId": "lab-primary",
+        "hostname": "no-idempotency-key"
+      },
+      "status": 422,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/validation_failed",
+        "title": "VALIDATION FAILED",
+        "status": 422,
+        "detail": "Idempotency key must contain 8 to 128 characters.",
+        "code": "VALIDATION_FAILED",
+        "instance": "/v1/projects/00000000-0000-4000-8000-000000000001/instances"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Upsert image",
+      "method": "PUT",
+      "url": "http://192.168.49.2:30000/v1/admin/catalog/images/ubuntu-24-04-cloud",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "9c1cc555-062d-4e4f-8f1a-9b7fa5441843",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "name": "Ubuntu 24.04 Cloud",
+        "providerProfileId": "fake-lab",
+        "enabled": true,
+        "architecture": "x86_64"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/catalog/images/ubuntu-24-04-cloud"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Upsert flavor",
+      "method": "PUT",
+      "url": "http://192.168.49.2:30000/v1/admin/catalog/flavors/lab-small",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "885eacea-2091-44bd-bf27-13c5177e4cb6",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "name": "Lab Small",
+        "cpuCount": 2,
+        "memoryMiB": 4096,
+        "minimumDiskGiB": 32,
+        "enabled": true
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/catalog/flavors/lab-small"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Upsert network",
+      "method": "PUT",
+      "url": "http://192.168.49.2:30000/v1/admin/catalog/networks/lab-primary",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "019d6ba1-cbb9-499a-858a-d82ed8bdd5d3",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "name": "Lab primary",
+        "ipv4Cidr": "192.0.2.0/27",
+        "gateway": "192.0.2.1",
+        "dnsServers": [
+          "192.0.2.53"
+        ],
+        "exclusions": [
+          "192.0.2.2"
+        ],
+        "enabled": true
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/catalog/networks/lab-primary"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "List provider profiles",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/provider-profiles",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/provider-profiles"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Create provider profile",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/admin/provider-profiles",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "3d754ef7-fa3f-4c3d-be7a-f0cbef8e8599",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "id": "fake-lab-2",
+        "providerType": "fake",
+        "endpoint": "fake://lab-2",
+        "clusterAlias": "fake-lab-2",
+        "computeTarget": "fake-node",
+        "imageSourceReference": "ubuntu-24-04-cloud",
+        "storageTarget": "fake-storage",
+        "networkAttachment": "lab-primary",
+        "resourceIdMinimum": 920000,
+        "resourceIdMaximum": 920099,
+        "networkId": "lab-primary",
+        "credentialReference": "test-only"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/provider-profiles"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Get provider profile",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/provider-profiles/fake-lab",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/provider-profiles/fake-lab"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Update provider profile",
+      "method": "PATCH",
+      "url": "http://192.168.49.2:30000/v1/admin/provider-profiles/fake-lab",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "274e279f-b6c1-4f1c-a542-1c546b6f7abf",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "computeTarget": "fake-node-2"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/provider-profiles/fake-lab"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Validate provider profile",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/admin/provider-profiles/fake-lab/actions/validate",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "1802cdd6-bd91-42c7-8de4-02ab5de4f315",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {},
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/provider-profiles/fake-lab/actions/validate"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Activate provider profile",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/admin/provider-profiles/fake-lab/actions/activate",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "b1790ef8-2567-426f-baa2-5b39f5d0fc1e",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {},
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/provider-profiles/fake-lab/actions/activate"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Disable provider profile",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/admin/provider-profiles/fake-lab/actions/disable",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "fa1545a4-f031-4d59-9d8e-70c4e2b0f07d",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "reason": "Postman collection run: exercising the declared disable action."
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/provider-profiles/fake-lab/actions/disable"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "List manual reviews",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/manual-reviews",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/manual-reviews"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Get manual review",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/manual-reviews/00000000-0000-4000-8000-00000000dead",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/manual-reviews/00000000-0000-4000-8000-00000000dead"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Resolve manual review",
+      "method": "POST",
+      "url": "http://192.168.49.2:30000/v1/admin/manual-reviews/00000000-0000-4000-8000-00000000dead/resolutions",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "7079b6fd-1a72-4ba2-be96-a18668ff16d9",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "resolution": "acknowledged",
+        "notes": "Postman collection run: exercising the declared resolution action."
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/manual-reviews/00000000-0000-4000-8000-00000000dead/resolutions"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Get retention policy",
+      "method": "GET",
+      "url": "http://192.168.49.2:30000/v1/admin/retention-policy",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/retention-policy"
+      }
+    },
+    {
+      "folder": "09 Declared but not yet served",
+      "name": "Update retention policy",
+      "method": "PUT",
+      "url": "http://192.168.49.2:30000/v1/admin/retention-policy",
+      "requestHeaders": {
+        "Authorization": "Bearer <redacted>",
+        "Host": "control-plane.test",
+        "Idempotency-Key": "886c30b8-7ab3-439e-a32a-d8dfc658e45a",
+        "Content-Type": "application/json"
+      },
+      "requestBody": {
+        "retentionHours": 168,
+        "leaseReleaseMode": "quarantine_until_purge"
+      },
+      "status": 404,
+      "responseBody": {
+        "type": "https://private-cloud.invalid/problems/resource_not_found",
+        "title": "RESOURCE NOT FOUND",
+        "status": 404,
+        "detail": "The request could not be completed.",
+        "code": "RESOURCE_NOT_FOUND",
+        "instance": "/v1/admin/retention-policy"
+      }
+    }
+  ]
+}

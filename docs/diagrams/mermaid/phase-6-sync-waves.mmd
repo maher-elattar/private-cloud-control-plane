@@ -1,0 +1,30 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+flowchart TD
+  subgraph BOOT["Applied once by tools/kubernetes/bootstrap.mjs"]
+    B1["Vendored install manifests<br/>Argo CD v3.5.1, Argo Rollouts v1.9.1<br/>digest-pinned in provenance.json"]
+    B2["gitops-repo<br/>in-cluster git daemon"]
+    B3["AppProject private-cloud<br/>sync wave -1"]
+    B4["Application control-plane-root"]
+    B1 --> B2 --> B3 --> B4
+  end
+
+  B4 --> W0
+
+  subgraph ARGO["Reconciled continuously by Argo CD"]
+    W0["Wave 0 - control-plane-foundation<br/>namespace, service accounts, RBAC,<br/>network policies, disruption budgets"]
+    W1["Wave 1 - control-plane-platform<br/>CloudNativePG, Strimzi, KEDA<br/>operators and their CRDs"]
+    W2["Wave 2 - control-plane-data<br/>Postgres cluster, Kafka cluster,<br/>topics, users, Kafka Connect"]
+    W2H["Wave 3 hook - schema migrations<br/>Job, deleted on success"]
+    W2C["Wave 4 - Debezium connector<br/>after the tables it publishes exist"]
+    W3["Wave 3 - control-plane-observability<br/>OTel collector, service monitors"]
+    W4["Wave 4 - control-plane-applications<br/>Rollouts, services, HTTPRoute,<br/>analysis templates, autoscaling"]
+    W5["Wave 5 - control-plane-dashboards<br/>Grafana dashboard, alert rules"]
+    W0 --> W1 --> W2 --> W2H --> W2C --> W3 --> W4 --> W5
+  end
+
+  classDef boot fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+  classDef wave fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+  classDef hook fill:#fef3c7,stroke:#b45309,color:#78350f
+  class B1,B2,B3,B4 boot
+  class W0,W1,W2,W3,W4,W5 wave
+  class W2H,W2C hook

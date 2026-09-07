@@ -40,7 +40,28 @@ import {
   type ObserveInstanceResponse,
   type OwnershipMarkers,
   type ProviderMutationResult,
+  type InstanceMutationRequest,
+  type RebootInstanceRequest,
+  type CreateSnapshotRequest,
+  type CreateSnapshotResponse,
+  type DeleteSnapshotRequest,
+  type DeleteSnapshotResponse,
+  type ListSnapshotsRequest,
+  type MarkInstanceRetainedRequest,
+  type PurgeInstanceRequest,
+  type PurgeInstanceResponse,
+  type MarkInstanceRetainedResponse,
+  type ListSnapshotsResponse,
+  type ResizeInstanceRequest,
+  type RollbackSnapshotRequest,
+  type RollbackSnapshotResponse,
+  type ResizeInstanceResponse,
+  type RebootInstanceResponse,
+  type ShutdownInstanceRequest,
+  type ShutdownInstanceResponse,
   type StartInstanceRequest,
+  type StopInstanceRequest,
+  type StopInstanceResponse,
   type StartInstanceResponse,
   type SubmitCreateInstanceRequest,
   type SubmitCreateInstanceResponse,
@@ -50,6 +71,11 @@ import {
 import {
   ProviderTransportError,
   type CreateInstanceProviderPort,
+  type PowerProviderPort,
+  type ResizeProviderPort,
+  type PurgeProviderPort,
+  type RetentionProviderPort,
+  type SnapshotProviderPort,
   type ProviderCallOptions,
 } from '@private-cloud/provider-sdk';
 import ipaddr from 'ipaddr.js';
@@ -113,8 +139,30 @@ interface ProxmoxTaskStatus {
 }
 
 /** A VM's live power status. */
+/** One entry of a Proxmox snapshot listing. */
+interface ProxmoxSnapshot {
+  readonly name?: string;
+  readonly description?: string;
+  /** Unix seconds. Absent on the synthetic `current` entry. */
+  readonly snaptime?: number;
+}
+
 interface ProxmoxCurrentStatus {
   readonly status?: string;
+  /**
+   * QEMU monitor state.
+   *
+   * `status` stays `running` while a guest is paused, so this is the only field that distinguishes
+   * a suspended VM from a running one.
+   */
+  readonly qmpstatus?: string;
+  /**
+   * Config lock held by an in-flight Proxmox operation (`backup`, `migrate`, `snapshot`, `clone`).
+   *
+   * A mutation attempted against a locked VM fails, and the failure is transient rather than
+   * permanent — the lock clears when the other operation finishes.
+   */
+  readonly lock?: string;
 }
 
 /** Prefix marking a description line as a control-plane ownership marker. */
@@ -225,7 +273,15 @@ function diskGiB(config: ProxmoxVmConfig): string | undefined {
  * Narrow Proxmox adapter for the allowlisted Phase 3 create path. It never performs placement,
  * deletion, host mutation, cluster-wide ID allocation, or certificate-verification bypasses.
  */
-export class ProxmoxProvider implements CreateInstanceProviderPort {
+export class ProxmoxProvider
+  implements
+    CreateInstanceProviderPort,
+    PowerProviderPort,
+    ResizeProviderPort,
+    SnapshotProviderPort,
+    RetentionProviderPort,
+    PurgeProviderPort
+{
   /**
    * Validates the allowlist before the adapter can be used at all.
    *
@@ -551,6 +607,479 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
   }
 
   /**
+   * Asks the guest operating system to shut itself down.
+   *
+   * Distinct from {@link ProxmoxProvider.stopInstance}: this waits for the guest, and a guest that
+   * refuses leaves the VM running rather than losing unflushed writes. The tenant chose which of
+   * the two they wanted, and the adapter must not quietly substitute one for the other.
+   */
+  public async shutdownInstance(
+    request: ShutdownInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<ShutdownInstanceResponse> {
+    return this.powerTransition(request.request, 'shutdown', 'stopped', options);
+  }
+
+  /**
+   * Cuts power to the VM without waiting for the guest.
+   *
+   * `overrule-shutdown=1` lets this abort an in-flight graceful shutdown task; without it Proxmox
+   * refuses while that task holds the VM, and an operator who has already decided to hard-stop
+   * would be blocked by the softer request they are trying to override.
+   */
+  public async stopInstance(
+    request: StopInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<StopInstanceResponse> {
+    return this.powerTransition(request.request, 'stop', 'stopped', options, {
+      'overrule-shutdown': '1',
+    });
+  }
+
+  /** Restarts the guest, leaving it running. */
+  public async rebootInstance(
+    request: RebootInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<RebootInstanceResponse> {
+    // No short-circuit on current state: a reboot is meaningful whether the VM is running or not,
+    // and Proxmox starts a stopped VM in response to it.
+    return this.powerTransition(request.request, 'reboot', undefined, options);
+  }
+
+  /**
+   * Shared body for the three non-start power transitions.
+   *
+   * `alreadyInState` short-circuits when the VM is already where the caller wants it, which makes
+   * a checkpoint replay safe: repeating a completed shutdown must not be reported as a fresh
+   * mutation.
+   */
+  private async powerTransition(
+    mutation: InstanceMutationRequest | undefined,
+    action: 'shutdown' | 'stop' | 'reboot',
+    alreadyInState: 'stopped' | undefined,
+    options?: ProviderCallOptions,
+    extraFields: Readonly<Record<string, string>> = {},
+  ): Promise<{ result: ProviderMutationResult }> {
+    const context = this.assertContext(mutation?.context);
+    const ownership = this.assertOwnership(mutation?.expectedOwnershipMarkers, context);
+    const vmid = this.assertVmid(mutation?.providerResourceId);
+    await this.requireOwnedConfig(vmid, ownership, options?.signal);
+
+    const current = await this.currentStatus(vmid, options?.signal);
+    if (current.lock) {
+      // WHY transient rather than a failure: the lock belongs to another Proxmox operation and
+      // clears on its own. Reporting this as permanent would dead-letter a request that would
+      // have succeeded a few seconds later.
+      return {
+        result: {
+          state: ProviderResultState.PROVIDER_RESULT_STATE_REJECTED,
+          failure: {
+            category: FailureCategory.FAILURE_CATEGORY_TRANSIENT,
+            code: 'PROVIDER_RESOURCE_LOCKED',
+            safeMessage: 'Another provider operation currently holds this instance.',
+          },
+          evidenceId: randomUUID(),
+        },
+      };
+    }
+    if (alreadyInState && current.status === alreadyInState) {
+      return {
+        result: {
+          state: ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
+          providerResourceId: String(vmid),
+          evidenceId: randomUUID(),
+        },
+      };
+    }
+
+    const upid = await this.request<string>(
+      'POST',
+      `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/status/${action}`,
+      form(extraFields),
+      options?.signal,
+    );
+    return { result: this.accepted(vmid, required(upid, 'provider task reference')) };
+  }
+
+  /**
+   * Applies a new CPU, memory, and disk sizing to an owned VM.
+   *
+   * Two Proxmox behaviours shape this. The config write returns a task id only when the VM is
+   * running and an empty result otherwise, so an empty response is synchronous success rather than
+   * a missing task. And a disk grow is a separate `PUT .../resize` call, not part of the config
+   * write — with the size sent as an absolute value, never a delta.
+   *
+   * Disk growth is applied last. If the compute change succeeds and the grow fails, the workflow
+   * retries a resize whose compute half is already correct, which is harmless; the reverse order
+   * would leave a grown disk attached to an instance whose accepted sizing never took effect.
+   */
+  public async resizeInstance(
+    request: ResizeInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<ResizeInstanceResponse> {
+    const mutation = request.request;
+    const context = this.assertContext(mutation?.context);
+    const ownership = this.assertOwnership(mutation?.expectedOwnershipMarkers, context);
+    const vmid = this.assertVmid(mutation?.providerResourceId);
+    const config = await this.requireOwnedConfig(vmid, ownership, options?.signal);
+    const target = request.targetResources;
+    const cpu = target?.cpuCount ?? 0;
+    const memory = Number(target?.memoryMib ?? 0);
+    const disk = Number(target?.diskGib ?? 0);
+
+    // Same bounds as the create path, minus the template-baseline equality: resizing exists
+    // precisely to move off that baseline.
+    if (
+      !Number.isInteger(cpu) ||
+      cpu < 1 ||
+      cpu > 8 ||
+      !Number.isInteger(memory) ||
+      memory < 512 ||
+      memory > 16_384 ||
+      !Number.isInteger(disk) ||
+      disk < 1 ||
+      disk > 128
+    ) {
+      throw new ProviderTransportError('protocol_error', 'Resize target violates the allowlist.', {
+        retryable: false,
+      });
+    }
+
+    const currentDisk = Number(diskGiB(config) ?? 0);
+    if (disk < currentDisk) {
+      // Defence in depth. Acceptance already refused this, but the adapter is the last place that
+      // could still issue the irreversible call, so it refuses too rather than trusting its caller.
+      throw new ProviderTransportError('protocol_error', 'Disk size can grow but never shrink.', {
+        retryable: false,
+      });
+    }
+
+    const current = await this.currentStatus(vmid, options?.signal);
+    if (current.lock) {
+      return {
+        result: {
+          state: ProviderResultState.PROVIDER_RESULT_STATE_REJECTED,
+          failure: {
+            category: FailureCategory.FAILURE_CATEGORY_TRANSIENT,
+            code: 'PROVIDER_RESOURCE_LOCKED',
+            safeMessage: 'Another provider operation currently holds this instance.',
+          },
+          evidenceId: randomUUID(),
+        },
+      };
+    }
+
+    const configTask = await this.request<string | null>(
+      'POST',
+      `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/config`,
+      form({ cores: String(cpu), sockets: '1', vcpus: String(cpu), memory: String(memory) }),
+      options?.signal,
+    );
+
+    if (disk > currentDisk) {
+      // PUT, not POST: Proxmox does not implement POST on this endpoint. The size is absolute.
+      const growTask = await this.request<string | null>(
+        'PUT',
+        `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/resize`,
+        form({ disk: this.primaryDiskKey(config), size: `${disk}G` }),
+        options?.signal,
+      );
+      if (growTask) return { result: this.accepted(vmid, growTask) };
+    }
+
+    // An empty config result means Proxmox applied the change synchronously, which it does when
+    // the VM is stopped.
+    return configTask
+      ? { result: this.accepted(vmid, configTask) }
+      : {
+          result: {
+            state: ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
+            providerResourceId: String(vmid),
+            evidenceId: randomUUID(),
+          },
+        };
+  }
+
+  /**
+   * Names the disk a resize should grow.
+   *
+   * Ordered by the bus Proxmox templates most commonly use. A CD-ROM is never a resize target, so
+   * a `media=cdrom` entry is skipped rather than grown.
+   */
+  private primaryDiskKey(config: ProxmoxVmConfig): string {
+    for (const [key, value] of [
+      ['scsi0', config.scsi0],
+      ['virtio0', config.virtio0],
+      ['sata0', config.sata0],
+    ] as const) {
+      if (value && !value.includes('media=cdrom')) return key;
+    }
+    throw new ProviderTransportError('protocol_error', 'The instance has no resizable disk.', {
+      retryable: false,
+    });
+  }
+
+  /**
+   * Lists an owned VM's snapshots.
+   *
+   * Proxmox injects a synthetic entry named `current` into every listing to mark live state. It is
+   * not a snapshot and is filtered out, which is also why the domain refuses `current` as a
+   * caller-supplied name.
+   */
+  public async listSnapshots(
+    request: ListSnapshotsRequest,
+    options?: ProviderCallOptions,
+  ): Promise<ListSnapshotsResponse> {
+    const context = this.assertContext(request.context);
+    const ownership = this.assertOwnership(request.expectedOwnershipMarkers, context);
+    const vmid = this.assertVmid(request.providerResourceId);
+    await this.requireOwnedConfig(vmid, ownership, options?.signal);
+
+    const entries = await this.request<readonly ProxmoxSnapshot[]>(
+      'GET',
+      `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/snapshot`,
+      undefined,
+      options?.signal,
+    );
+    return {
+      snapshots: (entries ?? [])
+        .filter((entry) => entry.name && entry.name !== 'current')
+        .map((entry) => ({
+          providerSnapshotReference: entry.name,
+          name: entry.name,
+          ...(entry.description ? { description: entry.description } : {}),
+          createdAt: new Date((entry.snaptime ?? 0) * 1000).toISOString(),
+        })),
+      observedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Captures a disk-only snapshot.
+   *
+   * `vmstate=0` is deliberate: capturing RAM would make the snapshot far larger and slower, and
+   * would make a rollback restore a running memory image, which is a different and more surprising
+   * operation than restoring a disk.
+   */
+  public async createSnapshot(
+    request: CreateSnapshotRequest,
+    options?: ProviderCallOptions,
+  ): Promise<CreateSnapshotResponse> {
+    const vmid = await this.prepareSnapshotMutation(request.request, options);
+    const name = required(request.name, 'snapshot name');
+    const upid = await this.request<string | null>(
+      'POST',
+      `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/snapshot`,
+      form({
+        snapname: name,
+        vmstate: '0',
+        ...(request.description ? { description: request.description } : {}),
+      }),
+      options?.signal,
+    );
+    return { result: this.accepted(vmid, required(upid ?? undefined, 'provider task reference')) };
+  }
+
+  /**
+   * Restores the VM to a snapshot.
+   *
+   * `start=1` asks Proxmox to bring the VM back up afterwards, matching the tenant's expectation
+   * that a rollback leaves a usable instance rather than a stopped one.
+   */
+  public async rollbackSnapshot(
+    request: RollbackSnapshotRequest,
+    options?: ProviderCallOptions,
+  ): Promise<RollbackSnapshotResponse> {
+    const mutation = request.request;
+    const vmid = await this.prepareSnapshotMutation(mutation?.request, options);
+    const name = this.assertSnapshotName(mutation?.providerSnapshotReference);
+    const upid = await this.request<string | null>(
+      'POST',
+      `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/snapshot/${encodeURIComponent(name)}/rollback`,
+      form({ start: '1' }),
+      options?.signal,
+    );
+    return { result: this.accepted(vmid, required(upid ?? undefined, 'provider task reference')) };
+  }
+
+  /** Removes a snapshot. The stored disk state it held is destroyed with it. */
+  public async deleteSnapshot(
+    request: DeleteSnapshotRequest,
+    options?: ProviderCallOptions,
+  ): Promise<DeleteSnapshotResponse> {
+    const mutation = request.request;
+    const vmid = await this.prepareSnapshotMutation(mutation?.request, options);
+    const name = this.assertSnapshotName(mutation?.providerSnapshotReference);
+    const upid = await this.request<string | null>(
+      'DELETE',
+      `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/snapshot/${encodeURIComponent(name)}`,
+      undefined,
+      options?.signal,
+    );
+    return { result: this.accepted(vmid, required(upid ?? undefined, 'provider task reference')) };
+  }
+
+  /** Shared ownership and lock checks every snapshot mutation performs before acting. */
+  private async prepareSnapshotMutation(
+    mutation: InstanceMutationRequest | undefined,
+    options: ProviderCallOptions | undefined,
+  ): Promise<number> {
+    const context = this.assertContext(mutation?.context);
+    const ownership = this.assertOwnership(mutation?.expectedOwnershipMarkers, context);
+    const vmid = this.assertVmid(mutation?.providerResourceId);
+    await this.requireOwnedConfig(vmid, ownership, options?.signal);
+    const current = await this.currentStatus(vmid, options?.signal);
+    if (current.lock) {
+      throw new ProviderTransportError(
+        'unavailable',
+        'Another provider operation currently holds this instance.',
+        { retryable: true },
+      );
+    }
+    return vmid;
+  }
+
+  /**
+   * Validates a snapshot name before it is placed in a URL path.
+   *
+   * The domain validates caller input, but this value arrives from a stored command and is
+   * interpolated into a request path, so the adapter re-checks it rather than trusting its caller.
+   */
+  private assertSnapshotName(value: string | undefined): string {
+    const name = required(value, 'provider snapshot reference');
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(name) || name === 'current') {
+      throw new ProviderTransportError('protocol_error', 'The snapshot reference is not valid.', {
+        retryable: false,
+      });
+    }
+    return name;
+  }
+
+  /**
+   * Detaches tenant access and marks the VM as retained, without destroying anything.
+   *
+   * SAFE-028: this is what "delete" means for a tenant. Three changes, and none removes a disk:
+   * the description records the retention deadline alongside the unchanged ownership markers,
+   * `onboot=0` stops the VM coming back after a host reboot, and `delete=ipconfig0` strips the
+   * cloud-init network configuration so the guest cannot reclaim its address.
+   *
+   * The ownership markers are deliberately preserved. A purge later has to prove it is destroying
+   * the right VM, and it can only do that if the markers are still there to match.
+   */
+  public async markInstanceRetained(
+    request: MarkInstanceRetainedRequest,
+    options?: ProviderCallOptions,
+  ): Promise<MarkInstanceRetainedResponse> {
+    const mutation = request.request;
+    const context = this.assertContext(mutation?.context);
+    const ownership = this.assertOwnership(mutation?.expectedOwnershipMarkers, context);
+    const vmid = this.assertVmid(mutation?.providerResourceId);
+    await this.requireOwnedConfig(vmid, ownership, options?.signal);
+
+    const current = await this.currentStatus(vmid, options?.signal);
+    if (current.lock) {
+      return {
+        result: {
+          state: ProviderResultState.PROVIDER_RESULT_STATE_REJECTED,
+          failure: {
+            category: FailureCategory.FAILURE_CATEGORY_TRANSIENT,
+            code: 'PROVIDER_RESOURCE_LOCKED',
+            safeMessage: 'Another provider operation currently holds this instance.',
+          },
+          evidenceId: randomUUID(),
+        },
+      };
+    }
+
+    const upid = await this.request<string | null>(
+      'POST',
+      `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/config`,
+      form({
+        description: `${ownershipDescription(ownership)}\nretained-until=${request.retentionDeadline ?? ''}`,
+        onboot: '0',
+        // Proxmox's comma-separated "unset these keys" parameter.
+        delete: 'ipconfig0',
+      }),
+      options?.signal,
+    );
+
+    // A config write returns a task only while the VM is running; empty means it applied already.
+    return upid
+      ? { result: this.accepted(vmid, upid) }
+      : {
+          result: {
+            state: ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
+            providerResourceId: String(vmid),
+            evidenceId: randomUUID(),
+          },
+        };
+  }
+
+  /**
+   * Destroys the VM. **The only irreversible call in this adapter.**
+   *
+   * The ownership re-check is not redundant with the workflow's verification stage: that proves
+   * the resource was ours a moment ago, this proves it is still ours at the instant of the call.
+   * Both are cheap; a wrongly destroyed VM is not recoverable at any price.
+   *
+   * `purge=1` removes the VMID from backup jobs, HA, and replication configuration, and
+   * `destroy-unreferenced-disks=1` removes disks the config no longer references. Both travel as
+   * query-string parameters because Proxmox ignores them in a DELETE body.
+   *
+   * The VM is stopped first when running: Proxmox refuses to destroy a running VM, and discovering
+   * that after the caller believes a purge is underway is worse than doing it here.
+   */
+  public async purgeInstance(
+    request: PurgeInstanceRequest,
+    options?: ProviderCallOptions,
+  ): Promise<PurgeInstanceResponse> {
+    const mutation = request.request;
+    const context = this.assertContext(mutation?.context);
+    const ownership = this.assertOwnership(mutation?.expectedOwnershipMarkers, context);
+    const vmid = this.assertVmid(mutation?.providerResourceId);
+    await this.requireOwnedConfig(vmid, ownership, options?.signal);
+
+    const current = await this.currentStatus(vmid, options?.signal);
+    if (current.lock) {
+      return {
+        result: {
+          state: ProviderResultState.PROVIDER_RESULT_STATE_REJECTED,
+          failure: {
+            category: FailureCategory.FAILURE_CATEGORY_TRANSIENT,
+            code: 'PROVIDER_RESOURCE_LOCKED',
+            safeMessage: 'Another provider operation currently holds this instance.',
+          },
+          evidenceId: randomUUID(),
+        },
+      };
+    }
+    if (current.status === 'running') {
+      await this.request<string | null>(
+        'POST',
+        `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/status/stop`,
+        form({ 'overrule-shutdown': '1' }),
+        options?.signal,
+      );
+    }
+
+    const upid = await this.request<string | null>(
+      'DELETE',
+      `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}?purge=1&destroy-unreferenced-disks=1`,
+      undefined,
+      options?.signal,
+    );
+    return upid
+      ? { result: this.accepted(vmid, upid) }
+      : {
+          result: {
+            state: ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
+            providerResourceId: String(vmid),
+            evidenceId: randomUUID(),
+          },
+        };
+  }
+
+  /**
    * Reads config, status, and ownership to prove what actually exists.
    *
    * The completion evidence for the create workflow. Reports absence rather than throwing when
@@ -872,7 +1401,8 @@ export class ProxmoxProvider implements CreateInstanceProviderPort {
   }
 
   private async request<T>(
-    method: 'GET' | 'POST',
+    // PUT is needed for disk resize: Proxmox does not implement POST on that endpoint.
+    method: 'DELETE' | 'GET' | 'POST' | 'PUT',
     path: string,
     body?: URLSearchParams,
     callerSignal?: AbortSignal,

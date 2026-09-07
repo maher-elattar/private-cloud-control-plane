@@ -1,0 +1,28 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+flowchart TD
+  S["Green pods joined<br/>control-api-preview"] --> D0["initialDelay 45s<br/>at least two scrapes at 10s"]
+  D0 --> M1{"green-scrape-health<br/>count(up == 1) >= 2 ?"}
+  M1 -- no --> F["AnalysisRun Failed"]
+  M1 -- yes --> M2{"green-traffic-floor<br/>request rate >= 0.10/s ?"}
+  M2 -- no --> F
+  M2 -- yes --> M3{"green-http-200-rate<br/>200s / all responses >= 0.90 ?"}
+  M3 -- no --> F
+  M3 -- yes --> C{"4 measurements taken<br/>at 20s intervals?"}
+  C -- no --> D0
+  C -- yes --> P["AnalysisRun Successful"]
+
+  P --> PROM["Active service moves to green"]
+  F --> AB["Rollout aborted<br/>active service unchanged"]
+  AB --> SH["Self-healing:<br/>Argo CD keeps reconciling the desired spec,<br/>blue keeps serving, green is scaled down"]
+
+  N1["failureLimit 1 - one bad measurement<br/>is noise, two is a verdict"] -.-> M3
+  N2["clamp_min on the denominator -<br/>an empty vector must not read as<br/>a perfect success rate"] -.-> M3
+
+  classDef gate fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+  classDef bad fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+  classDef good fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef note fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  class M1,M2,M3,C gate
+  class F,AB bad
+  class P,PROM,SH good
+  class N1,N2 note

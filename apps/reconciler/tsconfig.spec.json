@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./out-tsc/vitest",
+    "types": ["vitest/globals", "node"],
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "include": [
+    "src/**/*.spec.ts",
+    "src/app/reconciliation-worker.ts",
+    "src/app/observation.client.ts",
+    "src/app/tokens.ts"
+  ],
+  "references": [
+    { "path": "../../packages/application/tsconfig.lib.json" },
+    { "path": "../../packages/contracts/tsconfig.lib.json" },
+    { "path": "../../packages/domain/tsconfig.lib.json" },
+    { "path": "../../packages/observability/tsconfig.lib.json" },
+    { "path": "../../packages/provider-sdk/tsconfig.lib.json" }
+  ]
+}

@@ -1,0 +1,107 @@
+# Sync wave 5 — alerts.
+#
+# The rules below are about the deployment mechanism, not the domain. Domain alerts belong with
+# the metric catalog; these exist because a GitOps control loop and a progressive delivery
+# controller both fail quietly by design — they stop making progress rather than crashing — and a
+# stalled reconciliation looks exactly like a stable system until somebody looks.
+#
+# `release: my-kube-prometheus-stack` is required for the cluster Prometheus to load these at all.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: control-plane-delivery
+  namespace: private-cloud
+  labels:
+    release: my-kube-prometheus-stack
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations: { argocd.argoproj.io/sync-wave: '5' }
+spec:
+  groups:
+    - name: control-plane.delivery
+      interval: 30s
+      rules:
+        - alert: RolloutDegraded
+          expr: |
+            sum by (name, namespace) (
+              rollout_info{namespace="private-cloud", phase="Degraded"}
+            ) > 0
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: A control-plane rollout is degraded
+            description: >-
+              Rollout {{ $labels.name }} has been in phase Degraded for two minutes. Either the
+              promotion analysis failed and the rollout aborted back to the previous version, or
+              the green environment never became ready. The active Service is serving the last
+              known-good ReplicaSet either way, so this is an alert about a blocked release, not
+              about an outage.
+
+        - alert: RolloutStuckPaused
+          expr: |
+            sum by (name, namespace) (
+              rollout_info{namespace="private-cloud", phase="Paused"}
+            ) > 0
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: A control-plane rollout has been paused for fifteen minutes
+            description: >-
+              Rollout {{ $labels.name }} is paused. With automatic promotion enabled this should
+              be a transient state while pre-promotion analysis runs, so fifteen minutes means the
+              analysis is neither passing nor failing — usually no data, which points at the
+              ServiceMonitor or at a green environment receiving no traffic.
+
+        - alert: GreenSuccessRateBelowGate
+          expr: |
+            (
+              sum by (service) (rate(http_server_request_duration_count{
+                namespace="private-cloud",
+                service=~".*-preview",
+                http_response_status_code="200"
+              }[5m])) or vector(0)
+            )
+            /
+            clamp_min(
+              sum by (service) (rate(http_server_request_duration_count{
+                namespace="private-cloud",
+                service=~".*-preview"
+              }[5m])) or vector(0),
+              0.001
+            ) < 0.90
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: A preview environment is below the 90% success gate
+            description: >-
+              The preview Service {{ $labels.service }} has been returning fewer than 90% HTTP 200
+              responses for five minutes. This is the same threshold the promotion gate applies,
+              evaluated continuously, so it fires for a green environment that degraded after it
+              was promoted as well as for one that never passed.
+
+        - alert: ArgoApplicationOutOfSync
+          expr: |
+            sum by (name) (
+              argocd_app_info{namespace="argocd", project="private-cloud", sync_status!="Synced"}
+            ) > 0
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: A control-plane Argo CD application has been out of sync for ten minutes
+            description: >-
+              Application {{ $labels.name }} is not Synced. Automated sync with self-healing is
+              enabled, so ten minutes of drift means reconciliation is failing rather than
+              pending — a rejected manifest, an unavailable repository, or a resource the
+              controller cannot own.
+
+        - alert: OutboxNotDraining
+          expr: |
+            min_over_time(controlplane_outbox_pending{outbox_owner!="audit"}[10m]) > 0
+          for: 10m
+          labels: { severity: critical }
+          annotations:
+            summary: The transactional outbox is not draining
+            description: >-
+              Outbox {{ $labels.outbox_owner }} has had a non-empty backlog for ten minutes with no
+              moment at zero. Rows are committed but not being published, which means change data
+              capture has stopped: a replication slot that is inactive, a Kafka Connect task that
+              has failed, or a broker refusing the connector's credentials.

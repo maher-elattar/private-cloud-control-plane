@@ -1,0 +1,51 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+flowchart LR
+  subgraph REPO["deploy/kubernetes"]
+    direction TB
+    D0["bootstrap/<br/>vendored Argo CD + Argo Rollouts<br/>NOT Argo-managed"]
+    D1["gitops-repo/<br/>in-cluster git daemon<br/>NOT Argo-managed"]
+    D2["argocd/<br/>AppProject + 6 Applications"]
+    D3["namespace/ - 19 objects"]
+    D4["platform/ - 3 Applications"]
+    D5["data/ - 16 objects"]
+    D6["observability/ - 7 objects"]
+    D7["applications/ - 27 objects"]
+    D8["dashboards/ - 2 objects"]
+  end
+
+  subgraph APPS["Argo CD Applications, by sync wave"]
+    direction TB
+    A0["wave 0 - control-plane-foundation"]
+    A1["wave 1 - control-plane-platform"]
+    A2["wave 2 - control-plane-data"]
+    A3["wave 3 - control-plane-observability"]
+    A4["wave 4 - control-plane-applications"]
+    A5["wave 5 - control-plane-dashboards"]
+  end
+
+  subgraph LIVE["Namespaces"]
+    direction TB
+    L1["private-cloud<br/>workloads, data, routing"]
+    L2["argocd<br/>controller + child Applications"]
+    L3["monitoring<br/>alert rules, dashboard"]
+    L4["private-cloud-gitops<br/>repository server"]
+  end
+
+  D0 -.->|"bootstrap.mjs, once"| L2
+  D1 -.->|"bootstrap.mjs, once"| L4
+  D2 -->|"root Application"| APPS
+  D3 --> A0 --> L1
+  D4 --> A1 --> L2
+  D5 --> A2 --> L1
+  D6 --> A3 --> L1
+  D7 --> A4 --> L1
+  D8 --> A5 --> L3
+
+  classDef unmanaged fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+  classDef managed fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+  classDef app fill:#fef3c7,stroke:#b45309,color:#78350f
+  classDef live fill:#dcfce7,stroke:#15803d,color:#14532d
+  class D0,D1 unmanaged
+  class D2,D3,D4,D5,D6,D7,D8 managed
+  class A0,A1,A2,A3,A4,A5 app
+  class L1,L2,L3,L4 live

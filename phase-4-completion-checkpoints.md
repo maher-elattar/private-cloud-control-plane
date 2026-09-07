@@ -6,13 +6,20 @@ without recording concrete evidence.
 
 ## Current State
 
-- Overall status: Reopened - strict Phase 4 gaps remain
-- Current checkpoint: 9 - Kafka-backed authorized replay
-- Last completed checkpoint: 8 - End-to-end telemetry correctness
-- Last Phase 4 implementation commit: `8c6851a docs: refresh Mermaid render artifacts`
+- Overall status: Complete - every reopened acceptance test has concrete evidence
+- Current checkpoint: none; Phase 4 is closed. Continue in `phase-5-completion-checkpoints.md`.
+- Last completed checkpoint: 11 - Final quality gate and closure
+- Last Phase 4 implementation commit: `2ca9d9e phase 4 review`
 - Previous checkpoint closure commit: `42f5cc1 docs: close phase 4 completion gate`
 - Working-tree constraint: preserve the existing console, editor, `.gitignore`, and root
   `tsconfig.json` changes; stage only explicit Phase 4 paths.
+
+Correction recorded 2026-09-03: the previous entry named `8c6851a` and described the checkpoint-9
+code as staged but uncommitted. Both were false. The whole checkpoint-9 implementation - migration
+`0005`, the `workflow-store.ts` authorization split, the `outbox-id` header contract, and the failed
+partial evidence file - was committed inside `2ca9d9e "phase 4 review"`, a mixed commit that also
+swept in the unrelated `console-web` frontend. That mixing is why the true state was hard to read;
+do not repeat it.
 
 ## Completion Plan
 
@@ -331,7 +338,7 @@ without recording concrete evidence.
 
 ### Checkpoint 9 - Kafka-backed authorized replay
 
-- Status: In progress
+- Status: Complete (implementation); runtime proof folded into checkpoint 10
 - Progress recorded 2026-09-01:
   - Added an additive migration for durable workflow-owned replay authorization. The row binds the
     administrative request, original event, next generation, authorized command hash, and physical
@@ -362,11 +369,116 @@ without recording concrete evidence.
 - Verification required: transaction tests, contract checks, CDC routing, broker-coordinate proof,
   denied replay, duplicate replay request, Kafka outage recovery, and successful generation-one
   replay.
+- Evidence recorded 2026-09-03:
+  - Re-traced the complete replay loop against the committed code and confirmed it is closed: the
+    request transaction records durable authority and writes generation one to `workflow.outbox`;
+    Debezium republishes that row to `provisioning.commands.v1`; and the workflow is reopened only
+    after `admitAuthorizedReplayCommand` matches generation, canonical payload hash, and
+    `authorized_outbox_id` against the physical `outboxId`. The authorized command is no longer
+    inserted directly into the workflow transaction.
+  - Fixed a rejection-attribution defect. `admitCreateCommand` returned a bare
+    `'accepted' | 'duplicate' | 'rejected'`, so `command-consumer.ts` hardcoded
+    `recordQuarantine('REPLAY_COMMAND_UNAUTHORIZED')` for every rejection and reported an identity
+    conflict as an unauthorized replay. The port now returns a `CommandAdmission` result carrying a
+    `CommandRejectionCode`, and the consumer records the real cause.
+  - Fixed an unbounded-redelivery defect. When an authorized replay could not reopen its workflow,
+    the store threw a bare `Error`; the consumer rethrows anything that is not a classified message
+    failure, so the offset was never committed and Kafka redelivered the same record forever. That
+    branch now quarantines by hash and coordinates under the new `REPLAY_COMMAND_STATE_CONFLICT`
+    code, commits the offset, retains no payload, and deliberately leaves the authorization row
+    `authorized` so the unconsumed authority stays visible to an operator.
+  - Separated the two decisions `controlplane.replay` conflated. The counter carries a `phase`
+    attribute of `request` or `command`, so a rejected replay _request_ is no longer
+    indistinguishable from a rejected restored _command_. The metric catalog now states the bounded
+    value set for `phase` and for the three `failure.code` values.
+  - Observability exporter test proves two distinct `controlplane.replay` series for the two phases
+    and the `REPLAY_COMMAND_STATE_CONFLICT` quarantine attribute, while the prohibited `event.id`
+    attribute is still stripped by the view.
+  - Uncached typecheck and lint pass for `application`, `postgres-adapter`, `observability`,
+    `provider-adapters`, and `provisioning-orchestrator` with their dependency builds. The full
+    workspace suite passes across all seven test projects.
+- Runtime proof deliberately deferred: the broker-level matrix listed under "Verification required"
+  is executed once, from clean volumes, as checkpoint 10. Splitting it would mean running the same
+  expensive Compose reset twice and recording two partial evidence files.
 - Planned commit: `feat: route authorized replays through Kafka`
+
+### Checkpoint 9B - Administrative read surface parity
+
+- Status: Complete
+- Rationale: each item closes a hole Phase 4 itself opened. These are the last Phase 4 endpoints;
+  the remaining unimplemented contract surface belongs to Phase 5 capabilities and ships with them.
+- Required work:
+  - Implement `GET /v1/admin/audit-events`. Checkpoint 3 built the complete audit write path -
+    `audit.entries` plus the `audit.events.v1` fact - and left no way to read it back.
+  - Implement `GET /v1/admin/operations/{operationId}`. The replay 202 returns a tenant-scoped
+    `statusUrl`, which an administrator who is not a project member cannot follow; the runtime
+    verifier works around this today by polling with the tenant token.
+  - Add the `AdministrationService` gRPC controller for the four Phase-4-scoped methods
+    (`ListDeadLetters`, `ReplayDeadLetter`, `GetAdministrativeOperation`, `ListAuditEvents`). The
+    governed replay surface is currently REST-only despite the contract promising transport parity.
+  - Implement real keyset cursor pagination once and apply it to every page that currently
+    hardcodes `nextCursor: null`.
+- Verification required: contract checks, unit tests for cursor encoding and administrator
+  authorization, transport-parity tests, typecheck, lint, and build.
+- Evidence recorded 2026-09-04:
+  - Added `GET /v1/admin/audit-events` and `GET /v1/admin/operations/{operationId}` across the
+    store, application, and a new `AdministrationController`, plus an `AdministrationGrpcController`
+    serving the four Phase-4-scoped `AdministrationService` RPCs. The service previously had no gRPC
+    controller at all. The `202` acceptance mapper was extracted to `grpcMutationAccepted` rather
+    than duplicated, so the `statusUrl` to `status_uri` rename cannot drift between transports.
+  - Migration `0006_phase4_admin_operations.sql` adds the administrative sidecar columns to
+    `projection.operations` and six keyset indexes. `AdministrativeOperation` is `Operation` plus
+    seven recovery fields, and `Operation` declares `additionalProperties: false`, so the projected
+    document could not carry them; they arrive on workflow events the projection already consumes
+    and simply had nowhere to land. The control API therefore serves them without reading any
+    workflow-owned table.
+  - Replaced the hardcoded `nextCursor: null` on all six pages with keyset pagination. Queries
+    over-fetch `limit + 1` rows so a full last page never hands back a cursor that returns nothing.
+    A cursor the service did not issue raises `VALIDATION_FAILED`; silently restarting at page one
+    would let a client with a corrupt cursor loop forever while believing it was making progress.
+  - The contract already declared `Cursor` on all ten list operations, so no parameter was added.
+    Each now also declares `400` and `VALIDATION_FAILED`, since a malformed cursor is newly
+    rejectable. Regeneration is clean at 39 REST operations, 54 gRPC methods, 20 event messages, and
+    895 field rows.
+  - Measured the row-value keyset claim rather than asserting it. Against 20,000 audit rows,
+    `(occurred_at, id) < (...)` plans as `Index Scan using audit_entries_page` with
+    `Index Cond: ROW(...) < ROW(...)` and no sort; the logically equivalent disjunction plans as a
+    Bitmap Heap Scan with a BitmapOr and an explicit quicksort. The comment in
+    `control-plane-store.ts` states this, and the plan output confirms it.
+  - `packages/postgres-adapter` now has a test target for the first time - `vite.config.ts`,
+    `tsconfig.spec.json`, and the established `vite.config.ts` lint ignore. Six cursor tests cover
+    the round trip, the contract length bound, nine malformed-token shapes, and the three paging
+    boundaries including the exactly-full page.
+  - Verified the new SQL against disposable PostgreSQL 16.10 with all six migrations and the seed
+    applied: 22 checks passed covering the full seven-row paging walk with no duplicates or
+    omissions, newest-first ordering, termination without a dangling cursor, both audit filters,
+    corrupt-cursor rejection, cross-project administrative reads, restricted provider-task
+    propagation, and ascending catalog paging across four rows. An interim run over a tie-heavy
+    28-row set proved the primary-key tiebreaker independently.
+  - Three application tests cover administrator-only access to both new routes, paging pass-through
+    with limit clamping and cursor omission, and `OPERATION_NOT_FOUND`.
+  - Full gate green: contracts generate/validate/docs, all 14 projects typecheck, lint, and build,
+    and 66 tests pass across 8 test projects, up from 53 across 7. Documentation validation passes
+    for 50 Markdown files and 28 Mermaid artifacts. Repository formatting is clean apart from the
+    pre-existing editor-skill and lockfile limitation already recorded at checkpoint 6.
+- Deliberately deferred, with reasons:
+  - The sixteen remaining `AdministrationService` RPCs are Phase 5 capability surface (provider
+    profiles, manual reviews, retention policy, purge, reconciliation) and ship with the capability
+    that gives them meaning.
+  - `AuditEvent.reason` stays absent. The free-text justification an administrator supplies with a
+    replay is restricted and lives in `control.replay_requests`; publishing it on the audit list
+    would widen its audience from the one administrator who can read that request to every
+    administrator who can list audit events. The contract makes the field optional for this reason.
+- Observation for later, not fixed here: the read methods on `ControlPlaneApplication` are typed
+  `Promise<T>` but throw their authorization failure synchronously, because they delegate without
+  awaiting. `.catch()` on the returned promise therefore does not see it. This is pre-existing
+  across the whole class rather than new, so it was matched instead of diverged from; it is worth
+  making consistent when the Phase 5 acceptance methods are added.
+- Planned commit: `feat: complete phase 4 administrative read surface`
 
 ### Checkpoint 10 - Complete runtime evidence
 
-- Status: Pending
+- Status: Complete
 - Required work:
   - Extend the repeatable Phase 4 verifier with the new exemplar, global redaction, CDC span-kind,
     and authorized-replay delivery assertions.
@@ -375,11 +487,59 @@ without recording concrete evidence.
   - Leave the persistent environment healthy and record the service URLs.
 - Verification required: `verify:phase4-runtime -- --reset`, screenshots, health stability, and all
   required evidence artifacts.
+- Evidence recorded 2026-09-04:
+  - `pnpm run verify:phase4-runtime -- --reset` passed in 625.7 seconds from clean named volumes,
+    including the production image build, and wrote a `passed` evidence record with eight check
+    blocks. The previous record was `failed` with only `environment` populated.
+  - Added the authorized-replay delivery proof the checkpoint asked for. The generation-one command
+    receipt carries `provisioning.commands.v1`, partition 3, offset 3; the durable authorization
+    reached `completed` with its `authorized_outbox_id` matching the published `workflow.outbox`
+    row; and the broker record itself carries `replay-generation: 1`, that same outbox identity,
+    and the preserved W3C carrier. The earlier assertions checked database end state only, which a
+    direct in-transaction insert would have satisfied equally well.
+  - Added the two rejection drills. The first draft was wrong and the run caught it: republishing
+    the authorized command with only a forged `outbox-id` deduplicates as a byte-identical
+    redelivery, because admission checks `(event_id, replay_generation)` and the payload hash
+    _before_ it consults authority. That is correct behaviour, so the drill now uses a generation
+    with no receipt yet for `REPLAY_COMMAND_UNAUTHORIZED`, and a mutated payload under an
+    already-received generation for `REPLAY_COMMAND_IDENTITY_CONFLICT`. Both quarantined exactly
+    once, the live authorization stayed `completed`, and no second workflow appeared.
+  - Added the duplicate replay-request drill: the same idempotency key replayed the stored response
+    and created zero additional authorizations.
+  - Screenshots are now genuinely captured rather than asserted. The previous run recorded two file
+    paths as though it had produced them while the PNGs on disk were from 31 August and taken by
+    hand. Headless Chrome now captures both at 1920x1200, each capture is size-checked so a blank
+    frame cannot pass as evidence, and both were visually inspected: the dashboard renders all five
+    panels with live data, and the trace view renders a 411-span waterfall across four services
+    rooted at the `202` Control API request.
+  - Replaced "the dashboard is provisioned" with "the dashboard returns data": every panel's own
+    query is executed through the Grafana datasource proxy and must return at least one series.
+    This also had to learn to wait - several panels use `increase(...[1h])`, which yields nothing
+    until two scrapes land, so a single instantaneous check raced the scrape interval and failed a
+    working dashboard.
+  - **Found and fixed a real observability defect while inspecting the dashboard screenshot.**
+    `controlplane.outbox.pending` counted `audit.events.v1` facts, which have no consumer in this
+    phase, so the gauge rose monotonically on a perfectly healthy stack - 9 control and 11 workflow
+    records, oldest 370 seconds, still climbing - and the panel it feeds was a standing false
+    alarm. Since checkpoint 9 it also mismatched `provisioning.commands.v1` rows in
+    `workflow.outbox` against event receipts, when those are acknowledged in
+    `workflow.command_receipts`. Both are fixed, the corrected query reads 0/0 on a settled stack,
+    and the metric catalog now documents the exclusions with an explicit note that the audit
+    exclusion must be **replaced** by a real check when the audit archive ships, not deleted.
+  - Added an outbox-drain assertion so that cannot regress. It is also the roadmap's own "pending
+    outbox records drain after recovery" gate criterion, asserted rather than assumed, and it
+    cross-checks the exported gauge against the database so the dashboard cannot disagree with the
+    tables it describes.
+  - Final stack left healthy and persistent: 13 running containers, all 12 health-checked services
+    healthy, five initialization jobs exited zero, verified after a 10-second stability window.
+  - Telemetry unchanged and still clean: 24 required metric families, a Prometheus exemplar tied to
+    a Tempo-resolvable trace, 6,686 series inspected, and zero prohibited labels, zero restricted
+    values in metrics, and zero in traces.
 - Planned commit: `test: prove strict phase 4 completion`
 
 ### Checkpoint 11 - Final quality gate and closure
 
-- Status: Pending
+- Status: Complete
 - Required work:
   - Run contracts, migrations, unit and integration tests, lint, typecheck, builds, formatting,
     documentation validation, `promtool`, Mermaid rendering, dependency audit, and diff checks.
@@ -387,6 +547,40 @@ without recording concrete evidence.
     cardinality, recovery, and documentation claims; resolve every blocking finding.
   - Mark Phase 4 complete only when every reopened acceptance test has concrete evidence.
 - Verification required: all scoped quality gates pass and no blocking review finding remains.
+- Evidence recorded 2026-09-04:
+  - Deleted the confirmed Phase 3 dead path: `projection-worker.ts`,
+    `ProjectionStore.applyNextWorkflowEvent` and its implementation, `LEGACY_CONSUMER_NAME`, and
+    the now-unused `EventRow` type and `sql` import. Every stale reference is gone from
+    `tokens.ts`, `ports.ts`, `projection-store.ts`, `glossary.md`, `code-reading-guide.md`, and
+    `phase-4-explained.md`; the two documentation passages that explained the poller's ordering
+    guard now explain that ordering is the broker's job through `partitionKey` partitioning.
+  - Wired the orphaned `tools/db/postgres-ready.spec.mjs` instead of deleting it - it covers real
+    retry, fail-fast, and budget-exhaustion behaviour. `tools/` has no Nx project and the file uses
+    `node:test`, so `pnpm run test` now runs the Nx matrix and then `pnpm run test:tools`. All
+    three cases pass and the documented gate command covers them.
+  - Reconciled the documents that contradicted the evidence. `phase-4-local-verification.md`
+    carried a 31 August date, `465.4` seconds, `888` field rows, "all four migrations", and 56
+    tests; it now records the 4 September run at 625.7 seconds, 895 field rows, six migrations, 66
+    tests plus the three tools cases, and five new drill rows. `README.md` no longer says "complete
+    in code and verified locally" while the machine evidence said otherwise.
+  - Full gate: contracts regenerate stably and validate at 39 REST operations, 54 gRPC methods, 20
+    event messages, and 895 field rows; all 14 projects typecheck, lint, and build uncached; 66
+    tests pass across 8 projects plus 3 tools cases; documentation validation passes for 50
+    Markdown files and 28 Mermaid artifacts; six migrations and the seed reapply idempotently.
+  - `pnpm audit --prod --audit-level high` reports 8 moderate and 7 high findings. Machine-readable
+    path inspection confirms every advisory resolves through the single entry point
+    `apps__console-web`; none reaches a Phase 4 service or shared runtime package. No console or
+    lockfile change was made.
+  - Repository formatting is clean apart from the pre-existing limitation recorded at checkpoint 6:
+    five user-owned editor and agent skill files plus the lockfile. The complete backend, packages,
+    deployment, documentation, and tooling scope passes Prettier.
+- Known signals left open deliberately:
+  - KafkaJS 2.2.4 on Node.js 24 still emits `TimeoutNegativeWarning` during broker recovery. The
+    drills complete; this stays recorded as a dependency signal to reassess before choosing a
+    production runtime rather than suppressed.
+  - The read methods on `ControlPlaneApplication` are typed `Promise<T>` but throw their
+    authorization failure synchronously. Pre-existing across the class; carried into the Phase 5
+    ledger to fix when the acceptance methods are added.
 - Planned commit: `docs: close strict phase 4 completion gate`
 
 ## Resume Instructions

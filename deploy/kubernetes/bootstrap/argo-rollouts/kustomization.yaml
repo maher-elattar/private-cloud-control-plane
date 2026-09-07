@@ -1,0 +1,7 @@
+# Argo Rollouts v1.9.1, vendored from the pinned upstream release.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argo-rollouts
+resources:
+  - namespace.yaml
+  - install.yaml

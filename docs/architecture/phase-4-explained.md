@@ -778,10 +778,6 @@ language reflects checkpoint 6; the strict re-audit at checkpoint 7 reopened the
 
 ### Known loose ends in the tree
 
-- `apps/control-api/src/app/projections/projection-worker.ts` and
-  `ProjectionStore.applyNextWorkflowEvent` are **Phase 3 leftovers**. The class is no longer
-  registered in `app.module.ts` — `ProjectionConsumer` replaced it — but the file and the port
-  method still exist. They are dead code, not an active second path.
 - KafkaJS 2.2.4 on Node.js 24 emits `TimeoutNegativeWarning` from its internal request queue
   during broker recovery. The drills complete; this is recorded openly as a dependency signal to
   reassess before choosing a production runtime, not suppressed.

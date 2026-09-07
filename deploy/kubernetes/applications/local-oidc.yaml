@@ -1,0 +1,87 @@
+# Sync wave 4 — the local identity provider fixture.
+#
+# The API validates bearer tokens against an OIDC issuer. In this deployment that issuer is a
+# fixture that mints and signs tokens for the seeded local tenants, and it exists so that the
+# authorization path in front of every endpoint is exercised rather than bypassed.
+#
+# **Its signing key never leaves this cluster.** The fixture generates a key pair at startup and
+# publishes only the public half at its JWKS endpoint; nothing is persisted and nothing is
+# committed. A real deployment replaces `OIDC_ISSUER` in `namespace/config.yaml` with a real
+# issuer and deletes this file.
+#
+# A `Deployment` rather than a `Rollout`: a fixture is not a thing to promote, and a blue-green
+# gate around it would be measuring the test harness.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: local-oidc
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: local-oidc
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: local-oidc }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: local-oidc
+        app.kubernetes.io/part-of: private-cloud-control-plane
+    spec:
+      serviceAccountName: local-fixtures
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Numeric, because the kubelet cannot verify that a symbolic `USER node` is non-root and
+        # refuses to start the container at all. 1000 is what `node` resolves to in the official
+        # Node.js images this service is built from.
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: local-oidc
+          image: private-cloud/local-runner:phase6
+          imagePullPolicy: IfNotPresent
+          command: ['node', 'local-oidc.mjs']
+          ports:
+            - { name: http, containerPort: 18080 }
+          env:
+            - { name: LOCAL_OIDC_HOST, value: 0.0.0.0 }
+            - { name: LOCAL_OIDC_PORT, value: '18080' }
+            - name: LOCAL_OIDC_ISSUER
+              value: http://local-oidc.private-cloud.svc.cluster.local:18080
+            - { name: LOCAL_OIDC_AUDIENCE, value: private-cloud-control-plane }
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 25m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-local-oidc-ingress
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: local-oidc }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+      ports:
+        - { protocol: TCP, port: http }

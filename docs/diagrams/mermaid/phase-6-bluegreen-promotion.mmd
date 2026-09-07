@@ -1,0 +1,38 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+sequenceDiagram
+  autonumber
+  participant Repo as GitOps repository
+  participant Argo as Argo CD
+  participant RO as Rollout controller
+  participant Green as Green ReplicaSet
+  participant Preview as Service control-api-preview
+  participant Active as Service control-api
+  participant Prom as Prometheus
+  participant AR as AnalysisRun
+
+  Repo->>Argo: new image tag committed
+  Argo->>RO: apply Rollout spec
+  RO->>Green: create ReplicaSet, start pods
+  Green-->>RO: readiness probe passes (database reachable)
+  RO->>Preview: point selector at the green pod hash
+  Note over Preview,Active: Active still selects blue.<br/>Only X-Canary green reaches green.
+  Prom->>Preview: scrape 9464 every 10s (ServiceMonitor)
+  RO->>AR: start pre-promotion analysis
+  AR->>Prom: green-scrape-health, green-traffic-floor,<br/>green-http-200-rate
+
+  alt every metric passes for 4 measurements
+    AR-->>RO: Successful
+    RO->>Active: move selector to the green pod hash
+    RO->>AR: start post-promotion analysis
+    AR->>Prom: green-scrape-health, green-http-200-rate
+    AR-->>RO: Successful
+    Note over Active: Blue stays up for scaleDownDelaySeconds,<br/>so an abort is a rollback rather than a cold start.
+  else 200-rate below 90 percent, or no traffic, or pods not scraping
+    AR-->>RO: Failed
+    RO->>Green: abort, scale the ReplicaSet down
+    Note over Active: Selector never moved.<br/>No production request reached green.
+  else green never becomes ready
+    RO->>RO: progressDeadlineSeconds elapses
+    RO->>Green: progressDeadlineAbort, scale down
+    Note over AR: No analysis ever ran.<br/>The deadline is the gate in this branch.
+  end

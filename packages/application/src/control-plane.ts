@@ -21,12 +21,22 @@
  * @see docs/architecture/glossary.md#ports-and-adapters-hexagonal-architecture
  * @see docs/architecture/code-reading-guide.md
  */
-import { canonicalSha256, DomainError, validateCreateInstance } from '@private-cloud/domain';
+import {
+  canonicalSha256,
+  DomainError,
+  validateCreateInstance,
+  validatePowerAction,
+  validateSnapshotName,
+} from '@private-cloud/domain';
 import type {
   AcceptedMutation,
   Actor,
+  AdministrativeOperationView,
+  AuditEventFilter,
+  AuditEventView,
   ControlPlaneStore,
   CreateInstanceCommand,
+  CreateSnapshotCommand,
   DeadLetterView,
   FlavorView,
   ImageView,
@@ -34,9 +44,16 @@ import type {
   NetworkView,
   OperationView,
   Page,
+  PageRequest,
+  PowerInstanceCommand,
   ProjectView,
   QuotaView,
   ReplayDeadLetterCommand,
+  PurgeInstanceCommand,
+  ResizeInstanceCommand,
+  RetainInstanceCommand,
+  SnapshotActionCommand,
+  SnapshotView,
 } from './ports.js';
 import { NOOP_APPLICATION_TELEMETRY, type ApplicationTelemetry } from './telemetry.js';
 
@@ -56,6 +73,95 @@ const IDEMPOTENCY_KEY_MAXIMUM_LENGTH = 128;
  *
  * Differs from {@link CreateInstanceCommand} in that `sshPublicKeys` is optional here; the
  * service materialises it into a definite array before handing it to the store.
+ */
+/** A tenant request to change an instance's power state. */
+export interface PowerInstanceInput {
+  readonly actor: Actor;
+  readonly projectId: string;
+  /** The instance to act on. */
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  /** Requested transition, validated against the supported set before acceptance. */
+  readonly action: string;
+}
+
+/** A tenant request to snapshot an instance. */
+export interface CreateSnapshotInput {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  readonly name: string;
+  readonly description?: string;
+}
+
+/** A tenant request to soft-delete an instance. */
+export interface RetainInstanceInput {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+}
+
+/** An administrator request to destroy a retained instance. */
+export interface PurgeInstanceInput {
+  readonly actor: Actor;
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  readonly reason: string;
+  readonly confirmInstanceId: string;
+}
+
+/** A tenant request to roll back to, or delete, an existing snapshot. */
+export interface SnapshotActionInput {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly instanceId: string;
+  readonly snapshotId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+}
+
+/**
+ * A tenant request to create an instance, as the transports supply it.
+ *
+ * Distinct from `CreateInstanceCommand` in `ports.ts`: this is the raw request, before the
+ * application has authorized the actor, validated the fields, or bound the active trace.
+ */
+/** A tenant request to change an instance's sizing to a catalog flavor. */
+export interface ResizeInstanceInput {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly instanceId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly traceparent: string;
+  readonly tracestate?: string;
+  /** Catalog flavor defining the target sizing. */
+  readonly flavorId: string;
+  /** Requested disk size in GiB, independent of the flavor. Absent leaves the disk alone. */
+  readonly diskGiB?: number;
+}
+
+/**
+ * A tenant request to create an instance, as the transports supply it.
+ *
+ * Distinct from `CreateInstanceCommand` in `ports.ts`: this is the raw request, before the
+ * application has authorized the actor, validated the fields, or bound the active trace.
  */
 export interface CreateInstanceInput {
   /** Authenticated caller, populated by the transport from a verified OIDC token. */
@@ -136,17 +242,7 @@ export class ControlPlaneApplication {
         try {
           this.authorize(input.actor, input.projectId);
 
-          // Checked here rather than in the DTO because gRPC callers do not pass through
-          // class-validator, and both transports must enforce the same rule.
-          if (
-            input.idempotencyKey.length < IDEMPOTENCY_KEY_MINIMUM_LENGTH ||
-            input.idempotencyKey.length > IDEMPOTENCY_KEY_MAXIMUM_LENGTH
-          ) {
-            throw new DomainError(
-              'VALIDATION_FAILED',
-              'Idempotency key must contain 8 to 128 characters.',
-            );
-          }
+          this.assertIdempotencyKey(input.idempotencyKey);
           validateCreateInstance(input);
 
           const activeTrace = this.telemetry.currentTraceContext({
@@ -184,6 +280,377 @@ export class ControlPlaneApplication {
     );
   }
 
+  /**
+   * Accepts a power transition as durable intent.
+   *
+   * Follows the same eight steps as {@link ControlPlaneApplication.createInstance}: trace,
+   * authorize, bound the idempotency key, validate, bind the active trace, build the command,
+   * hash it, and delegate. The differences are that the domain validator narrows an action rather
+   * than a whole request, and the store takes the per-instance concurrency lock.
+   *
+   * @throws DomainError `PROJECT_ACCESS_DENIED`, `VALIDATION_FAILED`, `INSTANCE_NOT_FOUND`,
+   *   `INSTANCE_BUSY`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  public async mutateInstancePower(input: PowerInstanceInput): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.command.accept',
+      {
+        'command.type': 'power_instance',
+        'cloud.project.id': input.projectId,
+      },
+      async () => {
+        try {
+          this.authorize(input.actor, input.projectId);
+          this.assertIdempotencyKey(input.idempotencyKey);
+          const action = validatePowerAction(input.action);
+
+          const activeTrace = this.telemetry.currentTraceContext({
+            traceparent: input.traceparent,
+            ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+          });
+          const command: PowerInstanceCommand = {
+            actor: input.actor,
+            projectId: input.projectId,
+            instanceId: input.instanceId,
+            idempotencyKey: input.idempotencyKey,
+            correlationId: input.correlationId,
+            traceparent: activeTrace.traceparent,
+            ...(activeTrace.tracestate ? { tracestate: activeTrace.tracestate } : {}),
+            action,
+          };
+          // WHY the instance is in the hash: reusing one key against a *different* instance is a
+          // client bug, and replaying the first instance's response would report success for a
+          // machine the caller never named.
+          const requestHash = canonicalSha256({
+            actor: input.actor.subject,
+            projectId: input.projectId,
+            operation: 'power_instance',
+            instanceId: input.instanceId,
+            action,
+          });
+          const accepted = await this.store.acceptPowerAction(command, requestHash);
+          this.telemetry.commandAccepted(
+            'power_instance',
+            accepted.replayed ? 'replayed' : 'accepted',
+          );
+          return accepted;
+        } catch (error: unknown) {
+          this.telemetry.commandAccepted('power_instance', 'rejected');
+          throw error;
+        }
+      },
+    );
+  }
+
+  /**
+   * Accepts a resize as durable intent.
+   *
+   * The sizing rules — no shrink, no no-op, quota headroom — live in the domain and the store
+   * rather than here, because they need the instance's current sizing read under the acceptance
+   * lock. This method's job is authorization, key bounds, and the request identity.
+   *
+   * @throws DomainError `PROJECT_ACCESS_DENIED`, `VALIDATION_FAILED`, `INSTANCE_NOT_FOUND`,
+   *   `INSTANCE_BUSY`, `DISK_SHRINK_FORBIDDEN`, `QUOTA_EXCEEDED`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  public async resizeInstance(input: ResizeInstanceInput): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.command.accept',
+      { 'command.type': 'resize_instance', 'cloud.project.id': input.projectId },
+      async () => {
+        try {
+          this.authorize(input.actor, input.projectId);
+          this.assertIdempotencyKey(input.idempotencyKey);
+
+          const activeTrace = this.telemetry.currentTraceContext({
+            traceparent: input.traceparent,
+            ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+          });
+          const command: ResizeInstanceCommand = {
+            actor: input.actor,
+            projectId: input.projectId,
+            instanceId: input.instanceId,
+            idempotencyKey: input.idempotencyKey,
+            correlationId: input.correlationId,
+            traceparent: activeTrace.traceparent,
+            ...(activeTrace.tracestate ? { tracestate: activeTrace.tracestate } : {}),
+            flavorId: input.flavorId,
+            ...(input.diskGiB === undefined ? {} : { diskGiB: input.diskGiB }),
+          };
+          const requestHash = canonicalSha256({
+            actor: input.actor.subject,
+            projectId: input.projectId,
+            operation: 'resize_instance',
+            instanceId: input.instanceId,
+            flavorId: input.flavorId,
+            // Part of the identity: the same key with a different disk size is a different
+            // request, and replaying the first response would report a growth that never happened.
+            diskGiB: input.diskGiB ?? null,
+          });
+          const accepted = await this.store.acceptResize(command, requestHash);
+          this.telemetry.commandAccepted(
+            'resize_instance',
+            accepted.replayed ? 'replayed' : 'accepted',
+          );
+          return accepted;
+        } catch (error: unknown) {
+          this.telemetry.commandAccepted('resize_instance', 'rejected');
+          throw error;
+        }
+      },
+    );
+  }
+
+  /**
+   * Accepts a snapshot creation as durable intent.
+   *
+   * @throws DomainError `PROJECT_ACCESS_DENIED`, `VALIDATION_FAILED`, `INSTANCE_NOT_FOUND`,
+   *   `INSTANCE_BUSY`, `QUOTA_EXCEEDED`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  public async createSnapshot(input: CreateSnapshotInput): Promise<AcceptedMutation> {
+    return this.acceptSnapshot('create_snapshot', input.projectId, input.actor, async () => {
+      this.assertIdempotencyKey(input.idempotencyKey);
+      validateSnapshotName(input.name);
+      const activeTrace = this.telemetry.currentTraceContext({
+        traceparent: input.traceparent,
+        ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+      });
+      const command: CreateSnapshotCommand = {
+        actor: input.actor,
+        projectId: input.projectId,
+        instanceId: input.instanceId,
+        idempotencyKey: input.idempotencyKey,
+        correlationId: input.correlationId,
+        traceparent: activeTrace.traceparent,
+        ...(activeTrace.tracestate ? { tracestate: activeTrace.tracestate } : {}),
+        name: input.name,
+        ...(input.description ? { description: input.description } : {}),
+      };
+      return this.store.acceptSnapshotCreate(
+        command,
+        canonicalSha256({
+          actor: input.actor.subject,
+          projectId: input.projectId,
+          operation: 'create_snapshot',
+          instanceId: input.instanceId,
+          name: input.name,
+          description: input.description ?? null,
+        }),
+      );
+    });
+  }
+
+  /**
+   * Accepts a rollback to an existing snapshot.
+   *
+   * WHY this is not gated behind an extra confirmation: a rollback discards everything written
+   * since the snapshot, which is exactly what the caller asked for. The guard that matters is
+   * ownership — the snapshot must belong to the instance named — and that lives in the store where
+   * it can be checked under the same lock that accepts the operation.
+   *
+   * @throws DomainError `PROJECT_ACCESS_DENIED`, `SNAPSHOT_NOT_FOUND`,
+   *   `SNAPSHOT_OWNERSHIP_MISMATCH`, `INSTANCE_BUSY`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  public async rollbackSnapshot(input: SnapshotActionInput): Promise<AcceptedMutation> {
+    return this.snapshotAction('rollback_snapshot', input);
+  }
+
+  /**
+   * Accepts the deletion of an existing snapshot.
+   *
+   * @throws DomainError `PROJECT_ACCESS_DENIED`, `SNAPSHOT_NOT_FOUND`,
+   *   `SNAPSHOT_OWNERSHIP_MISMATCH`, `INSTANCE_BUSY`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  public async deleteSnapshot(input: SnapshotActionInput): Promise<AcceptedMutation> {
+    return this.snapshotAction('delete_snapshot', input);
+  }
+
+  /** Lists an instance's snapshots. */
+  public listSnapshots(
+    actor: Actor,
+    projectId: string,
+    instanceId: string,
+    limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
+  ): Promise<Page<SnapshotView>> {
+    this.authorize(actor, projectId);
+    return this.store.listSnapshots(projectId, instanceId, this.page(limit, cursor));
+  }
+
+  /** Shared acceptance shape for rollback and delete, which differ only in the action. */
+  private async snapshotAction(
+    action: 'rollback_snapshot' | 'delete_snapshot',
+    input: SnapshotActionInput,
+  ): Promise<AcceptedMutation> {
+    return this.acceptSnapshot(action, input.projectId, input.actor, async () => {
+      this.assertIdempotencyKey(input.idempotencyKey);
+      const activeTrace = this.telemetry.currentTraceContext({
+        traceparent: input.traceparent,
+        ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+      });
+      const command: SnapshotActionCommand = {
+        actor: input.actor,
+        projectId: input.projectId,
+        instanceId: input.instanceId,
+        snapshotId: input.snapshotId,
+        idempotencyKey: input.idempotencyKey,
+        correlationId: input.correlationId,
+        traceparent: activeTrace.traceparent,
+        ...(activeTrace.tracestate ? { tracestate: activeTrace.tracestate } : {}),
+      };
+      return this.store.acceptSnapshotAction(
+        action,
+        command,
+        canonicalSha256({
+          actor: input.actor.subject,
+          projectId: input.projectId,
+          operation: action,
+          instanceId: input.instanceId,
+          snapshotId: input.snapshotId,
+        }),
+      );
+    });
+  }
+
+  /** Wraps a snapshot acceptance in the shared span, authorization, and outcome metric. */
+  private async acceptSnapshot(
+    action: string,
+    projectId: string,
+    actor: Actor,
+    accept: () => Promise<AcceptedMutation>,
+  ): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.command.accept',
+      { 'command.type': action, 'cloud.project.id': projectId },
+      async () => {
+        try {
+          this.authorize(actor, projectId);
+          const accepted = await accept();
+          this.telemetry.commandAccepted(action, accepted.replayed ? 'replayed' : 'accepted');
+          return accepted;
+        } catch (error: unknown) {
+          this.telemetry.commandAccepted(action, 'rejected');
+          throw error;
+        }
+      },
+    );
+  }
+
+  /**
+   * Accepts a soft deletion as durable intent.
+   *
+   * "Delete" here detaches tenant access and retains the provider resource for review; only an
+   * administrative purge destroys it. See SAFE-028 and ADR 0007.
+   *
+   * @throws DomainError `PROJECT_ACCESS_DENIED`, `VALIDATION_FAILED`, `INSTANCE_NOT_FOUND`,
+   *   `INSTANCE_BUSY`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  public async retainInstance(input: RetainInstanceInput): Promise<AcceptedMutation> {
+    return this.acceptSnapshot('retain_instance', input.projectId, input.actor, async () => {
+      this.assertIdempotencyKey(input.idempotencyKey);
+      const activeTrace = this.telemetry.currentTraceContext({
+        traceparent: input.traceparent,
+        ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+      });
+      const command: RetainInstanceCommand = {
+        actor: input.actor,
+        projectId: input.projectId,
+        instanceId: input.instanceId,
+        idempotencyKey: input.idempotencyKey,
+        correlationId: input.correlationId,
+        traceparent: activeTrace.traceparent,
+        ...(activeTrace.tracestate ? { tracestate: activeTrace.tracestate } : {}),
+      };
+      return this.store.acceptRetention(
+        command,
+        canonicalSha256({
+          actor: input.actor.subject,
+          projectId: input.projectId,
+          operation: 'retain_instance',
+          instanceId: input.instanceId,
+        }),
+      );
+    });
+  }
+
+  /**
+   * Accepts an administrative purge as durable intent.
+   *
+   * Authorized by the administrator role, not project membership: purge crosses projects by
+   * design. The guards that make it safe — the confirmation, the retained state, the expired
+   * deadline, and live provider ownership — live in the store and the workflow, where they can be
+   * checked against state rather than against a request.
+   *
+   * @throws DomainError `ADMIN_REQUIRED`, `VALIDATION_FAILED`, `INSTANCE_NOT_FOUND`,
+   *   `INSTANCE_BUSY`, or `IDEMPOTENCY_CONFLICT`.
+   */
+  public async purgeInstance(input: PurgeInstanceInput): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.command.accept',
+      { 'command.type': 'purge_instance' },
+      async () => {
+        try {
+          this.authorizeAdministrator(input.actor);
+          this.assertIdempotencyKey(input.idempotencyKey);
+          if (input.reason.trim().length < 10) {
+            // The reason is the only durable record of *why* a machine was destroyed, so an empty
+            // or throwaway justification is refused rather than stored.
+            throw new DomainError(
+              'VALIDATION_FAILED',
+              'A purge reason of at least 10 characters is required.',
+            );
+          }
+
+          const activeTrace = this.telemetry.currentTraceContext({
+            traceparent: input.traceparent,
+            ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+          });
+          const command: PurgeInstanceCommand = {
+            actor: input.actor,
+            instanceId: input.instanceId,
+            idempotencyKey: input.idempotencyKey,
+            correlationId: input.correlationId,
+            traceparent: activeTrace.traceparent,
+            ...(activeTrace.tracestate ? { tracestate: activeTrace.tracestate } : {}),
+            reason: input.reason,
+            confirmInstanceId: input.confirmInstanceId,
+          };
+          const accepted = await this.store.acceptPurge(
+            command,
+            canonicalSha256({
+              actor: input.actor.subject,
+              operation: 'purge_instance',
+              instanceId: input.instanceId,
+            }),
+          );
+          this.telemetry.commandAccepted(
+            'purge_instance',
+            accepted.replayed ? 'replayed' : 'accepted',
+          );
+          return accepted;
+        } catch (error: unknown) {
+          this.telemetry.commandAccepted('purge_instance', 'rejected');
+          throw error;
+        }
+      },
+    );
+  }
+
+  /**
+   * Marks an instance for reconciliation on the next sweep.
+   *
+   * Returns immediately: the sweep owns the provider budget, so this records a request rather than
+   * performing an observation.
+   *
+   * @throws DomainError `ADMIN_REQUIRED` or `INSTANCE_NOT_FOUND`.
+   */
+  public async requestReconciliation(actor: Actor, instanceId: string): Promise<void> {
+    this.authorizeAdministrator(actor);
+    const marked = await this.store.requestReconciliation(instanceId);
+    if (!marked) {
+      throw new DomainError('INSTANCE_NOT_FOUND', 'The requested instance does not exist.');
+    }
+  }
+
   /** Reads a project. @throws DomainError `PROJECT_ACCESS_DENIED` or `PROJECT_NOT_FOUND`. */
   public async getProject(actor: Actor, projectId: string): Promise<ProjectView> {
     this.authorize(actor, projectId);
@@ -201,9 +668,10 @@ export class ControlPlaneApplication {
     actor: Actor,
     projectId: string,
     limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
   ): Promise<Page<ImageView>> {
     this.authorize(actor, projectId);
-    return this.store.listImages(projectId, this.limit(limit));
+    return this.store.listImages(projectId, this.page(limit, cursor));
   }
 
   /** Lists sizing templates available to the project. */
@@ -211,9 +679,10 @@ export class ControlPlaneApplication {
     actor: Actor,
     projectId: string,
     limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
   ): Promise<Page<FlavorView>> {
     this.authorize(actor, projectId);
-    return this.store.listFlavors(projectId, this.limit(limit));
+    return this.store.listFlavors(projectId, this.page(limit, cursor));
   }
 
   /** Lists networks an instance may attach to. */
@@ -221,9 +690,10 @@ export class ControlPlaneApplication {
     actor: Actor,
     projectId: string,
     limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
   ): Promise<Page<NetworkView>> {
     this.authorize(actor, projectId);
-    return this.store.listNetworks(projectId, this.limit(limit));
+    return this.store.listNetworks(projectId, this.page(limit, cursor));
   }
 
   /** Reads one instance. @throws DomainError `INSTANCE_NOT_FOUND`. */
@@ -241,9 +711,10 @@ export class ControlPlaneApplication {
     actor: Actor,
     projectId: string,
     limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
   ): Promise<Page<InstanceView>> {
     this.authorize(actor, projectId);
-    return this.store.listInstances(projectId, this.limit(limit));
+    return this.store.listInstances(projectId, this.page(limit, cursor));
   }
 
   /** Reads one operation — the record a client polls after a mutation. */
@@ -264,15 +735,52 @@ export class ControlPlaneApplication {
     actor: Actor,
     projectId: string,
     limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
   ): Promise<Page<OperationView>> {
     this.authorize(actor, projectId);
-    return this.store.listOperations(projectId, this.limit(limit));
+    return this.store.listOperations(projectId, this.page(limit, cursor));
   }
 
   /** Lists governed dead-letter evidence for a platform administrator. */
-  public listDeadLetters(actor: Actor, limit = DEFAULT_PAGE_LIMIT): Promise<Page<DeadLetterView>> {
+  public listDeadLetters(
+    actor: Actor,
+    limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
+  ): Promise<Page<DeadLetterView>> {
     this.authorizeAdministrator(actor);
-    return this.store.listDeadLetters(this.limit(limit));
+    return this.store.listDeadLetters(this.page(limit, cursor));
+  }
+
+  /** Lists attributed audit facts for a platform administrator, most recent first. */
+  public listAuditEvents(
+    actor: Actor,
+    filter: AuditEventFilter = {},
+    limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
+  ): Promise<Page<AuditEventView>> {
+    this.authorizeAdministrator(actor);
+    return this.store.listAuditEvents(filter, this.page(limit, cursor));
+  }
+
+  /**
+   * Reads one operation with recovery metadata, without requiring project membership.
+   *
+   * WHY: an administrator who authorizes a replay receives a `statusUrl` pointing at the
+   * tenant operation route, which demands `tenant_developer` plus membership in the affected
+   * project. Administrators are routinely members of neither, so without this route the
+   * administrator cannot follow up on their own action.
+   *
+   * @throws DomainError `OPERATION_NOT_FOUND` when no such operation exists.
+   */
+  public async getAdministrativeOperation(
+    actor: Actor,
+    operationId: string,
+  ): Promise<AdministrativeOperationView> {
+    this.authorizeAdministrator(actor);
+    return this.required(
+      await this.store.getAdministrativeOperation(operationId),
+      'OPERATION_NOT_FOUND',
+    );
   }
 
   /** Accepts attributed replay intent; the original command is restored asynchronously. */
@@ -362,10 +870,40 @@ export class ControlPlaneApplication {
    * A nonsensical `?limit=` is not worth failing a read over, and the transports already
    * reject non-numeric values before this point.
    */
+  /**
+   * Bounds a caller-supplied idempotency key.
+   *
+   * Checked here rather than in the DTO because gRPC callers do not pass through
+   * class-validator, and both transports must enforce the same rule.
+   *
+   * @throws DomainError `VALIDATION_FAILED` when the key is too short or too long.
+   */
+  private assertIdempotencyKey(key: string): void {
+    if (
+      key.length < IDEMPOTENCY_KEY_MINIMUM_LENGTH ||
+      key.length > IDEMPOTENCY_KEY_MAXIMUM_LENGTH
+    ) {
+      throw new DomainError(
+        'VALIDATION_FAILED',
+        'Idempotency key must contain 8 to 128 characters.',
+      );
+    }
+  }
+
   private limit(value: number): number {
     return Number.isInteger(value) && value >= 1 && value <= MAXIMUM_PAGE_LIMIT
       ? value
       : DEFAULT_PAGE_LIMIT;
+  }
+
+  /**
+   * Builds a store page request from transport-supplied paging values.
+   *
+   * The cursor is passed through unvalidated on purpose: only the store knows the encoding it
+   * issued, so only the store can tell a corrupt token from a valid one.
+   */
+  private page(limit: number, cursor?: string): PageRequest {
+    return { limit: this.limit(limit), ...(cursor ? { cursor } : {}) };
   }
 
   /**

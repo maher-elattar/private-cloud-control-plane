@@ -16,7 +16,9 @@
     }
   },
   "dependencies": {
-    "ipaddr.js": "2.2.0",
     "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
   }
 }

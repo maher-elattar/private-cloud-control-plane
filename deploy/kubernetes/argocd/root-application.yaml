@@ -1,0 +1,36 @@
+# The root application: the one thing applied by hand, which then applies everything else.
+#
+# WHY an app-of-apps rather than six `kubectl apply` commands: the `Application` objects are
+# manifests like any other, so putting them under Argo CD's own management means a change to a
+# sync policy or a wave is a repository change that reconciles itself. Applying them by hand would
+# leave the pipeline's own definition as the one thing outside the pipeline.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: control-plane-root
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  source:
+    repoURL: git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git
+    targetRevision: main
+    path: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - ServerSideDiff=true
+    retry:
+      limit: 8
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

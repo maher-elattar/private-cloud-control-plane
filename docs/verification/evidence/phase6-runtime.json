@@ -1,0 +1,557 @@
+{
+  "startedAt": "2026-09-05T22:51:39.253Z",
+  "context": "minikube",
+  "status": "passed",
+  "checks": {
+    "environment": {
+      "status": "passed",
+      "durationMs": 1785,
+      "nodes": [
+        {
+          "name": "minikube",
+          "version": "v1.35.1",
+          "ready": "True"
+        }
+      ],
+      "argoCdImage": "quay.io/argoproj/argocd:v3.5.1",
+      "argoRolloutsImage": "quay.io/argoproj/argo-rollouts:v1.9.1"
+    },
+    "gitops-reconciliation": {
+      "status": "passed",
+      "durationMs": 706,
+      "applications": [
+        {
+          "name": "control-plane-applications",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "a90876d15363fc4fda1353d7a2eb96141e773bbe"
+        },
+        {
+          "name": "control-plane-dashboards",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "a90876d15363fc4fda1353d7a2eb96141e773bbe"
+        },
+        {
+          "name": "control-plane-data",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "a90876d15363fc4fda1353d7a2eb96141e773bbe"
+        },
+        {
+          "name": "control-plane-foundation",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "a90876d15363fc4fda1353d7a2eb96141e773bbe"
+        },
+        {
+          "name": "control-plane-observability",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "a90876d15363fc4fda1353d7a2eb96141e773bbe"
+        },
+        {
+          "name": "control-plane-platform",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "a90876d15363fc4fda1353d7a2eb96141e773bbe"
+        },
+        {
+          "name": "control-plane-root",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "a90876d15363fc4fda1353d7a2eb96141e773bbe"
+        },
+        {
+          "name": "platform-cloudnative-pg",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "0.29.0"
+        },
+        {
+          "name": "platform-keda",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "2.20.2"
+        },
+        {
+          "name": "platform-strimzi",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "1.2.0"
+        }
+      ],
+      "projectDestinations": [
+        "private-cloud",
+        "cnpg-system",
+        "strimzi-system",
+        "keda",
+        "monitoring",
+        "argocd",
+        "kube-system"
+      ],
+      "projectSourceRepositories": [
+        "git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git",
+        "https://cloudnative-pg.github.io/charts",
+        "https://strimzi.io/charts/",
+        "https://kedacore.github.io/charts"
+      ]
+    },
+    "sync-waves": {
+      "status": "passed",
+      "durationMs": 285,
+      "waves": {
+        "control-plane-applications": "4",
+        "control-plane-dashboards": "5",
+        "control-plane-data": "2",
+        "control-plane-foundation": "0",
+        "control-plane-observability": "3",
+        "control-plane-platform": "1",
+        "platform-cloudnative-pg": "1",
+        "platform-keda": "1",
+        "platform-strimzi": "1"
+      }
+    },
+    "rollouts-not-deployments": {
+      "status": "passed",
+      "durationMs": 1654,
+      "rollouts": {
+        "control-api": {
+          "phase": "Healthy",
+          "stableHash": "66cddf49d",
+          "currentHash": "66cddf49d",
+          "activeSelector": "66cddf49d",
+          "previewSelector": "66cddf49d",
+          "image": "private-cloud/control-api:phase6",
+          "specReplicas": 2,
+          "replicas": 2,
+          "available": 2
+        },
+        "provisioning-orchestrator": {
+          "phase": "Healthy",
+          "stableHash": "57c96687f4",
+          "currentHash": "57c96687f4",
+          "activeSelector": "57c96687f4",
+          "previewSelector": "57c96687f4",
+          "image": "private-cloud/provisioning-orchestrator:phase6",
+          "specReplicas": 2,
+          "replicas": 2,
+          "available": 2
+        },
+        "proxmox-provider": {
+          "phase": "Healthy",
+          "stableHash": "579f44cd9",
+          "currentHash": "579f44cd9",
+          "activeSelector": "579f44cd9",
+          "previewSelector": "579f44cd9",
+          "image": "private-cloud/proxmox-provider:phase6",
+          "specReplicas": 2,
+          "replicas": 2,
+          "available": 2
+        },
+        "reconciler": {
+          "phase": "Healthy",
+          "stableHash": "5cb86c788b",
+          "currentHash": "5cb86c788b",
+          "activeSelector": "5cb86c788b",
+          "previewSelector": "5cb86c788b",
+          "image": "private-cloud/reconciler:phase6",
+          "specReplicas": 2,
+          "replicas": 2,
+          "available": 2
+        }
+      }
+    },
+    "health-checks-and-boundaries": {
+      "status": "passed",
+      "durationMs": 612,
+      "workloads": {
+        "control-api": {
+          "probes": [
+            "startup",
+            "liveness",
+            "readiness"
+          ],
+          "requests": {
+            "cpu": "100m",
+            "memory": "256Mi"
+          },
+          "limits": {
+            "cpu": "1",
+            "memory": "768Mi"
+          },
+          "spreadTopologies": [
+            "kubernetes.io/hostname",
+            "topology.kubernetes.io/zone"
+          ]
+        },
+        "provisioning-orchestrator": {
+          "probes": [
+            "startup",
+            "liveness",
+            "readiness"
+          ],
+          "requests": {
+            "cpu": "100m",
+            "memory": "224Mi"
+          },
+          "limits": {
+            "cpu": "1000m",
+            "memory": "640Mi"
+          },
+          "spreadTopologies": [
+            "kubernetes.io/hostname",
+            "topology.kubernetes.io/zone"
+          ]
+        },
+        "proxmox-provider": {
+          "probes": [
+            "startup",
+            "liveness",
+            "readiness"
+          ],
+          "requests": {
+            "cpu": "100m",
+            "memory": "224Mi"
+          },
+          "limits": {
+            "cpu": "1000m",
+            "memory": "640Mi"
+          },
+          "spreadTopologies": [
+            "kubernetes.io/hostname",
+            "topology.kubernetes.io/zone"
+          ]
+        },
+        "reconciler": {
+          "probes": [
+            "startup",
+            "liveness",
+            "readiness"
+          ],
+          "requests": {
+            "cpu": "100m",
+            "memory": "224Mi"
+          },
+          "limits": {
+            "cpu": "1000m",
+            "memory": "640Mi"
+          },
+          "spreadTopologies": [
+            "kubernetes.io/hostname",
+            "topology.kubernetes.io/zone"
+          ]
+        }
+      },
+      "podDisruptionBudgets": [
+        "control-api",
+        "control-plane-connect-connect",
+        "control-plane-kafka-entity-operator",
+        "control-plane-kafka-kafka",
+        "control-plane-postgres-primary",
+        "provisioning-orchestrator",
+        "proxmox-provider",
+        "reconciler"
+      ],
+      "networkPolicies": [
+        "allow-control-plane-egress",
+        "allow-dns-egress",
+        "allow-gateway-to-control-api",
+        "allow-kafka",
+        "allow-local-oidc-ingress",
+        "allow-metrics-scrape",
+        "allow-migrations-egress",
+        "allow-otel-collector-ingress",
+        "allow-postgres",
+        "allow-provider-grpc",
+        "allow-rollout-load-egress",
+        "control-plane-connect-connect",
+        "control-plane-kafka-entity-operator",
+        "control-plane-kafka-network-policy-kafka",
+        "default-deny"
+      ]
+    },
+    "metrics-pipeline": {
+      "status": "passed",
+      "durationMs": 750,
+      "scrapeTargets": [
+        {
+          "service": "proxmox-provider",
+          "pod": "proxmox-provider-579f44cd9-8cb78"
+        },
+        {
+          "service": "proxmox-provider",
+          "pod": "proxmox-provider-579f44cd9-dcqng"
+        },
+        {
+          "service": "control-api",
+          "pod": "control-api-66cddf49d-6qcd8"
+        },
+        {
+          "service": "control-api",
+          "pod": "control-api-66cddf49d-8rm9c"
+        },
+        {
+          "service": "provisioning-orchestrator",
+          "pod": "provisioning-orchestrator-57c96687f4-5tgvp"
+        },
+        {
+          "service": "provisioning-orchestrator",
+          "pod": "provisioning-orchestrator-57c96687f4-7cqn8"
+        },
+        {
+          "service": "reconciler",
+          "pod": "reconciler-5cb86c788b-f9dmb"
+        },
+        {
+          "service": "reconciler",
+          "pod": "reconciler-5cb86c788b-mlbhb"
+        },
+        {
+          "service": "proxmox-provider-preview",
+          "pod": "proxmox-provider-579f44cd9-8cb78"
+        },
+        {
+          "service": "proxmox-provider-preview",
+          "pod": "proxmox-provider-579f44cd9-dcqng"
+        },
+        {
+          "service": "reconciler-preview",
+          "pod": "reconciler-5cb86c788b-f9dmb"
+        },
+        {
+          "service": "provisioning-orchestrator-preview",
+          "pod": "provisioning-orchestrator-57c96687f4-5tgvp"
+        },
+        {
+          "service": "control-api-preview",
+          "pod": "control-api-66cddf49d-8rm9c"
+        },
+        {
+          "service": "reconciler-preview",
+          "pod": "reconciler-5cb86c788b-mlbhb"
+        },
+        {
+          "service": "provisioning-orchestrator-preview",
+          "pod": "provisioning-orchestrator-57c96687f4-7cqn8"
+        },
+        {
+          "service": "control-api-preview",
+          "pod": "control-api-66cddf49d-6qcd8"
+        },
+        {
+          "service": "otel-collector",
+          "pod": "otel-collector-59cc9976b8-bn9zq"
+        },
+        {
+          "service": "otel-collector",
+          "pod": "otel-collector-59cc9976b8-bn9zq"
+        }
+      ],
+      "previewServicesPublishing": 4,
+      "statusCodes": [
+        "200",
+        "503",
+        "404"
+      ]
+    },
+    "header-routing": {
+      "status": "passed",
+      "durationMs": 440,
+      "routeAccepted": true,
+      "headerRule": {
+        "header": "X-Canary: green",
+        "backend": "control-api-preview"
+      },
+      "defaultRule": {
+        "backend": "control-api"
+      },
+      "previewRequestRatePerSecond": 2.586,
+      "previewRequestsObserved": 7507
+    },
+    "promotion-passes-on-healthy-green": {
+      "status": "passed",
+      "durationMs": 328418,
+      "promotedTo": "phase6-green",
+      "rolloutPhase": "Healthy",
+      "analysisRun": {
+        "name": "control-api-6c7d9c86f-22-post",
+        "phase": "Successful",
+        "promotion": "PostPromotion",
+        "podTemplateHash": "6c7d9c86f",
+        "createdAt": "2026-09-05T22:54:46Z",
+        "metrics": [
+          {
+            "name": "green-ready-replicas",
+            "phase": "Successful",
+            "measurements": 4
+          },
+          {
+            "name": "green-http-200-rate",
+            "phase": "Successful",
+            "measurements": 4
+          }
+        ]
+      },
+      "analysisMetrics": [
+        {
+          "name": "green-ready-replicas",
+          "phase": "Successful",
+          "measurements": 4
+        },
+        {
+          "name": "green-http-200-rate",
+          "phase": "Successful",
+          "measurements": 4
+        }
+      ],
+      "activeServiceSelectsPromotedRevision": true
+    },
+    "analysis-aborts-and-self-heals-on-degraded-green": {
+      "status": "passed",
+      "durationMs": 164218,
+      "rolloutPhase": "Degraded",
+      "abortedAt": "2026-09-05T22:59:19Z",
+      "failedAnalysisRun": {
+        "name": "control-api-865cfcf4fd-24-pre",
+        "phase": "Failed",
+        "promotion": "PrePromotion",
+        "podTemplateHash": "865cfcf4fd",
+        "createdAt": "2026-09-05T22:58:14Z",
+        "metrics": [
+          {
+            "name": "green-request-rate",
+            "phase": "Successful",
+            "measurements": 2
+          },
+          {
+            "name": "green-http-200-rate",
+            "phase": "Failed",
+            "measurements": 2
+          },
+          {
+            "name": "green-ready-replicas",
+            "phase": "Successful",
+            "measurements": 2
+          }
+        ]
+      },
+      "activeServiceStillOnPreviousRevision": "66cddf49d"
+    },
+    "progress-deadline-aborts-an-unready-green": {
+      "status": "passed",
+      "durationMs": 539457,
+      "rolloutPhase": "Degraded",
+      "rolloutMessage": "RolloutAborted: Rollout aborted update to revision 26",
+      "abortedAt": "2026-09-05T23:08:24Z",
+      "readyPreviewEndpoints": 0,
+      "activeServiceUnchanged": "66cddf49d"
+    },
+    "argocd-reverts-manual-drift": {
+      "status": "passed",
+      "durationMs": 630295,
+      "changedField": {
+        "resource": "Rollout/control-api",
+        "field": "spec.replicas",
+        "driftedTo": 4,
+        "revertedTo": 2
+      },
+      "deletedObject": {
+        "resource": "Service/control-api-preview",
+        "recreatedWithUid": "d42d4a12-d25b-4aa3-8923-c7199cd4a350"
+      },
+      "applications": [
+        {
+          "name": "control-plane-applications",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "d6a042cc6242262b9e588d50d7c9862f604b07fb"
+        },
+        {
+          "name": "control-plane-dashboards",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "d6a042cc6242262b9e588d50d7c9862f604b07fb"
+        },
+        {
+          "name": "control-plane-data",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "d6a042cc6242262b9e588d50d7c9862f604b07fb"
+        },
+        {
+          "name": "control-plane-foundation",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "d6a042cc6242262b9e588d50d7c9862f604b07fb"
+        },
+        {
+          "name": "control-plane-observability",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "d6a042cc6242262b9e588d50d7c9862f604b07fb"
+        },
+        {
+          "name": "control-plane-platform",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "d6a042cc6242262b9e588d50d7c9862f604b07fb"
+        },
+        {
+          "name": "control-plane-root",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "d6a042cc6242262b9e588d50d7c9862f604b07fb"
+        },
+        {
+          "name": "platform-cloudnative-pg",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "0.29.0"
+        },
+        {
+          "name": "platform-keda",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "2.20.2"
+        },
+        {
+          "name": "platform-strimzi",
+          "sync": "Synced",
+          "health": "Healthy",
+          "revision": "1.2.0"
+        }
+      ]
+    },
+    "secrets-are-generated-not-committed": {
+      "status": "passed",
+      "durationMs": 861,
+      "secretsInNamespace": 17,
+      "operatorGenerated": {
+        "control-plane-postgres-app": [
+          "Cluster/control-plane-postgres"
+        ],
+        "control-plane": [
+          "KafkaUser/control-plane"
+        ],
+        "kafka-connect": [
+          "KafkaUser/kafka-connect"
+        ],
+        "control-plane-kafka-cluster-ca-cert": [
+          "Kafka/control-plane-kafka"
+        ]
+      },
+      "appliedFromRepository": {
+        "name": "control-plane-keda",
+        "keys": [
+          "sasl",
+          "tls",
+          "username"
+        ]
+      }
+    }
+  },
+  "finishedAt": "2026-09-05T23:19:28.738Z",
+  "failures": [],
+  "skippedDrills": false
+}

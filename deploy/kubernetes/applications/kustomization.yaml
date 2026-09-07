@@ -1,0 +1,36 @@
+# Sync wave 4 — the applications themselves.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: private-cloud
+resources:
+  - services.yaml
+  - analysis-templates.yaml
+  - control-api.yaml
+  - workers.yaml
+  - routing.yaml
+  - local-oidc.yaml
+  - load-generator.yaml
+  - autoscaling.yaml
+configurations:
+  - kustomize-config/name-reference.yaml
+configMapGenerator:
+  # Generated, so its name carries a content hash and every `configMapRef` to it is rewritten.
+  # A configuration change therefore produces a new Rollout revision and is promoted through the
+  # same analysis an image change is. See the header of `control-plane.env` for why that matters.
+  - name: control-plane-config
+    envs:
+      - control-plane.env
+    options:
+      labels:
+        app.kubernetes.io/part-of: private-cloud-control-plane
+      annotations:
+        argocd.argoproj.io/sync-wave: '4'
+  - name: rollout-load
+    files:
+      - generate.sh=rollout-load.sh
+    options:
+      labels:
+        app.kubernetes.io/name: rollout-load
+        app.kubernetes.io/part-of: private-cloud-control-plane
+      annotations:
+        argocd.argoproj.io/sync-wave: '4'

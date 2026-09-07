@@ -1,0 +1,292 @@
+# The applications, one per sync wave.
+#
+# Argo CD does not start a wave until every resource in the previous one reports Healthy, which is
+# what turns this list into an ordering guarantee rather than a hint. The waves follow the order
+# the project roadmap specifies: operators and custom resource definitions, then the database and
+# Kafka, then observability, then the applications, then dashboards and alerts — with a wave 0
+# ahead of all of them for the namespace and its boundaries.
+#
+# Every application below shares the same sync policy, and each clause is load-bearing:
+#
+# - `automated.prune` deletes what the repository stopped describing. Without it, removing a
+#   manifest leaves the object running forever and the repository stops being the description of
+#   the cluster.
+# - `automated.selfHeal` reverts changes made to the live cluster by hand. **This is the outer
+#   loop of the self-healing the operator asked for**: Argo Rollouts heals a bad *release* by
+#   aborting it, and this heals a bad *edit* by undoing it.
+# - `ServerSideApply` because several of these objects — the operator CRDs especially — are larger
+#   than the annotation a client-side apply writes to record the last applied configuration.
+# - `retry` with exponential backoff, because a wave that fails on a transient condition (a
+#   webhook that is not serving yet, an admission controller mid-restart) should be tried again
+#   rather than left for a human.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: control-plane-foundation
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Namespace, service accounts, RBAC, network policies, configuration, and disruption budgets. Wave 0 because an operator cannot place a custom resource in a namespace that does not exist yet, and a workload cannot be admitted by a Pod Security profile the namespace has not declared.
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: private-cloud
+  source:
+    repoURL: git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git
+    targetRevision: main
+    path: namespace
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # Diff with a server-side apply dry-run instead of comparing rendered YAML to the live
+      # object. Without it every custom resource whose CRD sets defaults — an HTTPRoute's
+      # `weight: 1`, a Rollout's history limits — is reported permanently OutOfSync for fields no
+      # manifest ever set, and real drift becomes impossible to see in the noise.
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
+      - PruneLast=true
+    retry:
+      limit: 8
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: control-plane-platform
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '1'
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Operators and custom resource definitions: CloudNativePG, Strimzi, and KEDA. Wave 1 because every resource in wave 2 is an instance of a kind these install. This application creates other Applications, which is why its destination namespace is argocd.
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  source:
+    repoURL: git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git
+    targetRevision: main
+    path: platform
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # Diff with a server-side apply dry-run instead of comparing rendered YAML to the live
+      # object. Without it every custom resource whose CRD sets defaults — an HTTPRoute's
+      # `weight: 1`, a Rollout's history limits — is reported permanently OutOfSync for fields no
+      # manifest ever set, and real drift becomes impossible to see in the noise.
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
+      - PruneLast=true
+    retry:
+      limit: 8
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: control-plane-data
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # PostgreSQL, Kafka, the topics, change data capture, and the schema migration hook. Wave 2 because the applications in wave 4 fail their readiness probes without a database, and the orchestrator has nothing to consume without the topics.
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: private-cloud
+  source:
+    repoURL: git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git
+    targetRevision: main
+    path: data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # Diff with a server-side apply dry-run instead of comparing rendered YAML to the live
+      # object. Without it every custom resource whose CRD sets defaults — an HTTPRoute's
+      # `weight: 1`, a Rollout's history limits — is reported permanently OutOfSync for fields no
+      # manifest ever set, and real drift becomes impossible to see in the noise.
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
+      - PruneLast=true
+    retry:
+      limit: 8
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: control-plane-observability
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '3'
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # The OpenTelemetry Collector and the scrape configuration. Wave 3, ahead of the applications, because a promotion gate that starts measuring before its ServiceMonitor exists reads an empty result and cannot tell it from a failure.
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: private-cloud
+  source:
+    repoURL: git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git
+    targetRevision: main
+    path: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # Diff with a server-side apply dry-run instead of comparing rendered YAML to the live
+      # object. Without it every custom resource whose CRD sets defaults — an HTTPRoute's
+      # `weight: 1`, a Rollout's history limits — is reported permanently OutOfSync for fields no
+      # manifest ever set, and real drift becomes impossible to see in the noise.
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
+      - PruneLast=true
+    retry:
+      limit: 8
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: control-plane-applications
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # The four services as blue-green Rollouts, their active and preview Services, the header-matched HTTPRoute, the analysis templates that gate promotion, and the synthetic load that makes the gate measurable.
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: private-cloud
+  # Two fields in this application are written by a controller, not by the repository. Argo CD has
+  # to be told, or it reports them as drift forever — and a permanently OutOfSync application is
+  # worse than a noisy one: the controller stops treating a *new* revision as a new sync and starts
+  # treating it as another self-heal attempt, behind a backoff that reaches five minutes, so real
+  # changes stop arriving.
+  ignoreDifferences:
+    # KEDA writes the orchestrator's replica count through the scale subresource in response to
+    # Kafka consumer lag. Without this, self-healing would revert every scaling decision within
+    # seconds and the two controllers would fight indefinitely — the autoscaler scaling up, Argo CD
+    # scaling back to the manifest's number, forever.
+    - group: argoproj.io
+      kind: Rollout
+      name: provisioning-orchestrator
+      jsonPointers:
+        - /spec/replicas
+    # Argo Rollouts owns the pod-template hash in every active and preview Service selector: it is
+    # the field that decides which environment serves, and moving it *is* the promotion. The
+    # repository deliberately declares the selector without it. Stripping it — which is what Argo
+    # CD would otherwise do on every sync — would point the Service at both environments at once,
+    # or at neither, in the middle of a promotion. `RespectIgnoreDifferences` in the sync options
+    # is what makes this an exclusion from the apply rather than only from the diff.
+    - group: ''
+      kind: Service
+      jsonPointers:
+        - /spec/selector/rollouts-pod-template-hash
+  source:
+    repoURL: git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git
+    targetRevision: main
+    path: applications
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # Diff with a server-side apply dry-run instead of comparing rendered YAML to the live
+      # object. Without it every custom resource whose CRD sets defaults — an HTTPRoute's
+      # `weight: 1`, a Rollout's history limits — is reported permanently OutOfSync for fields no
+      # manifest ever set, and real drift becomes impossible to see in the noise.
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
+      - PruneLast=true
+    retry:
+      limit: 8
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: control-plane-dashboards
+  namespace: argocd
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '5'
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Alert rules and the blue-green delivery dashboard. Last, because both describe things that only exist once the waves before them are running.
+  project: private-cloud
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  source:
+    repoURL: git://gitops-repo.private-cloud-gitops.svc.cluster.local/control-plane.git
+    targetRevision: main
+    path: dashboards
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # Diff with a server-side apply dry-run instead of comparing rendered YAML to the live
+      # object. Without it every custom resource whose CRD sets defaults — an HTTPRoute's
+      # `weight: 1`, a Rollout's history limits — is reported permanently OutOfSync for fields no
+      # manifest ever set, and real drift becomes impossible to see in the noise.
+      - ServerSideDiff=true
+      - RespectIgnoreDifferences=true
+      - PruneLast=true
+    retry:
+      limit: 8
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

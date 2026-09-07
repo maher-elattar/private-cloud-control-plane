@@ -75,6 +75,7 @@ pnpm run format:check
 pnpm run lint
 pnpm run typecheck
 pnpm run test
+pnpm run test:integration   # starts deploy/local/compose.test.yaml; needs Docker
 pnpm run build
 ```
 
@@ -83,10 +84,18 @@ file that does not exist.
 
 ## Testing note
 
-`packages/postgres-adapter` has **no unit tests** — the three stores are exercised only by
-the manual end-to-end run described in
-[Phase 3 Vertical Slice](docs/architecture/phase-3-vertical-slice.md#verification). Treat
-changes there as higher risk and verify with a real database:
+Tests come in two layers. `pnpm run test` is fast and container-free. `pnpm run test:integration`
+starts an ephemeral PostgreSQL from `deploy/local/compose.test.yaml`, applies every migration and
+the seed, and runs the suites named `*.integration.spec.ts`.
+
+**Anything you change in `packages/postgres-adapter` belongs in the integration layer, not the
+unit layer.** What that code guarantees is a property of the database — advisory locks serialising
+concurrent inserts, `FOR UPDATE ... SKIP LOCKED` handing one instance to one worker, a unique
+constraint refusing a second lease — and a stub can only confirm that the query text has not
+changed. The stack is disposable, so write the test that actually races.
+
+For the full asynchronous path, the manual end-to-end run is still described in
+[Phase 3 Vertical Slice](docs/architecture/phase-3-vertical-slice.md#verification):
 
 ```bash
 pnpm run db:migrate && pnpm run db:seed

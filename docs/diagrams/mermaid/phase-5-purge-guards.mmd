@@ -1,0 +1,28 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":46,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+flowchart TD
+  R["Administrator<br/>requests purge"] --> C1{"Confirmation repeats<br/>the instance id?"}
+  C1 -- no --> X1["Refused<br/>confirmation mismatch"]
+  C1 -- yes --> C2{"Lifecycle<br/>is retained?"}
+  C2 -- no --> X2["Refused<br/>not retained"]
+  C2 -- yes --> C3{"Retention deadline<br/>has passed?"}
+  C3 -- no --> X3["Refused<br/>retention still active"]
+  C3 -- yes --> ACC["Accepted<br/>operation, outbox command,<br/>attributed audit fact"]
+
+  ACC --> W["Workflow claims<br/>the purge"]
+  W --> C4{"Resource still<br/>exists?"}
+  C4 -- no --> DONE["purged<br/>absence already achieved,<br/>no destructive call made"]
+  C4 -- yes --> C5{"Live ownership<br/>markers match?"}
+  C5 -- no --> MR["manual_review<br/>ownership not proven"]
+  C5 -- yes --> D["DESTROY<br/>DELETE qemu/vmid<br/>purge and unreferenced disks"]
+  D --> C6{"Absence confirmed<br/>afterwards?"}
+  C6 -- no --> MR2["manual_review<br/>purge not confirmed"]
+  C6 -- yes --> DONE
+
+  classDef refuse fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+  classDef review fill:#fef3c7,stroke:#b45309,color:#78350f
+  classDef destroy fill:#fecaca,stroke:#991b1b,color:#7f1d1d,stroke-width:3px
+  classDef ok fill:#dcfce7,stroke:#15803d,color:#14532d
+  class X1,X2,X3 refuse
+  class MR,MR2 review
+  class D destroy
+  class ACC,DONE ok

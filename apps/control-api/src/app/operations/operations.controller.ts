@@ -37,8 +37,9 @@ export class OperationsController {
     @CurrentActor() actor: Actor,
     @Param('projectId', new ParseUUIDPipe()) projectId: string,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.application.listOperations(actor, projectId, limit);
+    return this.application.listOperations(actor, projectId, limit, cursor);
   }
 
   @Get(':operationId')

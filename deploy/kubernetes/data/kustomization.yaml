@@ -1,0 +1,9 @@
+# Sync wave 2 — database, Kafka, topics, and change data capture.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - postgres.yaml
+  - kafka.yaml
+  - kafka-topics.yaml
+  - kafka-connect.yaml
+  - migrations.yaml

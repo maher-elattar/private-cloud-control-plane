@@ -5,7 +5,8 @@ import {
   structuredLog,
   withSpan,
 } from '@private-cloud/observability';
-import { Kafka, logLevel, type Consumer, type KafkaMessage } from 'kafkajs';
+import { Kafka, logLevel, type Consumer, type KafkaMessage, type SASLOptions } from 'kafkajs';
+import { readFileSync } from 'node:fs';
 import {
   MessageDecodeError,
   decodeOutboxId,
@@ -49,6 +50,11 @@ export interface KafkaConsumerRunnerOptions {
   readonly groupId: string;
   readonly topic: string;
   readonly brokers: readonly string[];
+  /**
+   * Transport security. Omitted means "read it from the environment", not "connect in the clear":
+   * see {@link kafkaSecurity}.
+   */
+  readonly security?: KafkaSecurity;
   readonly maximumAttempts?: number;
   readonly retryBackoffMs?: number;
   readonly handle: (record: IncomingKafkaRecord) => Promise<MessageHandlingResult>;
@@ -57,6 +63,115 @@ export interface KafkaConsumerRunnerOptions {
     error: unknown,
     attempts: number,
   ) => Promise<MessageHandlingResult>;
+}
+
+/** SASL mechanisms a broker may require. Kafka's own `plain` is included for completeness. */
+export type KafkaSaslMechanism = 'scram-sha-512' | 'scram-sha-256' | 'plain';
+
+/**
+ * Transport security for a broker connection.
+ *
+ * Passwords are carried as values here because KafkaJS needs one, but they are only ever *read*
+ * from a mounted file. No credential is accepted from an environment variable, because an
+ * environment variable is printed by `kubectl describe pod` and copied into every child process.
+ */
+export interface KafkaSecurity {
+  readonly tls?: { readonly certificateAuthority: string };
+  readonly sasl?: {
+    readonly mechanism: KafkaSaslMechanism;
+    readonly username: string;
+    readonly password: string;
+  };
+}
+
+const SASL_MECHANISMS: readonly KafkaSaslMechanism[] = ['scram-sha-512', 'scram-sha-256', 'plain'];
+
+/**
+ * Builds broker transport security from the process environment.
+ *
+ * The deployment supplies a cluster CA and a SASL identity that the message broker generated; the
+ * repository holds only the names of the Secrets they are mounted from. Both the CA and the
+ * password are read from files rather than variables, so no credential value appears in a pod
+ * spec, an environment dump, or a crash report.
+ *
+ * Absent configuration yields an empty object, which is how the container-free local stack and
+ * the unit tests keep talking to a plaintext broker.
+ *
+ * @param {NodeJS.ProcessEnv} [environment] Environment to read; defaults to the process
+ *   environment.
+ * @returns {KafkaSecurity} Security settings, empty when the broker requires none.
+ */
+export function kafkaSecurity(environment: NodeJS.ProcessEnv = process.env): KafkaSecurity {
+  const certificateAuthorityFile = environment.KAFKA_TLS_CA_FILE?.trim();
+  const mechanism = environment.KAFKA_SASL_MECHANISM?.trim().toLowerCase();
+  const username = environment.KAFKA_SASL_USERNAME?.trim();
+  const passwordFile = environment.KAFKA_SASL_PASSWORD_FILE?.trim();
+
+  const tls = certificateAuthorityFile
+    ? { certificateAuthority: readSecretFile(certificateAuthorityFile, 'KAFKA_TLS_CA_FILE') }
+    : undefined;
+
+  let sasl: KafkaSecurity['sasl'];
+  if (mechanism || username || passwordFile) {
+    if (!mechanism || !username || !passwordFile) {
+      throw new Error(
+        'KAFKA_SASL_MECHANISM, KAFKA_SASL_USERNAME, and KAFKA_SASL_PASSWORD_FILE must be set together.',
+      );
+    }
+    if (!SASL_MECHANISMS.includes(mechanism as KafkaSaslMechanism)) {
+      throw new Error(`KAFKA_SASL_MECHANISM must be one of ${SASL_MECHANISMS.join(', ')}.`);
+    }
+    sasl = {
+      mechanism: mechanism as KafkaSaslMechanism,
+      username,
+      password: readSecretFile(passwordFile, 'KAFKA_SASL_PASSWORD_FILE'),
+    };
+  }
+
+  return { ...(tls ? { tls } : {}), ...(sasl ? { sasl } : {}) };
+}
+
+/**
+ * Narrows the mechanism literal so KafkaJS's discriminated SASL union accepts the credentials.
+ *
+ * The three branches are identical in shape; the switch exists because the union discriminates on
+ * a literal and a widened `'plain' | 'scram-sha-256' | 'scram-sha-512'` matches no single member.
+ * Writing it out keeps the alternative — a cast — from hiding a future mechanism that is not
+ * username-and-password shaped.
+ *
+ * @param {NonNullable<KafkaSecurity['sasl']>} sasl Validated SASL identity.
+ * @returns {SASLOptions} KafkaJS SASL options.
+ */
+function saslOptions(sasl: NonNullable<KafkaSecurity['sasl']>): SASLOptions {
+  const { username, password } = sasl;
+  switch (sasl.mechanism) {
+    case 'plain':
+      return { mechanism: 'plain', username, password };
+    case 'scram-sha-256':
+      return { mechanism: 'scram-sha-256', username, password };
+    case 'scram-sha-512':
+      return { mechanism: 'scram-sha-512', username, password };
+  }
+}
+
+/**
+ * Reads a mounted credential file, failing with the variable name and never the content.
+ *
+ * @param {string} path File to read.
+ * @param {string} variableName Environment variable that named it, used in the failure message.
+ * @returns {string} File content with surrounding whitespace removed.
+ */
+function readSecretFile(path: string, variableName: string): string {
+  let content: string;
+  try {
+    content = readFileSync(path, 'utf8');
+  } catch {
+    // Deliberately no cause and no path content: this message reaches logs.
+    throw new Error(`${variableName} points at a file that could not be read.`);
+  }
+  const trimmed = content.trim();
+  if (!trimmed) throw new Error(`${variableName} points at an empty file.`);
+  return trimmed;
 }
 
 /**
@@ -82,11 +197,20 @@ export class KafkaConsumerRunner {
     ) {
       throw new Error('Kafka handler maximum attempts must be between 1 and 10.');
     }
+    // Defaulted rather than required so that a service cannot connect without the credentials its
+    // cluster demands merely because a call site forgot to pass them. The environment decides.
+    const security = options.security ?? kafkaSecurity();
+    const ssl = security.tls
+      ? { ca: [security.tls.certificateAuthority], rejectUnauthorized: true as const }
+      : undefined;
+    const sasl = security.sasl ? saslOptions(security.sasl) : undefined;
     const kafka = new Kafka({
       clientId: options.clientId,
       brokers: [...options.brokers],
       logLevel: logLevel.NOTHING,
       retry: { retries: 8, initialRetryTime: 250, maxRetryTime: 10_000 },
+      ...(ssl ? { ssl } : {}),
+      ...(sasl ? { sasl } : {}),
     });
     this.consumer = kafka.consumer({
       groupId: options.groupId,

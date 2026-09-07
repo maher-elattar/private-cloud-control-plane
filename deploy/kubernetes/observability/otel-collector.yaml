@@ -1,0 +1,121 @@
+# Sync wave 3 — the namespace's OpenTelemetry Collector.
+#
+# Two pipelines leave the control plane, and they answer different questions:
+#
+# - **Push, through this Collector.** Traces and the aggregate control-plane metrics. The Collector
+#   is where host and endpoint identity is stripped, and where spans are converted into latency
+#   metrics with exemplars. Everything here is about the system as a whole.
+# - **Scrape, straight from each pod.** The HTTP request histogram, on port 9464. This is the
+#   pipeline a blue-green promotion reads, and it deliberately does not pass through the Collector,
+#   because aggregating replicas is exactly what destroys the blue/green distinction.
+#
+# The Collector's own Prometheus endpoint is scraped by the cluster Prometheus through the
+# ServiceMonitor beside it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: private-cloud
+  labels:
+    {
+      app.kubernetes.io/name: otel-collector,
+      app.kubernetes.io/part-of: private-cloud-control-plane,
+    }
+  annotations: { argocd.argoproj.io/sync-wave: '3' }
+spec:
+  selector: { app.kubernetes.io/name: otel-collector }
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc }
+    - { name: otlp-http, port: 4318, targetPort: otlp-http }
+    - { name: metrics, port: 8889, targetPort: metrics }
+    - { name: self-metrics, port: 8888, targetPort: self-metrics }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: private-cloud
+  labels:
+    {
+      app.kubernetes.io/name: otel-collector,
+      app.kubernetes.io/part-of: private-cloud-control-plane,
+    }
+  annotations: { argocd.argoproj.io/sync-wave: '3' }
+spec:
+  # A Deployment, not a Rollout. This is the only workload in the namespace that is deliberately
+  # not blue-green: a Collector holds no request state worth protecting, and a promotion gate that
+  # measures the pipeline it is being measured through cannot be trusted.
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: otel-collector }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/part-of: private-cloud-control-plane
+    spec:
+      serviceAccountName: control-plane-jobs
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: collector
+          # Pinned to the same release the Compose stack builds from. The two pipelines have to
+          # agree about what a metric means, and connector and processor names have changed
+          # between Collector releases — `span_metrics` was `spanmetrics` as recently as 0.146.
+          image: otel/opentelemetry-collector-contrib:0.158.0
+          imagePullPolicy: IfNotPresent
+          args: ['--config=/etc/otelcol/config.yaml']
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+            - { name: metrics, containerPort: 8889 }
+            - { name: self-metrics, containerPort: 8888 }
+            - { name: health, containerPort: 13133 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/otelcol, readOnly: true }
+          livenessProbe:
+            httpGet: { path: /, port: health }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /, port: health }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { cpu: 1000m, memory: 512Mi }
+      volumes:
+        - name: config
+          configMap: { name: otel-collector }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otel-collector-ingress
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '3' }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: otel-collector }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+      ports:
+        - { protocol: TCP, port: otlp-grpc }
+        - { protocol: TCP, port: otlp-http }
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - { protocol: TCP, port: metrics }
+        - { protocol: TCP, port: self-metrics }

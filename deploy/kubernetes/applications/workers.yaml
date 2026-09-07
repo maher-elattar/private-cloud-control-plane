@@ -1,0 +1,390 @@
+# Sync wave 4 — the three background services, deployed blue-green.
+#
+# Same shape as `control-api.yaml` and for the same reason: a `Rollout` rather than a `Deployment`,
+# so that a new version is proven against real signals before it takes over.
+#
+# These three serve no external traffic, which makes the promotion gate look at first like it has
+# nothing to measure. It does. The kubelet's liveness and readiness probes are HTTP requests
+# against the same instrumented server, so a green ReplicaSet that cannot answer its own probes
+# produces exactly the sub-90% success rate the gate is looking for, and one that has stopped
+# answering entirely fails the traffic floor. The signal is thinner than the API's, and it is real.
+#
+# What differs per service is written out rather than factored away, because the differences are
+# the interesting part: which of them holds a database handle, which of them holds broker
+# credentials, and which of them is allowed to reach the provider at all.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: provisioning-orchestrator
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: provisioning-orchestrator
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+spec:
+  # Two replicas. Work is claimed under a lease with `FOR UPDATE ... SKIP LOCKED`, so a second worker takes different work rather than the same work twice.
+  replicas: 2
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 420
+  progressDeadlineAbort: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: provisioning-orchestrator
+  strategy:
+    blueGreen:
+      activeService: provisioning-orchestrator
+      previewService: provisioning-orchestrator-preview
+      autoPromotionEnabled: true
+      scaleDownDelaySeconds: 60
+      abortScaleDownDelaySeconds: 60
+      prePromotionAnalysis:
+        templates:
+          - templateName: green-scrape-health
+          - templateName: green-traffic-floor
+          - templateName: green-http-success-rate
+        args:
+          - name: preview-service
+            value: provisioning-orchestrator-preview
+          - name: minimum-ready-replicas
+            value: '2'
+      postPromotionAnalysis:
+        templates:
+          - templateName: green-scrape-health
+          - templateName: green-http-success-rate
+        args:
+          - name: preview-service
+            value: provisioning-orchestrator-preview
+          - name: minimum-ready-replicas
+            value: '2'
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: provisioning-orchestrator
+        app.kubernetes.io/part-of: private-cloud-control-plane
+    spec:
+      serviceAccountName: provisioning-orchestrator
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Numeric, because the kubelet cannot verify that a symbolic `USER node` is non-root and
+        # refuses to start the container at all. 1000 is what `node` resolves to in the official
+        # Node.js images this service is built from.
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: provisioning-orchestrator }
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: provisioning-orchestrator }
+      containers:
+        - name: provisioning-orchestrator
+          image: private-cloud/provisioning-orchestrator:phase6
+          imagePullPolicy: IfNotPresent
+          ports:
+            # `protocol: TCP` is the API server's default and is written out deliberately. Argo CD
+            # normalises defaults for built-in kinds but not for a CustomResourceDefinition, so a
+            # field left implicit here shows up as permanent drift on a Rollout and buries real
+            # drift in the noise.
+            - { name: http, containerPort: 3001, protocol: TCP }
+            - { name: metrics, containerPort: 9464, protocol: TCP }
+          envFrom:
+            - configMapRef: { name: control-plane-config }
+          env:
+            - { name: PORT, value: '3001' }
+            - name: WORKER_ID
+              # Leases are held per worker identity, and a fencing token is only meaningful if two
+              # workers cannot claim to be the same one. The pod name is the only identifier that
+              # is unique for the life of the lease and stable across a probe.
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: control-plane-postgres-app, key: uri }
+          volumeMounts:
+            - { name: kafka-credentials, mountPath: /etc/private-cloud/kafka, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+          startupProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 100m, memory: 224Mi }
+            limits: { cpu: 1000m, memory: 640Mi }
+      volumes:
+        - name: kafka-credentials
+          projected:
+            sources:
+              - secret:
+                  name: control-plane-kafka-cluster-ca-cert
+                  items: [{ key: ca.crt, path: ca.crt }]
+              - secret:
+                  name: control-plane
+                  items: [{ key: password, path: password }]
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: proxmox-provider
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: proxmox-provider
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+spec:
+  # One replica, because this deployment runs the *fake* provider.
+  #
+  # `PROVIDER_ADAPTER` is unset in `namespace/config.yaml`, and the provider factory fails closed to
+  # the deterministic fake rather than open to real hardware. That fake is the one stateful thing in
+  # an otherwise stateless process: it keeps its task ledger, its resources, and its snapshots in
+  # in-process maps.
+  #
+  # WHY that forces a single replica: a create starts a provider task on whichever replica the
+  # Service picked, then polls for that task's result on whichever replica the Service picks next.
+  # Across two replicas the second lookup finds no such task, the provider correctly answers that it
+  # has no authoritative result, and the workflow correctly routes the instance to `manual_review`
+  # rather than risk a second VM — so roughly half of all creates end in review with
+  # `PROVIDER_TASK_UNKNOWN`. Both halves of that are behaving as designed; the deployment is what is
+  # wrong. Availability is not lost in any way that matters here: a restart of this process loses
+  # the fake's ledger regardless of how many copies are running.
+  #
+  # Restore `replicas: 2` together with `PROVIDER_ADAPTER=proxmox`. The Proxmox adapter genuinely is
+  # stateless — the authoritative task record lives in Proxmox, and any replica can read it — which
+  # is the case the original comment described and this deployment does not yet run.
+  replicas: 1
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 420
+  progressDeadlineAbort: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: proxmox-provider
+  strategy:
+    blueGreen:
+      activeService: proxmox-provider
+      previewService: proxmox-provider-preview
+      autoPromotionEnabled: true
+      scaleDownDelaySeconds: 60
+      abortScaleDownDelaySeconds: 60
+      prePromotionAnalysis:
+        templates:
+          - templateName: green-scrape-health
+          - templateName: green-traffic-floor
+          - templateName: green-http-success-rate
+        args:
+          - name: preview-service
+            value: proxmox-provider-preview
+          - name: minimum-ready-replicas
+            value: '1'
+      postPromotionAnalysis:
+        templates:
+          - templateName: green-scrape-health
+          - templateName: green-http-success-rate
+        args:
+          - name: preview-service
+            value: proxmox-provider-preview
+          - name: minimum-ready-replicas
+            value: '1'
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: proxmox-provider
+        app.kubernetes.io/part-of: private-cloud-control-plane
+    spec:
+      serviceAccountName: proxmox-provider
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Numeric, because the kubelet cannot verify that a symbolic `USER node` is non-root and
+        # refuses to start the container at all. 1000 is what `node` resolves to in the official
+        # Node.js images this service is built from.
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: proxmox-provider }
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: proxmox-provider }
+      containers:
+        - name: proxmox-provider
+          image: private-cloud/proxmox-provider:phase6
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 3002, protocol: TCP }
+            - { name: grpc, containerPort: 50052, protocol: TCP }
+            - { name: metrics, containerPort: 9464, protocol: TCP }
+          envFrom:
+            - configMapRef: { name: control-plane-config }
+          env:
+            - { name: PORT, value: '3002' }
+            - { name: GRPC_LISTEN_URL, value: 0.0.0.0:50052 }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          startupProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 100m, memory: 224Mi }
+            limits: { cpu: 1000m, memory: 640Mi }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: reconciler
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: reconciler
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+spec:
+  # Two replicas. The sweep claims instances with `SKIP LOCKED`, and its client exposes one read-only RPC, so a second replica widens the sweep and cannot widen its authority.
+  replicas: 2
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 420
+  progressDeadlineAbort: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: reconciler
+  strategy:
+    blueGreen:
+      activeService: reconciler
+      previewService: reconciler-preview
+      autoPromotionEnabled: true
+      scaleDownDelaySeconds: 60
+      abortScaleDownDelaySeconds: 60
+      prePromotionAnalysis:
+        templates:
+          - templateName: green-scrape-health
+          - templateName: green-traffic-floor
+          - templateName: green-http-success-rate
+        args:
+          - name: preview-service
+            value: reconciler-preview
+          - name: minimum-ready-replicas
+            value: '2'
+      postPromotionAnalysis:
+        templates:
+          - templateName: green-scrape-health
+          - templateName: green-http-success-rate
+        args:
+          - name: preview-service
+            value: reconciler-preview
+          - name: minimum-ready-replicas
+            value: '2'
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: reconciler
+        app.kubernetes.io/part-of: private-cloud-control-plane
+    spec:
+      serviceAccountName: reconciler
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # Numeric, because the kubelet cannot verify that a symbolic `USER node` is non-root and
+        # refuses to start the container at all. 1000 is what `node` resolves to in the official
+        # Node.js images this service is built from.
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: reconciler }
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: reconciler }
+      containers:
+        - name: reconciler
+          image: private-cloud/reconciler:phase6
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 3003, protocol: TCP }
+            - { name: metrics, containerPort: 9464, protocol: TCP }
+          envFrom:
+            - configMapRef: { name: control-plane-config }
+          env:
+            - { name: PORT, value: '3003' }
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: control-plane-postgres-app, key: uri }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          startupProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 100m, memory: 224Mi }
+            limits: { cpu: 1000m, memory: 640Mi }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }

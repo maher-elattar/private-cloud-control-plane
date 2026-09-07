@@ -35,10 +35,12 @@ import {
   updateOutboxBacklog,
 } from '@private-cloud/observability';
 import { AppController } from './app.controller';
+import { AdministrationController } from './administration/administration.controller';
 import { DeadLettersController } from './administration/dead-letters.controller';
 import { OidcAuthGuard } from './auth/oidc-auth.guard';
 import { OidcAuthService } from './auth/oidc-auth.service';
 import { CatalogController } from './catalog/catalog.controller';
+import { AdministrationGrpcController } from './grpc/administration-grpc.controller';
 import { CatalogGrpcController } from './grpc/catalog-grpc.controller';
 import { InstanceGrpcController } from './grpc/instance-grpc.controller';
 import { OperationGrpcController } from './grpc/operation-grpc.controller';
@@ -107,7 +109,7 @@ function requiredDatabaseUrl(): string {
 }
 
 /**
- * Wires the REST controllers, the three public gRPC services, and the projection worker.
+ * Wires the REST controllers, the four public gRPC services, and the projection consumers.
  *
  * Both transports resolve the *same* `ControlPlaneApplication` instance, which is what
  * guarantees REST and gRPC callers get identical authorization, validation, and idempotency
@@ -116,12 +118,15 @@ function requiredDatabaseUrl(): string {
 @Module({
   controllers: [
     AppController,
+    // Restricted administrative REST surface.
+    AdministrationController,
     DeadLettersController,
-    // REST surface.
+    // Tenant REST surface.
     CatalogController,
     InstancesController,
     OperationsController,
     // Public gRPC surface, one controller per gRPC service.
+    AdministrationGrpcController,
     CatalogGrpcController,
     InstanceGrpcController,
     OperationGrpcController,

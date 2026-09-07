@@ -52,6 +52,18 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | Phase 4 telemetry pipeline      | `mermaid/phase-4-telemetry-pipeline.mmd`     | `rendered/phase-4-telemetry-pipeline.mermaid.svg`     |
 | Phase 4 metric flow             | `mermaid/phase-4-metric-flow.mmd`            | `rendered/phase-4-metric-flow.mermaid.svg`            |
 | Phase 4 trace hierarchy         | `mermaid/phase-4-trace-hierarchy.mmd`        | `rendered/phase-4-trace-hierarchy.mermaid.svg`        |
+| Phase 5 capability stages       | `mermaid/phase-5-capability-stages.mmd` | `rendered/phase-5-capability-stages.mermaid.svg` |
+| Phase 5 purge guards            | `mermaid/phase-5-purge-guards.mmd`     | `rendered/phase-5-purge-guards.mermaid.svg`   |
+| Phase 5 reconciliation sweep    | `mermaid/phase-5-reconciliation-sweep.mmd` | `rendered/phase-5-reconciliation-sweep.mermaid.svg` |
+| Phase 6 sync waves              | `mermaid/phase-6-sync-waves.mmd`       | `rendered/phase-6-sync-waves.mermaid.svg`     |
+| Phase 6 blue-green promotion    | `mermaid/phase-6-bluegreen-promotion.mmd` | `rendered/phase-6-bluegreen-promotion.mermaid.svg` |
+| Phase 6 analysis gate           | `mermaid/phase-6-analysis-gate.mmd`    | `rendered/phase-6-analysis-gate.mermaid.svg`  |
+| Phase 6 network boundaries      | `mermaid/phase-6-network-boundaries.mmd` | `rendered/phase-6-network-boundaries.mermaid.svg` |
+| Phase 6 operations lifecycle    | `mermaid/phase-6-operations-lifecycle.mmd` | `rendered/phase-6-operations-lifecycle.mermaid.svg` |
+| Phase 6 image supply chain      | `mermaid/phase-6-image-supply-chain.mmd` | `rendered/phase-6-image-supply-chain.mermaid.svg` |
+| Phase 6 token acquisition       | `mermaid/phase-6-token-acquisition.mmd` | `rendered/phase-6-token-acquisition.mermaid.svg` |
+| Phase 6 API request path        | `mermaid/phase-6-api-request-path.mmd` | `rendered/phase-6-api-request-path.mermaid.svg` |
+| Phase 6 manifest map            | `mermaid/phase-6-manifest-map.mmd`     | `rendered/phase-6-manifest-map.mermaid.svg`   |
 
 ## Mermaid Editing And Validation
 

@@ -11,7 +11,8 @@
  * is both slow and a second place the response shape could drift from the contract. Building
  * it once, when state actually changes, keeps reads a single-row lookup with no mapping.
  *
- * Driven by `ProjectionWorker` in `apps/control-api`.
+ * Driven by `ProjectionConsumer` in `apps/control-api`, which reads the Kafka event and
+ * dead-letter topics and commits each inbox receipt in the same transaction as the apply.
  *
  * @see docs/architecture/glossary.md#read-projection-cqrs
  */
@@ -23,33 +24,26 @@ import {
   type OperationView,
   type PersistedStage,
   type ProjectionStore,
+  type SnapshotView,
   type WorkflowEvent,
 } from '@private-cloud/application';
 import type {
   InstanceMutationCompletedV1,
   InstanceMutationFailedV1,
+  EventEnvelope,
   ProvisioningDeadLetteredV1,
   ProvisioningReplayResolvedV1,
   WorkflowProgressedV1,
 } from '@private-cloud/contracts';
 import { randomUUID } from 'node:crypto';
-import { sql, type Transaction } from 'kysely';
+import type { Transaction } from 'kysely';
 import { parseJsonColumn } from './column-codec.js';
 import type { PostgresClient, PostgresDatabase } from './database.js';
 
 /** Identifies this consumer in `projection.event_receipts`. */
-const LEGACY_CONSUMER_NAME = 'control-api.phase3-projection';
 const EVENT_CONSUMER_NAME = 'control-api.provisioning-events.v1';
 const DLQ_CONSUMER_NAME = 'control-api.provisioning-dlq.v1';
-
-/** A row of `workflow.outbox` awaiting projection. */
-interface EventRow {
-  readonly event_id: string;
-  readonly aggregate_id: string;
-  readonly schema_name: string;
-  readonly payload: unknown;
-  readonly occurred_at: Date | string;
-}
+const DRIFT_CONSUMER_NAME = 'control-api.reconciliation-events.v1';
 
 /** Open transaction handle passed between the private apply steps. */
 type Tx = Transaction<PostgresDatabase>;
@@ -120,6 +114,14 @@ export class PostgresProjectionStore implements ProjectionStore {
           }),
         )
         .executeTakeFirst();
+      // WHY: `AdministrativeOperation.deadLetterEventId` is the only navigation an operator has
+      // from a stalled operation to the evidence explaining it. Writing it here, in the same
+      // transaction as the projected dead letter, keeps the two from disagreeing.
+      await tx
+        .updateTable('projection.operations')
+        .set({ dead_letter_event_id: event.data.originalEventId })
+        .where('operation_id', '=', event.operationId)
+        .execute();
       return 'applied';
     });
   }
@@ -158,69 +160,6 @@ export class PostgresProjectionStore implements ProjectionStore {
     });
   }
 
-  /**
-   * Applies the oldest unconsumed workflow event, then records its receipt.
-   *
-   * The query is the subtle part. It selects an event only when **both** conditions hold:
-   *
-   * 1. It has no receipt yet — the idempotency guard, so a re-read applies nothing twice.
-   * 2. No *earlier* unconsumed event exists for the same aggregate — the ordering guard.
-   *
-   * WHY the second, nested `NOT EXISTS`: without it, two workers could take a `progressed`
-   * and a `completed` event for one instance concurrently and commit them out of order. The
-   * instance would settle at `provisioning` forever, despite having been successfully built,
-   * because the older event was written last and overwrote the newer one.
-   *
-   * Note it orders across *all* aggregates but only blocks within one, so a slow instance
-   * never holds up an unrelated one. `SKIP LOCKED` lets replicas work in parallel.
-   *
-   * @returns `true` when an event was applied — poll again immediately — `false` when drained.
-   * @throws Error on an unrecognised event schema, rather than silently consuming it.
-   */
-  public applyNextWorkflowEvent(): Promise<boolean> {
-    return this.db.transaction().execute(async (tx) => {
-      const result = await sql<EventRow>`
-        SELECT o.*
-        FROM workflow.outbox o
-        WHERE NOT EXISTS (
-          SELECT 1 FROM projection.event_receipts r WHERE r.event_id = o.event_id
-        )
-          AND NOT EXISTS (
-            SELECT 1
-            FROM workflow.outbox earlier
-            WHERE earlier.aggregate_id = o.aggregate_id
-              AND (earlier.occurred_at, earlier.event_id) < (o.occurred_at, o.event_id)
-              AND NOT EXISTS (
-                SELECT 1 FROM projection.event_receipts consumed
-                WHERE consumed.event_id = earlier.event_id
-              )
-          )
-        ORDER BY o.occurred_at, o.event_id
-        FOR UPDATE OF o SKIP LOCKED
-        LIMIT 1
-      `.execute(tx);
-      const row = result.rows[0];
-      if (!row) return false;
-
-      const event = parseJsonColumn<WorkflowEvent>(row.payload);
-      await this.applyEvent(tx, event);
-
-      await tx
-        .insertInto('projection.event_receipts')
-        .values({
-          event_id: row.event_id,
-          consumer_name: LEGACY_CONSUMER_NAME,
-          replay_generation: 0,
-          source_topic: null,
-          source_partition: null,
-          source_offset: null,
-          received_at: new Date(),
-        })
-        .execute();
-      return true;
-    });
-  }
-
   /** Dispatches a contract-narrowed workflow event inside its receipt transaction. */
   private async applyEvent(tx: Tx, event: WorkflowEvent): Promise<void> {
     if (event.schemaName === 'workflow.progressed') {
@@ -234,6 +173,53 @@ export class PostgresProjectionStore implements ProjectionStore {
     } else {
       throw new Error('Unsupported workflow event.');
     }
+  }
+
+  /**
+   * Projects a reconciliation drift finding.
+   *
+   * Deliberately narrow: it writes the classification onto the instance document and nothing else.
+   * Desired state, lifecycle, and observed state all stay as they are, because acting on a finding
+   * is a separate attributed request rather than something a projection does on its own.
+   */
+  public applyDriftEvent(
+    event: EventEnvelope & { readonly data?: unknown },
+    delivery: MessageDeliveryIdentity,
+  ): Promise<'applied' | 'duplicate'> {
+    return this.db.transaction().execute(async (tx) => {
+      const receipt = await this.insertReceipt(tx, DRIFT_CONSUMER_NAME, event.eventId, delivery);
+      if (!receipt) return 'duplicate';
+
+      const data = event.data as { readonly classification?: string } | undefined;
+      const classification = data?.classification;
+      if (!classification) return 'applied';
+
+      const row = await tx
+        .selectFrom('projection.instances')
+        .select('document')
+        .where('instance_id', '=', event.aggregateId)
+        .forUpdate()
+        .executeTakeFirst();
+      // A finding for an instance the projection has never seen is not an error: the reconciler
+      // reads authoritative state, which can exist before its read document does.
+      if (!row) return 'applied';
+
+      const document = parseJsonColumn<InstanceView>(row.document);
+      await tx
+        .updateTable('projection.instances')
+        .set({
+          document: {
+            ...document,
+            drift: classification as InstanceView['drift'],
+            lastReconciledAt: event.occurredAt,
+            updatedAt: event.occurredAt,
+          },
+          updated_at: new Date(event.occurredAt),
+        })
+        .where('instance_id', '=', event.aggregateId)
+        .executeTakeFirstOrThrow();
+      return 'applied';
+    });
   }
 
   /** Inserts an inbox receipt, returning false for a redelivery already handled. */
@@ -359,7 +345,13 @@ export class PostgresProjectionStore implements ProjectionStore {
       .set({ lifecycle_state: 'provisioning', updated_at: now })
       .where('id', '=', event.aggregateId)
       .executeTakeFirstOrThrow();
-    await this.writeDocuments(tx, nextInstance, nextOperation, now);
+    await this.writeDocuments(tx, nextInstance, nextOperation, now, {
+      ...operationRecovery(event),
+      checkpoint: event.data.stage,
+      // `attempt` counts claims and starts at one, so the first attempt is zero retries.
+      retry_count: Math.max(0, event.data.attempt - 1),
+      provider_task_reference: event.data.providerTaskReference ?? null,
+    });
   }
 
   /**
@@ -378,23 +370,11 @@ export class PostgresProjectionStore implements ProjectionStore {
     const now = new Date(event.occurredAt);
     const documents = await this.lockDocuments(tx, event.aggregateId, event.operationId);
 
-    const nextInstance: InstanceView = {
-      ...documents.instance,
-      lifecycleState: 'active',
-      observed: {
-        exists: true,
-        powerState: 'running',
-        cpuCount: null,
-        memoryMiB: null,
-        diskGiB: null,
-        markerMatch: true,
-        observedAt: event.occurredAt,
-      },
-      activeOperationId: null,
-      drift: 'none',
-      lastReconciledAt: event.occurredAt,
-      updatedAt: event.occurredAt,
-    };
+    // WHY read the lifecycle state from the event rather than hardcoding `active`: with more than
+    // one capability, a terminal success can leave an instance `retained` or `purged` just as
+    // legitimately as `active`.
+    const lifecycleState = event.data.lifecycleState as InstanceView['lifecycleState'];
+    const observed = observedFromEvent(event, event.occurredAt);
     const nextOperation: OperationView = {
       ...documents.operation,
       state: 'succeeded',
@@ -408,11 +388,49 @@ export class PostgresProjectionStore implements ProjectionStore {
       manualReviewRequired: false,
     };
 
-    await tx
+    const instanceRow = await tx
       .updateTable('control.instances')
-      .set({ lifecycle_state: 'active', active_operation_id: null, updated_at: now })
+      .set({
+        lifecycle_state: lifecycleState,
+        active_operation_id: null,
+        updated_at: now,
+        // Mirrored onto columns as well as the document because purge and reconciliation query
+        // observed state, and a guard deciding whether a VM may be destroyed must not depend on
+        // reading a jsonb body.
+        observed_exists: observed.exists,
+        observed_power_state: observed.powerState,
+        observed_cpu_count: observed.cpuCount,
+        observed_memory_mib: observed.memoryMiB === null ? null : String(observed.memoryMiB),
+        observed_disk_gib: observed.diskGiB === null ? null : String(observed.diskGiB),
+        observed_marker_match: observed.markerMatch,
+        observed_at: new Date(observed.observedAt),
+        drift: 'none',
+        last_reconciled_at: now,
+      })
       .where('id', '=', event.aggregateId)
+      .returning(['retention_deadline', 'purge_eligible'])
       .executeTakeFirstOrThrow();
+
+    // Retention state is read back from the authoritative row rather than carried forward from the
+    // previous document. WHY: `acceptRetention` stamps `retention_deadline` and `purge_eligible`
+    // onto `control.instances` at acceptance and does not touch the projection, so a document built
+    // by copying its predecessor reported `retentionDeadline: null` for the whole life of a retained
+    // instance — the tenant could see that their instance was retained but never when it stops
+    // being recoverable.
+    const nextInstance: InstanceView = {
+      ...documents.instance,
+      lifecycleState,
+      observed,
+      activeOperationId: null,
+      drift: 'none',
+      lastReconciledAt: event.occurredAt,
+      retentionDeadline: instanceRow.retention_deadline
+        ? new Date(instanceRow.retention_deadline).toISOString()
+        : null,
+      purgeEligible: instanceRow.purge_eligible,
+      updatedAt: event.occurredAt,
+    };
+
     await tx
       .updateTable('control.operations')
       .set({
@@ -428,7 +446,14 @@ export class PostgresProjectionStore implements ProjectionStore {
       })
       .where('id', '=', event.operationId)
       .executeTakeFirstOrThrow();
-    await this.writeDocuments(tx, nextInstance, nextOperation, now);
+    await this.settleSnapshot(tx, event, documents.operation, now);
+    await this.writeDocuments(tx, nextInstance, nextOperation, now, {
+      ...operationRecovery(event),
+      checkpoint: nextOperation.stage,
+      // WHY: the operation is terminal, so any handle it was polling is no longer in flight.
+      // Leaving a stale reference here would invite an operator to poll a finished task.
+      provider_task_reference: null,
+    });
   }
 
   /**
@@ -489,7 +514,11 @@ export class PostgresProjectionStore implements ProjectionStore {
       })
       .where('id', '=', event.operationId)
       .executeTakeFirstOrThrow();
-    await this.writeDocuments(tx, nextInstance, nextOperation, now);
+    await this.writeDocuments(tx, nextInstance, nextOperation, now, {
+      ...operationRecovery(event),
+      checkpoint: nextOperation.stage,
+      provider_task_reference: null,
+    });
   }
 
   /**
@@ -499,6 +528,64 @@ export class PostgresProjectionStore implements ProjectionStore {
    * writes it back. Without the lock a concurrent apply could interleave between the read and
    * the write, and the second writer would silently discard the first one's changes.
    */
+  /**
+   * Settles the snapshot a completed snapshot operation acted on.
+   *
+   * WHY this is needed at all: a snapshot is created in `creating` at acceptance, and nothing else
+   * moved it. The workflow succeeded, the operation reported `succeeded`, and the snapshot stayed
+   * `creating` forever — which is not merely cosmetic, because `rollbackSnapshot` and
+   * `deleteSnapshot` both refuse anything that is not `available` and answered `INSTANCE_BUSY`. A
+   * snapshot could be taken and then never used.
+   *
+   * The snapshot is identified from the operation's own target rather than from the event, because
+   * `instance.mutation.completed` is addressed to the instance: its `aggregateId` is the VM for
+   * every capability, and only the operation records which snapshot the request named.
+   *
+   * A delete removes both rows. Retaining a tombstone would keep the name occupied, and
+   * `control.snapshots` has a `UNIQUE (instance_id, name)` that would then refuse to take the same
+   * snapshot again.
+   */
+  private async settleSnapshot(
+    tx: Tx,
+    event: InstanceMutationCompletedV1,
+    operation: OperationView,
+    now: Date,
+  ): Promise<void> {
+    if (operation.targetType !== 'snapshot') return;
+    const snapshotId = operation.targetId;
+
+    if (event.data.action === 'delete_snapshot') {
+      await tx.deleteFrom('projection.snapshots').where('snapshot_id', '=', snapshotId).execute();
+      await tx.deleteFrom('control.snapshots').where('id', '=', snapshotId).execute();
+      return;
+    }
+
+    // Both create and rollback leave the snapshot usable. Rollback restores the disk and leaves the
+    // snapshot itself in place, which is why it settles to the same state a create does.
+    const row = await tx
+      .updateTable('control.snapshots')
+      .set({ state: 'available', updated_at: now })
+      .where('id', '=', snapshotId)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) return;
+
+    const document: SnapshotView = {
+      id: row.id,
+      instanceId: row.instance_id,
+      name: row.name,
+      description: row.description,
+      state: 'available',
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    await tx
+      .updateTable('projection.snapshots')
+      .set({ document, updated_at: now })
+      .where('snapshot_id', '=', snapshotId)
+      .execute();
+  }
+
   private async lockDocuments(
     tx: Tx,
     instanceId: string,
@@ -522,12 +609,19 @@ export class PostgresProjectionStore implements ProjectionStore {
     };
   }
 
-  /** Writes both updated documents back to the read model. */
+  /**
+   * Writes both updated documents back to the read model.
+   *
+   * `recovery` carries the administrative sidecar columns. They are written in the same
+   * statement as the document so the two can never disagree about which event last touched the
+   * operation.
+   */
   private async writeDocuments(
     tx: Tx,
     instance: InstanceView,
     operation: OperationView,
     updatedAt: Date,
+    recovery: OperationRecovery,
   ): Promise<void> {
     await tx
       .updateTable('projection.instances')
@@ -536,8 +630,79 @@ export class PostgresProjectionStore implements ProjectionStore {
       .executeTakeFirstOrThrow();
     await tx
       .updateTable('projection.operations')
-      .set({ document: operation, updated_at: updatedAt })
+      .set({ document: operation, updated_at: updatedAt, ...recovery })
       .where('operation_id', '=', operation.id)
       .executeTakeFirstOrThrow();
   }
+}
+
+/** Administrative sidecar columns written alongside a projected operation document. */
+interface OperationRecovery {
+  readonly correlation_id: string;
+  readonly causation_id: string | null;
+  readonly trace_id: string | null;
+  readonly checkpoint?: string;
+  readonly retry_count?: number;
+  readonly provider_task_reference?: string | null;
+}
+
+/**
+ * Derives the administrative sidecar shared by every workflow event.
+ *
+ * WHY: these values live on the envelope of every event the projection already consumes, so the
+ * administrator route needs no read of workflow-owned tables to serve them. Extracting the trace
+ * ID here rather than storing the whole carrier keeps the restricted W3C context out of a column
+ * that an administrative response reads from.
+ */
+function operationRecovery(event: {
+  readonly correlationId: string;
+  readonly causationId?: string | null;
+  readonly traceContext?: { readonly traceparent?: string };
+}): OperationRecovery {
+  return {
+    correlation_id: event.correlationId,
+    causation_id: event.causationId ?? null,
+    trace_id: traceIdOf(event.traceContext?.traceparent),
+  };
+}
+
+/**
+ * Extracts the 32-character trace ID from a W3C `traceparent`.
+ *
+ * Returns `null` rather than throwing for anything malformed: a projection must never fail to
+ * record a real state change because a trace header was unusable.
+ */
+function traceIdOf(traceparent: string | undefined): string | null {
+  if (!traceparent) return null;
+  const match = /^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$/.exec(traceparent);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Builds the read model's observed block from a terminal event.
+ *
+ * Before capability 1 this projection hardcoded `exists: true`, `powerState: 'running'`, and
+ * `markerMatch: true`, and nulled every measurement — publishing as confirmed fact four things it
+ * had never measured. The workflow does observe all of them, so the event now carries them and
+ * this reads what was actually seen.
+ *
+ * Sizing stays `null` when the provider did not report it. Substituting the desired sizing would
+ * make desired and observed agree by construction, which is exactly the disagreement the
+ * reconciler exists to surface.
+ */
+function observedFromEvent(
+  event: InstanceMutationCompletedV1,
+  fallbackObservedAt: string,
+): NonNullable<InstanceView['observed']> {
+  const observed = event.data.observed;
+  const resources = observed?.resources;
+  return {
+    exists: observed?.exists ?? true,
+    powerState: observed?.powerState ?? 'unknown',
+    cpuCount: resources?.cpuCount ?? null,
+    memoryMiB: resources?.memoryMiB ?? null,
+    diskGiB: resources?.diskGiB ?? null,
+    markerMatch: observed?.markerMatch ?? true,
+    observedAt: observed?.observedAt ?? fallbackObservedAt,
+  };
 }

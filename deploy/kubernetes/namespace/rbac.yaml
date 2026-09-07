@@ -1,0 +1,44 @@
+# Kubernetes RBAC for the control plane.
+#
+# The control plane holds **no** Kubernetes permissions. It is a workload that talks to PostgreSQL,
+# Kafka, and a provider over gRPC; it never reads or writes a Kubernetes object. The only Role in
+# this file grants the analysis job the narrow read it genuinely needs, and it is written out
+# explicitly rather than omitted so that a future permission has to be argued for against a
+# baseline of zero.
+#
+# WHY this matters here specifically: the workload's whole purpose is creating and destroying
+# virtual machines. An identity that can also mutate the cluster it runs on turns one compromised
+# process into two blast radii.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rollout-analysis-reader
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+rules:
+  # The load generator waits for the preview Service to have endpoints before it starts sending
+  # traffic. Without this it races the Rollout and reports a failure that is really a start-up
+  # ordering artefact.
+  - apiGroups: ['']
+    resources: [services, endpoints]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rollout-analysis-reader
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '0' }
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rollout-analysis-reader
+subjects:
+  - kind: ServiceAccount
+    name: control-plane-jobs
+    namespace: private-cloud

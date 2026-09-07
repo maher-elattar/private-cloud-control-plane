@@ -1,0 +1,20 @@
+# Sync wave 3 — telemetry collection and scrape configuration.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: private-cloud
+resources:
+  - otel-collector.yaml
+  - service-monitors.yaml
+configMapGenerator:
+  # Generated rather than written out so the ConfigMap's name carries a content hash. That is what
+  # makes a pipeline change actually restart the Collector: a plain ConfigMap edit leaves the
+  # running process on the old configuration until something happens to restart it.
+  - name: otel-collector
+    files:
+      - config.yaml=otel-collector-config.yaml
+    options:
+      labels:
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/part-of: private-cloud-control-plane
+      annotations:
+        argocd.argoproj.io/sync-wave: '3'

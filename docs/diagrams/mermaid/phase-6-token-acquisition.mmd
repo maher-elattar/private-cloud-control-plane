@@ -1,0 +1,35 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":42,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+sequenceDiagram
+  autonumber
+  actor Op as Postman / operator
+  participant PF as kubectl port-forward<br/>127.0.0.1:18085
+  participant OIDC as local-oidc fixture<br/>(ClusterIP only)
+  participant GW as Traefik Gateway<br/>192.168.49.2:30000
+  participant API as control-api
+  participant JWKS as JWKS endpoint
+
+  Note over OIDC: No HTTPRoute reaches this service.<br/>An identity provider that anyone can<br/>call from outside the cluster is not one.
+
+  Op->>PF: start forward to svc/local-oidc
+  PF->>OIDC: tunnel established
+  Op->>PF: GET /token?roles=tenant_developer&projects=<project>
+  PF->>OIDC: forwarded
+  OIDC->>OIDC: sign RS256, 15 minute expiry<br/>iss = in-cluster service URL
+  OIDC-->>Op: { access_token }
+
+  Note over Op: The issuer claim is the in-cluster URL,<br/>not 127.0.0.1. That is why a token from the<br/>Phase 4 Compose fixture on port 18080<br/>is rejected here with a bare 401.
+
+  Op->>GW: request + Host: control-plane.test<br/>+ Authorization: Bearer <token>
+  GW->>API: routed by HTTPRoute
+  API->>JWKS: fetch signing keys (cached)
+  JWKS-->>API: public key set
+  API->>API: verify signature, issuer, audience
+  API->>API: check role and project membership
+
+  alt Role and membership satisfied
+    API-->>Op: 200 / 202
+  else Signature valid, membership absent
+    API-->>Op: 403 PROJECT_ACCESS_DENIED
+  else No token
+    API-->>Op: 401 AUTHENTICATION_REQUIRED
+  end

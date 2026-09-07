@@ -12,11 +12,15 @@
  * @see docs/architecture/phase-3-persistence.md
  */
 import { randomBytes, randomUUID } from 'node:crypto';
-import { NOOP_APPLICATION_TELEMETRY } from '@private-cloud/application';
+import { NOOP_APPLICATION_TELEMETRY, STAGE_PROGRESS_PERCENT } from '@private-cloud/application';
 import type {
   AcceptedMutation,
+  Actor,
+  AdministrativeOperationView,
   ApplicationTelemetry,
   ApplicationTraceContext,
+  AuditEventFilter,
+  AuditEventView,
   ControlPlaneStore,
   CreateInstanceCommand,
   DeadLetterView,
@@ -26,19 +30,38 @@ import type {
   NetworkView,
   OperationView,
   Page,
+  PageRequest,
+  PowerInstanceCommand,
   ProjectView,
+  CreateSnapshotCommand,
+  LeaseReleaseMode,
   QuotaView,
   ReplayDeadLetterCommand,
+  PurgeInstanceCommand,
+  RetainInstanceCommand,
+  RetentionPolicyView,
+  SnapshotActionCommand,
+  SnapshotView,
+  ResizeInstanceCommand,
 } from '@private-cloud/application';
 import type {
   AuditRecordedV1,
   EventEnvelope,
   InstanceCreateRequestedV1,
+  InstancePowerRequestedV1,
+  InstanceResizeRequestedV1,
+  InstanceRetentionRequestedV1,
+  InstancePurgeRequestedV1,
+  SnapshotCreateRequestedV1,
+  SnapshotDeleteRequestedV1,
+  SnapshotRollbackRequestedV1,
   ProvisioningReplayRequestedV1,
 } from '@private-cloud/contracts';
-import { allocateIpv4, DomainError } from '@private-cloud/domain';
-import { sql, type Transaction } from 'kysely';
+import { allocateIpv4, DomainError, validateResize } from '@private-cloud/domain';
+import { sql, type RawBuilder, type SqlBool, type Transaction } from 'kysely';
 import { parseJsonColumn, toIsoTimestamp } from './column-codec.js';
+import { decodePageCursor, paginate } from './page-cursor.js';
+import { lockInstanceForMutation } from './instance-guard.js';
 import type { PostgresClient, PostgresDatabase } from './database.js';
 import { serializeDebeziumTraceContext } from './trace-carrier.js';
 import { auditRecordedEvent } from './audit-event.js';
@@ -53,6 +76,45 @@ const IDEMPOTENCY_RECORD_TTL_MS = 86_400_000;
 
 /** Operation type recorded on idempotency and audit records for this command. */
 const CREATE_INSTANCE_ACTION = 'create_instance';
+/** Operation type recorded for power transitions; also the idempotency scope discriminator. */
+const POWER_INSTANCE_ACTION = 'power_instance';
+/** Operation type recorded for flavor resizes; also the idempotency scope discriminator. */
+const RESIZE_INSTANCE_ACTION = 'resize_instance';
+/** Operation type recorded for snapshot creation; also the idempotency scope discriminator. */
+const CREATE_SNAPSHOT_ACTION = 'create_snapshot';
+/** Operation type recorded for soft deletion; also the idempotency scope discriminator. */
+const RETAIN_INSTANCE_ACTION = 'retain_instance';
+/** Operation type recorded for administrative purge; also the idempotency scope discriminator. */
+const PURGE_INSTANCE_ACTION = 'purge_instance';
+
+/**
+ * Idempotency scope for an administrative action, which has no tenant project of its own.
+ *
+ * The zero UUID stands in for "no project" so an administrator's key is scoped to them and the
+ * action rather than colliding with any tenant's.
+ */
+function adminScope(command: {
+  readonly actor: Actor;
+  readonly idempotencyKey: string;
+}): MutationIdentity {
+  return {
+    actor: command.actor,
+    projectId: '00000000-0000-0000-0000-000000000000',
+    idempotencyKey: command.idempotencyKey,
+  };
+}
+
+/**
+ * The fields every mutation shares for idempotency purposes.
+ *
+ * Scoping by actor, project, action, and key means one caller's key cannot collide with another's,
+ * and the same key may legitimately be reused across different operation types.
+ */
+interface MutationIdentity {
+  readonly actor: Actor;
+  readonly projectId: string;
+  readonly idempotencyKey: string;
+}
 
 /*
  * The contract fixes the DNS server list at 1-4 entries and SSH keys at 0-5, and expresses
@@ -176,9 +238,14 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       { 'command.type': CREATE_INSTANCE_ACTION },
       () =>
         this.db.transaction().execute(async (tx) => {
-          await this.lockIdempotencyScope(tx, command);
+          await this.lockIdempotencyScope(tx, command, CREATE_INSTANCE_ACTION);
 
-          const replayed = await this.findReplayedResponse(tx, command, requestHash);
+          const replayed = await this.findReplayedResponse(
+            tx,
+            command,
+            CREATE_INSTANCE_ACTION,
+            requestHash,
+          );
           if (replayed) return replayed;
 
           const context = await this.loadAcceptanceContext(tx, command);
@@ -192,17 +259,1317 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     );
   }
 
+  /**
+   * Commits a power request as durable intent, or replays a previous identical one.
+   *
+   * Shorter than {@link PostgresControlPlaneStore.acceptCreate} because the instance already
+   * exists: there is no catalog to resolve, no quota to check, and no address to reserve. What it
+   * adds instead is the per-instance concurrency lock, which create does not need — create has no
+   * prior instance that another operation could already be acting on.
+   *
+   * @see ControlPlaneStore.acceptPowerAction for the full contract and error codes.
+   */
+  public async acceptPowerAction(
+    command: PowerInstanceCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.transaction.accept_power',
+      { 'command.type': POWER_INSTANCE_ACTION },
+      () =>
+        this.db.transaction().execute(async (tx) => {
+          await this.lockIdempotencyScope(tx, command, POWER_INSTANCE_ACTION);
+          const replayed = await this.findReplayedResponse(
+            tx,
+            command,
+            POWER_INSTANCE_ACTION,
+            requestHash,
+          );
+          if (replayed) return replayed;
+
+          // Takes the row lock for the rest of the transaction, so a concurrent request for the
+          // same instance waits and then sees `active_operation_id` set.
+          const instance = await lockInstanceForMutation(tx, command.projectId, command.instanceId);
+
+          const now = new Date();
+          const occurredAt = now.toISOString();
+          const operationId = randomUUID();
+          const accepted: AcceptedMutation = {
+            operationId,
+            targetId: instance.id,
+            acceptedAt: occurredAt,
+            statusUrl: `/v1/projects/${command.projectId}/operations/${operationId}`,
+            replayed: false,
+          };
+
+          const event: InstancePowerRequestedV1 = {
+            eventId: randomUUID(),
+            schemaName: 'instance.power.requested',
+            schemaVersion: 1,
+            aggregateType: 'instance',
+            aggregateId: instance.id,
+            projectId: command.projectId,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: operationId,
+            occurredAt,
+            traceContext: {
+              traceparent: command.traceparent,
+              ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+            },
+            // Partitioned by instance so every command touching one VM is ordered behind the
+            // last, which is what lets the orchestrator rely on per-instance sequencing.
+            partitionKey: instance.id,
+            data: {
+              action: command.action,
+              providerProfileId: instance.providerProfileId,
+              // WHY the create operation and not this one: the ownership markers on the VM were
+              // written by create, and the provider matches all five markers or refuses.
+              createOperationId: instance.createOperationId ?? '',
+            },
+          };
+
+          await tx
+            .insertInto('control.operations')
+            .values({
+              id: operationId,
+              project_id: command.projectId,
+              action: POWER_INSTANCE_ACTION,
+              target_type: 'instance',
+              target_id: instance.id,
+              state: 'accepted',
+              stage: 'accepted',
+              progress_percent: STAGE_PROGRESS_PERCENT.accepted,
+              accepted_at: now,
+              updated_at: now,
+              manual_review_required: false,
+            })
+            .executeTakeFirstOrThrow();
+          await tx
+            .updateTable('control.instances')
+            .set({
+              active_operation_id: operationId,
+              // Desired power state records accepted intent, not a provider outcome. `reboot`
+              // leaves it unchanged because the instance is meant to end up running either way.
+              ...(command.action === 'start' || command.action === 'reboot'
+                ? { desired_power_state: 'running' }
+                : { desired_power_state: 'stopped' }),
+              updated_at: now,
+            })
+            .where('id', '=', instance.id)
+            .executeTakeFirstOrThrow();
+
+          const operationDocument: OperationView = {
+            id: operationId,
+            projectId: command.projectId,
+            action: POWER_INSTANCE_ACTION,
+            targetType: 'instance',
+            targetId: instance.id,
+            state: 'accepted',
+            stage: 'accepted',
+            progressPercent: STAGE_PROGRESS_PERCENT.accepted,
+            acceptedAt: occurredAt,
+            updatedAt: occurredAt,
+            manualReviewRequired: false,
+          };
+          await tx
+            .insertInto('projection.operations')
+            .values({
+              operation_id: operationId,
+              project_id: command.projectId,
+              target_id: instance.id,
+              document: operationDocument,
+              updated_at: now,
+              correlation_id: command.correlationId,
+              trace_id: traceIdOf(command.traceparent),
+              checkpoint: 'accepted',
+            })
+            .execute();
+          await this.markInstanceBusyInProjection(tx, instance.id, operationId, now);
+
+          await tx
+            .insertInto('control.idempotency_records')
+            .values({
+              actor_id: command.actor.subject,
+              project_id: command.projectId,
+              operation_type: POWER_INSTANCE_ACTION,
+              idempotency_key: command.idempotencyKey,
+              target_id: instance.id,
+              request_hash: requestHash,
+              operation_id: operationId,
+              response: accepted,
+              created_at: now,
+              expires_at: new Date(now.getTime() + IDEMPOTENCY_RECORD_TTL_MS),
+            })
+            .executeTakeFirstOrThrow();
+
+          await this.writeControlOutbox(tx, event, 'provisioning.commands.v1', now);
+          await this.writeControlAudit(tx, {
+            eventId: randomUUID(),
+            projectId: command.projectId,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: event.eventId,
+            occurredAt: now,
+            traceContext: event.traceContext,
+            actorId: command.actor.subject,
+            actorRole: 'tenant_developer',
+            action: `power_${command.action}`,
+            targetType: 'instance',
+            targetId: instance.id,
+            outcome: 'accepted',
+          });
+          return accepted;
+        }),
+    );
+  }
+
+  /**
+   * Commits a resize as durable intent, or replays a previous identical one.
+   *
+   * The quota check is a *delta* check, unlike create's. A resize consumes only the difference
+   * between the instance's current sizing and the flavor's, so charging the full target against
+   * the project would refuse resizes that free capacity as often as ones that consume it.
+   *
+   * @see ControlPlaneStore.acceptResize for the full contract and error codes.
+   */
+  public async acceptResize(
+    command: ResizeInstanceCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.transaction.accept_resize',
+      { 'command.type': RESIZE_INSTANCE_ACTION },
+      () =>
+        this.db.transaction().execute(async (tx) => {
+          await this.lockIdempotencyScope(tx, command, RESIZE_INSTANCE_ACTION);
+          const replayed = await this.findReplayedResponse(
+            tx,
+            command,
+            RESIZE_INSTANCE_ACTION,
+            requestHash,
+          );
+          if (replayed) return replayed;
+
+          const instance = await lockInstanceForMutation(tx, command.projectId, command.instanceId);
+          const flavor = await tx
+            .selectFrom('control.flavors')
+            .selectAll()
+            .where('id', '=', command.flavorId)
+            .where('enabled', '=', true)
+            .executeTakeFirst();
+          if (!flavor) {
+            throw new DomainError('VALIDATION_FAILED', 'The requested flavor is not available.');
+          }
+
+          const current = {
+            cpuCount: instance.desiredCpuCount,
+            memoryMiB: instance.desiredMemoryMib,
+            diskGiB: instance.desiredDiskGib,
+          };
+          const target = {
+            cpuCount: flavor.cpu_count,
+            memoryMiB: Number(flavor.memory_mib),
+            // Three inputs, and the largest wins. The flavor's minimum is a floor, the current
+            // size is a floor, and an explicit request may raise it further. `validateResize`
+            // refuses the case this cannot express: an explicit request *below* the current size.
+            diskGiB: Math.max(
+              current.diskGiB,
+              Number(flavor.minimum_disk_gib),
+              command.diskGiB ?? 0,
+            ),
+          };
+          // Checked against what the tenant asked for, not the computed maximum, so an explicit
+          // shrink is refused rather than silently rounded back up to the current size.
+          validateResize({
+            current,
+            target: { ...target, diskGiB: command.diskGiB ?? target.diskGiB },
+          });
+          await this.assertResizeQuotaHeadroom(tx, command.projectId, current, target);
+
+          const now = new Date();
+          const occurredAt = now.toISOString();
+          const operationId = randomUUID();
+          const accepted: AcceptedMutation = {
+            operationId,
+            targetId: instance.id,
+            acceptedAt: occurredAt,
+            statusUrl: `/v1/projects/${command.projectId}/operations/${operationId}`,
+            replayed: false,
+          };
+
+          const event: InstanceResizeRequestedV1 = {
+            eventId: randomUUID(),
+            schemaName: 'instance.resize.requested',
+            schemaVersion: 1,
+            aggregateType: 'instance',
+            aggregateId: instance.id,
+            projectId: command.projectId,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: operationId,
+            occurredAt,
+            traceContext: {
+              traceparent: command.traceparent,
+              ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+            },
+            partitionKey: instance.id,
+            data: {
+              flavorId: command.flavorId,
+              targetResources: target,
+              providerProfileId: instance.providerProfileId,
+              createOperationId: instance.createOperationId ?? '',
+            },
+          };
+
+          await tx
+            .insertInto('control.operations')
+            .values({
+              id: operationId,
+              project_id: command.projectId,
+              action: RESIZE_INSTANCE_ACTION,
+              target_type: 'instance',
+              target_id: instance.id,
+              state: 'accepted',
+              stage: 'accepted',
+              progress_percent: STAGE_PROGRESS_PERCENT.accepted,
+              accepted_at: now,
+              updated_at: now,
+              manual_review_required: false,
+            })
+            .executeTakeFirstOrThrow();
+          await tx
+            .updateTable('control.instances')
+            .set({
+              active_operation_id: operationId,
+              // Desired sizing records accepted intent. Observed sizing stays as it was until the
+              // workflow proves the provider applied it.
+              flavor_id: command.flavorId,
+              desired_cpu_count: target.cpuCount,
+              desired_memory_mib: String(target.memoryMiB),
+              desired_disk_gib: String(target.diskGiB),
+              updated_at: now,
+            })
+            .where('id', '=', instance.id)
+            .executeTakeFirstOrThrow();
+
+          await tx
+            .insertInto('projection.operations')
+            .values({
+              operation_id: operationId,
+              project_id: command.projectId,
+              target_id: instance.id,
+              document: {
+                id: operationId,
+                projectId: command.projectId,
+                action: RESIZE_INSTANCE_ACTION,
+                targetType: 'instance',
+                targetId: instance.id,
+                state: 'accepted',
+                stage: 'accepted',
+                progressPercent: STAGE_PROGRESS_PERCENT.accepted,
+                acceptedAt: occurredAt,
+                updatedAt: occurredAt,
+                manualReviewRequired: false,
+              } satisfies OperationView,
+              updated_at: now,
+              correlation_id: command.correlationId,
+              trace_id: traceIdOf(command.traceparent),
+              checkpoint: 'accepted',
+            })
+            .execute();
+          await this.markInstanceBusyInProjection(tx, instance.id, operationId, now);
+
+          await tx
+            .insertInto('control.idempotency_records')
+            .values({
+              actor_id: command.actor.subject,
+              project_id: command.projectId,
+              operation_type: RESIZE_INSTANCE_ACTION,
+              idempotency_key: command.idempotencyKey,
+              target_id: instance.id,
+              request_hash: requestHash,
+              operation_id: operationId,
+              response: accepted,
+              created_at: now,
+              expires_at: new Date(now.getTime() + IDEMPOTENCY_RECORD_TTL_MS),
+            })
+            .executeTakeFirstOrThrow();
+
+          await this.writeControlOutbox(tx, event, 'provisioning.commands.v1', now);
+          await this.writeControlAudit(tx, {
+            eventId: randomUUID(),
+            projectId: command.projectId,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: event.eventId,
+            occurredAt: now,
+            traceContext: event.traceContext,
+            actorId: command.actor.subject,
+            actorRole: 'tenant_developer',
+            action: 'resize_instance',
+            targetType: 'instance',
+            targetId: instance.id,
+            outcome: 'accepted',
+          });
+          return accepted;
+        }),
+    );
+  }
+
+  /**
+   * Checks project quota against the *change* a resize makes, not its absolute target.
+   *
+   * Charging the full target would refuse a resize that frees capacity as readily as one that
+   * consumes it, because the instance's current usage is already counted in the project total.
+   */
+  private async assertResizeQuotaHeadroom(
+    tx: Tx,
+    projectId: string,
+    current: { cpuCount: number; memoryMiB: number; diskGiB: number },
+    target: { cpuCount: number; memoryMiB: number; diskGiB: number },
+  ): Promise<void> {
+    const quota = await tx
+      .selectFrom('control.quotas')
+      .selectAll()
+      .where('project_id', '=', projectId)
+      .executeTakeFirst();
+    if (!quota) throw new DomainError('PROJECT_NOT_FOUND', 'The project does not exist.');
+
+    const usage = await tx
+      .selectFrom('control.instances')
+      .select((builder) => [
+        builder.fn.sum<number>('desired_cpu_count').as('cpu_count'),
+        builder.fn.sum<string>('desired_memory_mib').as('memory_mib'),
+        builder.fn.sum<string>('desired_disk_gib').as('disk_gib'),
+      ])
+      .where('project_id', '=', projectId)
+      .where('lifecycle_state', '!=', 'purged')
+      .executeTakeFirstOrThrow();
+
+    if (
+      Number(usage.cpu_count ?? 0) - current.cpuCount + target.cpuCount > quota.cpu_count ||
+      Number(usage.memory_mib ?? 0) - current.memoryMiB + target.memoryMiB >
+        Number(quota.memory_mib) ||
+      Number(usage.disk_gib ?? 0) - current.diskGiB + target.diskGiB > Number(quota.disk_gib)
+    ) {
+      throw new DomainError('QUOTA_EXCEEDED', 'The resize request exceeds project quota.');
+    }
+  }
+
+  /**
+   * Mirrors the busy marker onto the projected instance document.
+   *
+   * WHY eagerly rather than waiting for the first workflow event: a client that polls its own
+   * instance immediately after a 202 would otherwise see `activeOperationId: null` and reasonably
+   * conclude nothing had been accepted.
+   */
+  private async markInstanceBusyInProjection(
+    tx: Tx,
+    instanceId: string,
+    operationId: string,
+    now: Date,
+  ): Promise<void> {
+    const row = await tx
+      .selectFrom('projection.instances')
+      .select('document')
+      .where('instance_id', '=', instanceId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) return;
+    const document = parseJsonColumn<InstanceView>(row.document);
+    await tx
+      .updateTable('projection.instances')
+      .set({
+        document: { ...document, activeOperationId: operationId, updatedAt: now.toISOString() },
+        updated_at: now,
+      })
+      .where('instance_id', '=', instanceId)
+      .execute();
+  }
+
+  /**
+   * Moves an instance's IPv4 lease out of `active`.
+   *
+   * The two modes differ in one consequential way: the partial unique index on
+   * `control.ipv4_leases` treats `active` and `quarantined` as occupying an address and `released`
+   * as freeing it. So quarantining holds the address against reallocation while a retained VM may
+   * still be answering on it, and releasing hands it back to the pool.
+   *
+   * The state progression is one-way: `active` to `quarantined` to `released`. Retention
+   * quarantines, purge releases, and a redelivered retention command arriving after a purge cannot
+   * re-reserve an address the pool has already handed out.
+   *
+   * @see ControlPlaneStore.releaseIpv4Lease for the full contract.
+   */
+  public async releaseIpv4Lease(
+    instanceId: string,
+    mode: LeaseReleaseMode,
+  ): Promise<'quarantined' | 'released' | null> {
+    const target = mode === 'quarantine_until_purge' ? 'quarantined' : 'released';
+    return this.db.transaction().execute(async (tx) => {
+      const lease = await tx
+        .selectFrom('control.ipv4_leases')
+        .select(['id', 'state'])
+        .where('instance_id', '=', instanceId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!lease) return null;
+
+      // WHY a one-way progression rather than a plain assignment: retention quarantines an
+      // address, and purge later releases it, so `quarantined` must be able to advance. The
+      // reverse must not happen — a redelivered retention command arriving after a purge would
+      // otherwise re-reserve an address the pool has already handed out.
+      const order = { active: 0, quarantined: 1, released: 2 } as const;
+      const current = lease.state as keyof typeof order;
+      if (order[current] >= order[target]) return current === 'active' ? null : current;
+
+      await tx
+        .updateTable('control.ipv4_leases')
+        .set({ state: target, updated_at: new Date() })
+        .where('id', '=', lease.id)
+        .where('state', '=', lease.state)
+        .executeTakeFirstOrThrow();
+      return target;
+    });
+  }
+
+  /** Reads the single-row retention policy. */
+  public async getRetentionPolicy(): Promise<RetentionPolicyView> {
+    const row = await this.db
+      .selectFrom('control.retention_policy')
+      .selectAll()
+      .executeTakeFirstOrThrow();
+    return {
+      retentionHours: row.retention_hours,
+      leaseReleaseMode: row.lease_release_mode as RetentionPolicyView['leaseReleaseMode'],
+      version: Number(row.version),
+      updatedAt: toIsoTimestamp(row.updated_at),
+      updatedBy: row.updated_by,
+    };
+  }
+
+  /**
+   * Commits a snapshot creation as durable intent, or replays a previous identical one.
+   *
+   * The snapshot row is written in the same transaction as the command, in `creating` state, so a
+   * client polling immediately after its 202 sees the snapshot rather than an empty list.
+   *
+   * @see ControlPlaneStore.acceptSnapshotCreate for the full contract and error codes.
+   */
+  public async acceptSnapshotCreate(
+    command: CreateSnapshotCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.transaction.accept_snapshot_create',
+      { 'command.type': CREATE_SNAPSHOT_ACTION },
+      () =>
+        this.db.transaction().execute(async (tx) => {
+          await this.lockIdempotencyScope(tx, command, CREATE_SNAPSHOT_ACTION);
+          const replayed = await this.findReplayedResponse(
+            tx,
+            command,
+            CREATE_SNAPSHOT_ACTION,
+            requestHash,
+          );
+          if (replayed) return replayed;
+
+          const instance = await lockInstanceForMutation(tx, command.projectId, command.instanceId);
+          await this.assertSnapshotHeadroom(tx, command.projectId);
+
+          const duplicate = await tx
+            .selectFrom('control.snapshots')
+            .select('id')
+            .where('instance_id', '=', instance.id)
+            .where('name', '=', command.name)
+            .executeTakeFirst();
+          if (duplicate) {
+            // Proxmox refuses a duplicate snapshot name on one VM, so the database refuses it too
+            // rather than discovering the conflict after a provider call has already been made.
+            throw new DomainError(
+              'VALIDATION_FAILED',
+              'A snapshot with this name already exists on the instance.',
+            );
+          }
+
+          const now = new Date();
+          const occurredAt = now.toISOString();
+          const operationId = randomUUID();
+          const snapshotId = randomUUID();
+          const accepted: AcceptedMutation = {
+            operationId,
+            targetId: snapshotId,
+            acceptedAt: occurredAt,
+            statusUrl: `/v1/projects/${command.projectId}/operations/${operationId}`,
+            replayed: false,
+          };
+
+          await tx
+            .insertInto('control.snapshots')
+            .values({
+              id: snapshotId,
+              project_id: command.projectId,
+              instance_id: instance.id,
+              name: command.name,
+              description: command.description ?? null,
+              state: 'creating',
+              // The provider-side name is the caller's name; recorded now so a later rollback or
+              // delete has a reference even if the create workflow never finishes.
+              provider_snapshot_name: command.name,
+              created_at: now,
+              updated_at: now,
+            })
+            .executeTakeFirstOrThrow();
+
+          const event: SnapshotCreateRequestedV1 = {
+            eventId: randomUUID(),
+            schemaName: 'snapshot.create.requested',
+            schemaVersion: 1,
+            aggregateType: 'instance',
+            aggregateId: instance.id,
+            projectId: command.projectId,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: operationId,
+            occurredAt,
+            traceContext: {
+              traceparent: command.traceparent,
+              ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+            },
+            partitionKey: instance.id,
+            data: {
+              snapshotId,
+              name: command.name,
+              ...(command.description ? { description: command.description } : {}),
+              providerProfileId: instance.providerProfileId,
+              createOperationId: instance.createOperationId ?? '',
+            },
+          };
+          await this.writeSnapshotOperation(
+            tx,
+            command,
+            CREATE_SNAPSHOT_ACTION,
+            operationId,
+            snapshotId,
+            instance.id,
+            accepted,
+            event,
+            requestHash,
+            now,
+          );
+          return accepted;
+        }),
+    );
+  }
+
+  /**
+   * Commits a rollback or delete of an existing snapshot.
+   *
+   * Both are destructive and both take the instance lock, so neither can run while another
+   * operation is in flight on the same VM.
+   *
+   * @see ControlPlaneStore.acceptSnapshotAction for the full contract and error codes.
+   */
+  public async acceptSnapshotAction(
+    action: 'rollback_snapshot' | 'delete_snapshot',
+    command: SnapshotActionCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.transaction.accept_snapshot_action',
+      { 'command.type': action },
+      () =>
+        this.db.transaction().execute(async (tx) => {
+          await this.lockIdempotencyScope(tx, command, action);
+          const replayed = await this.findReplayedResponse(tx, command, action, requestHash);
+          if (replayed) return replayed;
+
+          const instance = await lockInstanceForMutation(tx, command.projectId, command.instanceId);
+          const snapshot = await tx
+            .selectFrom('control.snapshots')
+            .selectAll()
+            .where('id', '=', command.snapshotId)
+            .forUpdate()
+            .executeTakeFirst();
+          if (!snapshot) {
+            throw new DomainError('SNAPSHOT_NOT_FOUND', 'The requested snapshot does not exist.');
+          }
+          if (snapshot.instance_id !== instance.id) {
+            // Reported as a conflict rather than as missing: the snapshot exists, just not on the
+            // instance the caller named, and telling them it is missing would leave them retrying
+            // a request that can never succeed.
+            throw new DomainError(
+              'SNAPSHOT_OWNERSHIP_MISMATCH',
+              'The snapshot does not belong to the requested instance.',
+            );
+          }
+          if (snapshot.state !== 'available') {
+            throw new DomainError(
+              'INSTANCE_BUSY',
+              'The snapshot is not in a state that accepts this operation.',
+            );
+          }
+
+          const now = new Date();
+          const occurredAt = now.toISOString();
+          const operationId = randomUUID();
+          const accepted: AcceptedMutation = {
+            operationId,
+            targetId: snapshot.id,
+            acceptedAt: occurredAt,
+            statusUrl: `/v1/projects/${command.projectId}/operations/${operationId}`,
+            replayed: false,
+          };
+
+          await tx
+            .updateTable('control.snapshots')
+            .set({
+              state: action === 'rollback_snapshot' ? 'rolling_back' : 'deleting',
+              updated_at: now,
+            })
+            .where('id', '=', snapshot.id)
+            .executeTakeFirstOrThrow();
+
+          const event: SnapshotRollbackRequestedV1 | SnapshotDeleteRequestedV1 = {
+            eventId: randomUUID(),
+            schemaName:
+              action === 'rollback_snapshot'
+                ? 'snapshot.rollback.requested'
+                : 'snapshot.delete.requested',
+            schemaVersion: 1,
+            aggregateType: 'instance',
+            aggregateId: instance.id,
+            projectId: command.projectId,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: operationId,
+            occurredAt,
+            traceContext: {
+              traceparent: command.traceparent,
+              ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+            },
+            partitionKey: instance.id,
+            data: {
+              snapshotId: snapshot.id,
+              providerSnapshotReference: snapshot.provider_snapshot_name ?? snapshot.name,
+              providerProfileId: instance.providerProfileId,
+              createOperationId: instance.createOperationId ?? '',
+            },
+          } as SnapshotRollbackRequestedV1;
+
+          await this.writeSnapshotOperation(
+            tx,
+            command,
+            action,
+            operationId,
+            snapshot.id,
+            instance.id,
+            accepted,
+            event,
+            requestHash,
+            now,
+          );
+          return accepted;
+        }),
+    );
+  }
+
+  /** Lists an instance's snapshots from the read projection. */
+  public async listSnapshots(
+    projectId: string,
+    instanceId: string,
+    page: PageRequest,
+  ): Promise<Page<SnapshotView>> {
+    const rows = await this.db
+      .selectFrom('projection.snapshots')
+      .select(['document', 'updated_at', 'snapshot_id'])
+      .where('project_id', '=', projectId)
+      .where('instance_id', '=', instanceId)
+      .$if(Boolean(page.cursor), (query) =>
+        query.where(seekDescending(page.cursor, 'updated_at', 'snapshot_id', 'uuid')),
+      )
+      .orderBy('updated_at', 'desc')
+      .orderBy('snapshot_id', 'desc')
+      .limit(page.limit + 1)
+      .execute();
+    const trimmed = paginate(rows, page.limit, (row) => ({
+      sortKey: toIsoTimestamp(row.updated_at),
+      id: row.snapshot_id,
+    }));
+    return {
+      items: trimmed.items.map((row) => parseJsonColumn<SnapshotView>(row.document)),
+      page: { limit: page.limit, nextCursor: trimmed.nextCursor },
+    };
+  }
+
+  /** Refuses a snapshot that would exceed the project's snapshot quota. */
+  private async assertSnapshotHeadroom(tx: Tx, projectId: string): Promise<void> {
+    const quota = await tx
+      .selectFrom('control.quotas')
+      .select('snapshots')
+      .where('project_id', '=', projectId)
+      .executeTakeFirst();
+    if (!quota) throw new DomainError('PROJECT_NOT_FOUND', 'The project does not exist.');
+    const used = await tx
+      .selectFrom('control.snapshots')
+      .select((builder) => builder.fn.countAll<number>().as('count'))
+      .where('project_id', '=', projectId)
+      .where('state', 'in', ['creating', 'available', 'rolling_back', 'deleting'])
+      .executeTakeFirstOrThrow();
+    if (Number(used.count) + 1 > quota.snapshots) {
+      throw new DomainError('QUOTA_EXCEEDED', 'The snapshot request exceeds project quota.');
+    }
+  }
+
+  /**
+   * Writes the operation, projections, idempotency record, outbox command, and audit fact.
+   *
+   * Shared by all three snapshot actions, which differ only in the event they publish.
+   */
+  private async writeSnapshotOperation(
+    tx: Tx,
+    command: MutationIdentity & { readonly correlationId: string; readonly traceparent: string },
+    action: string,
+    operationId: string,
+    snapshotId: string,
+    instanceId: string,
+    accepted: AcceptedMutation,
+    event: EventEnvelope,
+    requestHash: string,
+    now: Date,
+  ): Promise<void> {
+    const occurredAt = now.toISOString();
+    const document: OperationView = {
+      id: operationId,
+      projectId: command.projectId,
+      action,
+      targetType: 'snapshot',
+      targetId: snapshotId,
+      state: 'accepted',
+      stage: 'accepted',
+      progressPercent: STAGE_PROGRESS_PERCENT.accepted,
+      acceptedAt: occurredAt,
+      updatedAt: occurredAt,
+      manualReviewRequired: false,
+    };
+
+    await tx
+      .insertInto('control.operations')
+      .values({
+        id: operationId,
+        project_id: command.projectId,
+        action,
+        target_type: 'snapshot',
+        target_id: snapshotId,
+        state: 'accepted',
+        stage: 'accepted',
+        progress_percent: STAGE_PROGRESS_PERCENT.accepted,
+        accepted_at: now,
+        updated_at: now,
+        manual_review_required: false,
+      })
+      .executeTakeFirstOrThrow();
+    // The instance is busy for the duration, even though the operation targets a snapshot: the
+    // provider mutation acts on the VM.
+    await tx
+      .updateTable('control.instances')
+      .set({ active_operation_id: operationId, updated_at: now })
+      .where('id', '=', instanceId)
+      .executeTakeFirstOrThrow();
+    await tx
+      .insertInto('projection.operations')
+      .values({
+        operation_id: operationId,
+        project_id: command.projectId,
+        target_id: snapshotId,
+        document,
+        updated_at: now,
+        correlation_id: command.correlationId,
+        trace_id: traceIdOf(command.traceparent),
+        checkpoint: 'accepted',
+      })
+      .execute();
+    await this.markInstanceBusyInProjection(tx, instanceId, operationId, now);
+    await this.writeSnapshotProjection(tx, snapshotId, command.projectId, instanceId, now);
+    await tx
+      .insertInto('control.idempotency_records')
+      .values({
+        actor_id: command.actor.subject,
+        project_id: command.projectId,
+        operation_type: action,
+        idempotency_key: command.idempotencyKey,
+        target_id: snapshotId,
+        request_hash: requestHash,
+        operation_id: operationId,
+        response: accepted,
+        created_at: now,
+        expires_at: new Date(now.getTime() + IDEMPOTENCY_RECORD_TTL_MS),
+      })
+      .executeTakeFirstOrThrow();
+    await this.writeControlOutbox(tx, event, 'provisioning.commands.v1', now);
+    await this.writeControlAudit(tx, {
+      eventId: randomUUID(),
+      projectId: command.projectId,
+      operationId,
+      correlationId: command.correlationId,
+      causationId: event.eventId,
+      occurredAt: now,
+      traceContext: event.traceContext,
+      actorId: command.actor.subject,
+      actorRole: 'tenant_developer',
+      action,
+      targetType: 'snapshot',
+      targetId: snapshotId,
+      outcome: 'accepted',
+    });
+  }
+
+  /** Mirrors the authoritative snapshot row into the read projection. */
+  private async writeSnapshotProjection(
+    tx: Tx,
+    snapshotId: string,
+    projectId: string,
+    instanceId: string,
+    now: Date,
+  ): Promise<void> {
+    const row = await tx
+      .selectFrom('control.snapshots')
+      .selectAll()
+      .where('id', '=', snapshotId)
+      .executeTakeFirstOrThrow();
+    const document: SnapshotView = {
+      id: row.id,
+      instanceId: row.instance_id,
+      name: row.name,
+      description: row.description,
+      state: row.state as SnapshotView['state'],
+      createdAt: toIsoTimestamp(row.created_at),
+      updatedAt: toIsoTimestamp(row.updated_at),
+    };
+    await tx
+      .insertInto('projection.snapshots')
+      .values({
+        snapshot_id: snapshotId,
+        project_id: projectId,
+        instance_id: instanceId,
+        document,
+        updated_at: now,
+      })
+      .onConflict((conflict) =>
+        conflict.column('snapshot_id').doUpdateSet({ document, updated_at: now }),
+      )
+      .execute();
+  }
+
+  /**
+   * Commits a soft deletion as durable intent, or replays a previous identical one.
+   *
+   * The IPv4 lease moves at acceptance rather than on completion. WHY: the point of retention is
+   * that the tenant loses access immediately, and an address still marked `active` could be
+   * handed to a new instance while the old VM is still answering on it. The policy decides
+   * whether the address is quarantined until purge or returned to the pool now.
+   *
+   * @see ControlPlaneStore.acceptRetention for the full contract and error codes.
+   */
+  public async acceptRetention(
+    command: RetainInstanceCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.transaction.accept_retention',
+      { 'command.type': RETAIN_INSTANCE_ACTION },
+      () =>
+        this.db.transaction().execute(async (tx) => {
+          await this.lockIdempotencyScope(tx, command, RETAIN_INSTANCE_ACTION);
+          const replayed = await this.findReplayedResponse(
+            tx,
+            command,
+            RETAIN_INSTANCE_ACTION,
+            requestHash,
+          );
+          if (replayed) return replayed;
+
+          const instance = await lockInstanceForMutation(tx, command.projectId, command.instanceId);
+          const policy = await tx
+            .selectFrom('control.retention_policy')
+            .selectAll()
+            .executeTakeFirstOrThrow();
+
+          const now = new Date();
+          const occurredAt = now.toISOString();
+          const operationId = randomUUID();
+          const retentionDeadline = new Date(
+            now.getTime() + policy.retention_hours * 60 * 60 * 1000,
+          );
+          const accepted: AcceptedMutation = {
+            operationId,
+            targetId: instance.id,
+            acceptedAt: occurredAt,
+            statusUrl: `/v1/projects/${command.projectId}/operations/${operationId}`,
+            replayed: false,
+          };
+
+          const event: InstanceRetentionRequestedV1 = {
+            eventId: randomUUID(),
+            schemaName: 'instance.retention.requested',
+            schemaVersion: 1,
+            aggregateType: 'instance',
+            aggregateId: instance.id,
+            projectId: command.projectId,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: operationId,
+            occurredAt,
+            traceContext: {
+              traceparent: command.traceparent,
+              ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+            },
+            partitionKey: instance.id,
+            data: {
+              retentionDeadline: retentionDeadline.toISOString(),
+              leaseReleaseMode:
+                policy.lease_release_mode as InstanceRetentionRequestedV1['data']['leaseReleaseMode'],
+              providerProfileId: instance.providerProfileId,
+              createOperationId: instance.createOperationId ?? '',
+            },
+          };
+
+          await tx
+            .insertInto('control.operations')
+            .values({
+              id: operationId,
+              project_id: command.projectId,
+              action: RETAIN_INSTANCE_ACTION,
+              target_type: 'instance',
+              target_id: instance.id,
+              state: 'accepted',
+              stage: 'accepted',
+              progress_percent: STAGE_PROGRESS_PERCENT.accepted,
+              accepted_at: now,
+              updated_at: now,
+              manual_review_required: false,
+            })
+            .executeTakeFirstOrThrow();
+          await tx
+            .updateTable('control.instances')
+            .set({
+              active_operation_id: operationId,
+              // `deleting` for the duration; the workflow's terminal event moves it to `retained`.
+              lifecycle_state: 'deleting',
+              retention_deadline: retentionDeadline,
+              // Not purgeable until the deadline passes; capability 8 enforces that.
+              purge_eligible: false,
+              updated_at: now,
+            })
+            .where('id', '=', instance.id)
+            .executeTakeFirstOrThrow();
+
+          await tx
+            .updateTable('control.ipv4_leases')
+            .set({
+              state: policy.lease_release_mode === 'release_on_retain' ? 'released' : 'quarantined',
+              updated_at: now,
+            })
+            .where('instance_id', '=', instance.id)
+            .where('state', '=', 'active')
+            .execute();
+
+          await tx
+            .insertInto('projection.operations')
+            .values({
+              operation_id: operationId,
+              project_id: command.projectId,
+              target_id: instance.id,
+              document: {
+                id: operationId,
+                projectId: command.projectId,
+                action: RETAIN_INSTANCE_ACTION,
+                targetType: 'instance',
+                targetId: instance.id,
+                state: 'accepted',
+                stage: 'accepted',
+                progressPercent: STAGE_PROGRESS_PERCENT.accepted,
+                acceptedAt: occurredAt,
+                updatedAt: occurredAt,
+                manualReviewRequired: false,
+              } satisfies OperationView,
+              updated_at: now,
+              correlation_id: command.correlationId,
+              trace_id: traceIdOf(command.traceparent),
+              checkpoint: 'accepted',
+            })
+            .execute();
+          await this.markInstanceBusyInProjection(tx, instance.id, operationId, now);
+          await tx
+            .insertInto('control.idempotency_records')
+            .values({
+              actor_id: command.actor.subject,
+              project_id: command.projectId,
+              operation_type: RETAIN_INSTANCE_ACTION,
+              idempotency_key: command.idempotencyKey,
+              target_id: instance.id,
+              request_hash: requestHash,
+              operation_id: operationId,
+              response: accepted,
+              created_at: now,
+              expires_at: new Date(now.getTime() + IDEMPOTENCY_RECORD_TTL_MS),
+            })
+            .executeTakeFirstOrThrow();
+          await this.writeControlOutbox(tx, event, 'provisioning.commands.v1', now);
+          await this.writeControlAudit(tx, {
+            eventId: randomUUID(),
+            projectId: command.projectId,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: event.eventId,
+            occurredAt: now,
+            traceContext: event.traceContext,
+            actorId: command.actor.subject,
+            actorRole: 'tenant_developer',
+            action: RETAIN_INSTANCE_ACTION,
+            targetType: 'instance',
+            targetId: instance.id,
+            outcome: 'accepted',
+          });
+          return accepted;
+        }),
+    );
+  }
+
+  /**
+   * Commits an administrative purge as durable intent.
+   *
+   * Three guards, all before any command is published, and each refusing a different mistake:
+   *
+   * 1. The confirmation must repeat the instance id. An administrator pasting the wrong
+   *    identifier is the most likely way this operation destroys the wrong machine.
+   * 2. The instance must be `retained`. Purging straight from `active` would let a single
+   *    request destroy a VM a tenant is still using.
+   * 3. The retention deadline must have passed. Retention exists so someone can change their
+   *    mind; purging before it expires removes that window.
+   *
+   * The live provider ownership check that SAFE-006 also requires cannot happen here — it needs a
+   * provider call — so the workflow performs it immediately before destroying anything.
+   *
+   * @see ControlPlaneStore.acceptPurge for the full contract and error codes.
+   */
+  public async acceptPurge(
+    command: PurgeInstanceCommand,
+    requestHash: string,
+  ): Promise<AcceptedMutation> {
+    return this.telemetry.trace(
+      'controlplane.transaction.accept_purge',
+      { 'command.type': PURGE_INSTANCE_ACTION },
+      () =>
+        this.db.transaction().execute(async (tx) => {
+          if (command.confirmInstanceId !== command.instanceId) {
+            throw new DomainError(
+              'VALIDATION_FAILED',
+              'The confirmation identifier does not match the instance being purged.',
+            );
+          }
+          await this.lockIdempotencyScope(tx, adminScope(command), PURGE_INSTANCE_ACTION);
+          const replayed = await this.findReplayedResponse(
+            tx,
+            adminScope(command),
+            PURGE_INSTANCE_ACTION,
+            requestHash,
+          );
+          if (replayed) return replayed;
+
+          const instance = await tx
+            .selectFrom('control.instances')
+            .selectAll()
+            .where('id', '=', command.instanceId)
+            .forUpdate()
+            .executeTakeFirst();
+          if (!instance) {
+            throw new DomainError('INSTANCE_NOT_FOUND', 'The requested instance does not exist.');
+          }
+          if (instance.active_operation_id !== null) {
+            throw new DomainError(
+              'INSTANCE_BUSY',
+              'Another operation is already in progress for this instance.',
+            );
+          }
+          if (instance.lifecycle_state !== 'retained') {
+            throw new DomainError('INSTANCE_BUSY', 'Only a retained instance can be purged.');
+          }
+          const now = new Date();
+          const deadline = instance.retention_deadline
+            ? new Date(instance.retention_deadline)
+            : null;
+          if (!deadline || deadline > now) {
+            throw new DomainError('INSTANCE_BUSY', 'The retention period has not expired.');
+          }
+
+          const occurredAt = now.toISOString();
+          const operationId = randomUUID();
+          const purgeAuthorizationId = randomUUID();
+          const accepted: AcceptedMutation = {
+            operationId,
+            targetId: instance.id,
+            acceptedAt: occurredAt,
+            statusUrl: `/v1/admin/operations/${operationId}`,
+            replayed: false,
+          };
+
+          const event: InstancePurgeRequestedV1 = {
+            eventId: randomUUID(),
+            schemaName: 'instance.purge.requested',
+            schemaVersion: 1,
+            aggregateType: 'instance',
+            aggregateId: instance.id,
+            projectId: instance.project_id,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: operationId,
+            occurredAt,
+            traceContext: {
+              traceparent: command.traceparent,
+              ...(command.tracestate ? { tracestate: command.tracestate } : {}),
+            },
+            partitionKey: instance.id,
+            data: {
+              purgeAuthorizationId,
+              retentionDeadline: deadline.toISOString(),
+              // The justification itself stays in the audit trail; the command carries only a
+              // reference, so free text an administrator typed never crosses the broker.
+              reasonReference: purgeAuthorizationId,
+              providerProfileId: instance.provider_profile_id,
+              createOperationId: instance.create_operation_id ?? '',
+            },
+          };
+
+          await tx
+            .insertInto('control.operations')
+            .values({
+              id: operationId,
+              project_id: instance.project_id,
+              action: PURGE_INSTANCE_ACTION,
+              target_type: 'instance',
+              target_id: instance.id,
+              state: 'accepted',
+              stage: 'accepted',
+              progress_percent: STAGE_PROGRESS_PERCENT.accepted,
+              accepted_at: now,
+              updated_at: now,
+              manual_review_required: false,
+            })
+            .executeTakeFirstOrThrow();
+          await tx
+            .updateTable('control.instances')
+            .set({
+              active_operation_id: operationId,
+              lifecycle_state: 'purge_pending',
+              purge_eligible: true,
+              updated_at: now,
+            })
+            .where('id', '=', instance.id)
+            .executeTakeFirstOrThrow();
+          await tx
+            .insertInto('projection.operations')
+            .values({
+              operation_id: operationId,
+              project_id: instance.project_id,
+              target_id: instance.id,
+              document: {
+                id: operationId,
+                projectId: instance.project_id,
+                action: PURGE_INSTANCE_ACTION,
+                targetType: 'instance',
+                targetId: instance.id,
+                state: 'accepted',
+                stage: 'accepted',
+                progressPercent: STAGE_PROGRESS_PERCENT.accepted,
+                acceptedAt: occurredAt,
+                updatedAt: occurredAt,
+                manualReviewRequired: false,
+              } satisfies OperationView,
+              updated_at: now,
+              correlation_id: command.correlationId,
+              trace_id: traceIdOf(command.traceparent),
+              checkpoint: 'accepted',
+            })
+            .execute();
+          await this.markInstanceBusyInProjection(tx, instance.id, operationId, now);
+          await tx
+            .insertInto('control.idempotency_records')
+            .values({
+              actor_id: command.actor.subject,
+              // The same administrative scope the lookup uses. Writing the instance's project here
+              // instead meant a repeated key never matched, and the second request was refused as
+              // busy rather than replayed — which for a destructive operation is the worst place
+              // to be inconsistent. `project_id` carries no foreign key, so the sentinel is safe.
+              project_id: adminScope(command).projectId,
+              operation_type: PURGE_INSTANCE_ACTION,
+              idempotency_key: command.idempotencyKey,
+              target_id: instance.id,
+              request_hash: requestHash,
+              operation_id: operationId,
+              response: accepted,
+              created_at: now,
+              expires_at: new Date(now.getTime() + IDEMPOTENCY_RECORD_TTL_MS),
+            })
+            .executeTakeFirstOrThrow();
+          await this.writeControlOutbox(tx, event, 'provisioning.commands.v1', now);
+          await this.writeControlAudit(tx, {
+            eventId: randomUUID(),
+            projectId: instance.project_id,
+            operationId,
+            correlationId: command.correlationId,
+            causationId: event.eventId,
+            occurredAt: now,
+            traceContext: event.traceContext,
+            actorId: command.actor.subject,
+            actorRole: 'platform_administrator',
+            action: PURGE_INSTANCE_ACTION,
+            targetType: 'instance',
+            targetId: instance.id,
+            outcome: 'accepted',
+            reasonReference: purgeAuthorizationId,
+          });
+          return accepted;
+        }),
+    );
+  }
+
+  /**
+   * Marks an instance for reconciliation on the next sweep.
+   *
+   * Clearing `last_reconciled_at` is the whole mechanism: the sweep claims by staleness, so a null
+   * sorts first. No provider call happens here, deliberately — see the port contract.
+   */
+  public async requestReconciliation(instanceId: string): Promise<boolean> {
+    const updated = await this.db
+      .updateTable('control.instances')
+      .set({ last_reconciled_at: null })
+      .where('id', '=', instanceId)
+      .returning('id')
+      .executeTakeFirst();
+    return Boolean(updated);
+  }
+
   /** Lists the Kafka-projected dead-letter view without exposing original payloads. */
-  public async listDeadLetters(limit: number): Promise<Page<DeadLetterView>> {
+  public async listDeadLetters(page: PageRequest): Promise<Page<DeadLetterView>> {
     const rows = await this.db
       .selectFrom('projection.dead_letters')
-      .select('document')
+      .select(['document', 'updated_at', 'original_event_id'])
+      .$if(Boolean(page.cursor), (query) =>
+        query.where(seekDescending(page.cursor, 'updated_at', 'original_event_id', 'uuid')),
+      )
       .orderBy('updated_at', 'desc')
-      .limit(limit)
+      .orderBy('original_event_id', 'desc')
+      .limit(page.limit + 1)
       .execute();
+    const trimmed = paginate(rows, page.limit, (row) => ({
+      sortKey: toIsoTimestamp(row.updated_at),
+      id: row.original_event_id,
+    }));
     return {
-      items: rows.map((row) => parseJsonColumn<DeadLetterView>(row.document)),
-      page: { limit, nextCursor: null },
+      items: trimmed.items.map((row) => parseJsonColumn<DeadLetterView>(row.document)),
+      page: { limit: page.limit, nextCursor: trimmed.nextCursor },
     };
   }
 
@@ -344,13 +1711,14 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
    *
    * `pg_advisory_xact_lock` releases at transaction end, so there is no unlock to forget.
    */
-  private async lockIdempotencyScope(tx: Tx, command: CreateInstanceCommand): Promise<void> {
-    const scope = [
-      command.actor.subject,
-      command.projectId,
-      CREATE_INSTANCE_ACTION,
-      command.idempotencyKey,
-    ].join(':');
+  private async lockIdempotencyScope(
+    tx: Tx,
+    command: MutationIdentity,
+    action: string,
+  ): Promise<void> {
+    const scope = [command.actor.subject, command.projectId, action, command.idempotencyKey].join(
+      ':',
+    );
     await sql`SELECT pg_advisory_xact_lock(hashtextextended(${scope}, 0))`.execute(tx);
   }
 
@@ -363,7 +1731,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
    */
   private async findReplayedResponse(
     tx: Tx,
-    command: CreateInstanceCommand,
+    command: MutationIdentity,
+    action: string,
     requestHash: string,
   ): Promise<AcceptedMutation | null> {
     const previous = await tx
@@ -371,7 +1740,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       .select(['request_hash', 'response'])
       .where('actor_id', '=', command.actor.subject)
       .where('project_id', '=', command.projectId)
-      .where('operation_type', '=', CREATE_INSTANCE_ACTION)
+      .where('operation_type', '=', action)
       .where('idempotency_key', '=', command.idempotencyKey)
       .executeTakeFirst();
     if (!previous) return null;
@@ -731,7 +2100,12 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       .execute();
     await tx
       .updateTable('control.instances')
-      .set({ active_operation_id: operationId })
+      .set({
+        active_operation_id: operationId,
+        // Recorded here because this is the operation whose id goes into the provider ownership
+        // markers; every later capability has to present it rather than its own.
+        create_operation_id: operationId,
+      })
       .where('id', '=', instanceId)
       .execute();
     await tx
@@ -804,6 +2178,12 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         target_id: instanceId,
         document: records.operation,
         updated_at: now,
+        // WHY seed these at acceptance rather than waiting for the first workflow event: an
+        // administrator inspecting a stuck operation is most likely to look before any progress
+        // event exists, which is exactly when the correlation and trace would otherwise be null.
+        correlation_id: command.correlationId,
+        trace_id: traceIdOf(command.traceparent),
+        checkpoint: records.operation.stage,
       })
       .execute();
   }
@@ -858,6 +2238,14 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       .where('project_id', '=', projectId)
       .where('state', 'in', ['active', 'quarantined'])
       .executeTakeFirstOrThrow();
+    const snapshots = await this.db
+      .selectFrom('control.snapshots')
+      .select((builder) => builder.fn.countAll<number>().as('count'))
+      .where('project_id', '=', projectId)
+      // A snapshot being deleted still occupies provider storage until the delete completes, so it
+      // counts. One that failed does not exist and does not.
+      .where('state', 'in', ['creating', 'available', 'rolling_back', 'deleting'])
+      .executeTakeFirstOrThrow();
 
     return {
       projectId,
@@ -875,9 +2263,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         memoryMiB: Number(usage.memory_mib ?? 0),
         diskGiB: Number(usage.disk_gib ?? 0),
         ipv4Addresses: Number(leases.count),
-        // Snapshots are out of scope for Phase 3; the field is published as zero rather than
-        // omitted so the response always matches the contract.
-        snapshots: 0,
+        snapshots: Number(snapshots.count),
       },
       measuredAt: new Date().toISOString(),
     };
@@ -891,16 +2277,18 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
    */
 
   /** Lists enabled catalog images. */
-  public async listImages(_projectId: string, limit: number): Promise<Page<ImageView>> {
+  public async listImages(_projectId: string, page: PageRequest): Promise<Page<ImageView>> {
     const rows = await this.db
       .selectFrom('control.images')
       .selectAll()
       .where('enabled', '=', true)
+      .$if(Boolean(page.cursor), (query) => query.where(seekAscending(page.cursor, 'id')))
       .orderBy('id')
-      .limit(limit)
+      .limit(page.limit + 1)
       .execute();
+    const trimmed = paginate(rows, page.limit, (row) => ({ sortKey: row.id, id: row.id }));
     return {
-      items: rows.map((row) => ({
+      items: trimmed.items.map((row) => ({
         id: row.id,
         name: row.name,
         providerProfileId: row.provider_profile_id,
@@ -909,21 +2297,23 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
       })),
-      page: { limit, nextCursor: null },
+      page: { limit: page.limit, nextCursor: trimmed.nextCursor },
     };
   }
 
   /** Lists enabled catalog flavors. */
-  public async listFlavors(_projectId: string, limit: number): Promise<Page<FlavorView>> {
+  public async listFlavors(_projectId: string, page: PageRequest): Promise<Page<FlavorView>> {
     const rows = await this.db
       .selectFrom('control.flavors')
       .selectAll()
       .where('enabled', '=', true)
+      .$if(Boolean(page.cursor), (query) => query.where(seekAscending(page.cursor, 'id')))
       .orderBy('id')
-      .limit(limit)
+      .limit(page.limit + 1)
       .execute();
+    const trimmed = paginate(rows, page.limit, (row) => ({ sortKey: row.id, id: row.id }));
     return {
-      items: rows.map((row) => ({
+      items: trimmed.items.map((row) => ({
         id: row.id,
         name: row.name,
         cpuCount: row.cpu_count,
@@ -933,21 +2323,23 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
       })),
-      page: { limit, nextCursor: null },
+      page: { limit: page.limit, nextCursor: trimmed.nextCursor },
     };
   }
 
   /** Lists enabled catalog networks. */
-  public async listNetworks(_projectId: string, limit: number): Promise<Page<NetworkView>> {
+  public async listNetworks(_projectId: string, page: PageRequest): Promise<Page<NetworkView>> {
     const rows = await this.db
       .selectFrom('control.networks')
       .selectAll()
       .where('enabled', '=', true)
+      .$if(Boolean(page.cursor), (query) => query.where(seekAscending(page.cursor, 'id')))
       .orderBy('id')
-      .limit(limit)
+      .limit(page.limit + 1)
       .execute();
+    const trimmed = paginate(rows, page.limit, (row) => ({ sortKey: row.id, id: row.id }));
     return {
-      items: rows.map((row) => ({
+      items: trimmed.items.map((row) => ({
         id: row.id,
         name: row.name,
         ipv4Cidr: row.ipv4_cidr,
@@ -958,7 +2350,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         createdAt: toIsoTimestamp(row.created_at),
         updatedAt: toIsoTimestamp(row.updated_at),
       })),
-      page: { limit, nextCursor: null },
+      page: { limit: page.limit, nextCursor: trimmed.nextCursor },
     };
   }
 
@@ -980,17 +2372,25 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   /** Lists instances from the read projection, most recently updated first. */
-  public async listInstances(projectId: string, limit: number): Promise<Page<InstanceView>> {
+  public async listInstances(projectId: string, page: PageRequest): Promise<Page<InstanceView>> {
     const rows = await this.db
       .selectFrom('projection.instances')
-      .select('document')
+      .select(['document', 'updated_at', 'instance_id'])
       .where('project_id', '=', projectId)
+      .$if(Boolean(page.cursor), (query) =>
+        query.where(seekDescending(page.cursor, 'updated_at', 'instance_id', 'uuid')),
+      )
       .orderBy('updated_at', 'desc')
-      .limit(limit)
+      .orderBy('instance_id', 'desc')
+      .limit(page.limit + 1)
       .execute();
+    const trimmed = paginate(rows, page.limit, (row) => ({
+      sortKey: toIsoTimestamp(row.updated_at),
+      id: row.instance_id,
+    }));
     return {
-      items: rows.map((row) => parseJsonColumn<InstanceView>(row.document)),
-      page: { limit, nextCursor: null },
+      items: trimmed.items.map((row) => parseJsonColumn<InstanceView>(row.document)),
+      page: { limit: page.limit, nextCursor: trimmed.nextCursor },
     };
   }
 
@@ -1006,17 +2406,116 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   /** Lists operations from the read projection, most recently updated first. */
-  public async listOperations(projectId: string, limit: number): Promise<Page<OperationView>> {
+  public async listOperations(projectId: string, page: PageRequest): Promise<Page<OperationView>> {
     const rows = await this.db
       .selectFrom('projection.operations')
-      .select('document')
+      .select(['document', 'updated_at', 'operation_id'])
       .where('project_id', '=', projectId)
+      .$if(Boolean(page.cursor), (query) =>
+        query.where(seekDescending(page.cursor, 'updated_at', 'operation_id', 'uuid')),
+      )
       .orderBy('updated_at', 'desc')
-      .limit(limit)
+      .orderBy('operation_id', 'desc')
+      .limit(page.limit + 1)
       .execute();
+    const trimmed = paginate(rows, page.limit, (row) => ({
+      sortKey: toIsoTimestamp(row.updated_at),
+      id: row.operation_id,
+    }));
     return {
-      items: rows.map((row) => parseJsonColumn<OperationView>(row.document)),
-      page: { limit, nextCursor: null },
+      items: trimmed.items.map((row) => parseJsonColumn<OperationView>(row.document)),
+      page: { limit: page.limit, nextCursor: trimmed.nextCursor },
+    };
+  }
+
+  /**
+   * Reads one operation with recovery metadata, across every project.
+   *
+   * WHY no project filter: this route exists because the tenant operation route requires
+   * project membership, which the administrator who authorized a replay usually does not have.
+   * Re-imposing the filter here would recreate the hole it was added to close. Authorization is
+   * the administrator role check in `ControlPlaneApplication`, not a membership test.
+   */
+  public async getAdministrativeOperation(
+    operationId: string,
+  ): Promise<AdministrativeOperationView | null> {
+    const row = await this.db
+      .selectFrom('projection.operations')
+      .select([
+        'document',
+        'correlation_id',
+        'causation_id',
+        'trace_id',
+        'retry_count',
+        'checkpoint',
+        'dead_letter_event_id',
+        'provider_task_reference',
+      ])
+      .where('operation_id', '=', operationId)
+      .executeTakeFirst();
+    if (!row) return null;
+    const operation = parseJsonColumn<OperationView>(row.document);
+    return {
+      ...operation,
+      // Spread-conditional so an absent value is omitted rather than sent as `undefined`,
+      // which would serialise differently from the `null` the schema declares.
+      ...(row.correlation_id ? { correlationId: row.correlation_id } : {}),
+      causationId: row.causation_id,
+      traceId: row.trace_id,
+      retryCount: row.retry_count,
+      checkpoint: row.checkpoint ?? operation.stage,
+      deadLetterEventId: row.dead_letter_event_id,
+      providerTaskReference: row.provider_task_reference,
+    };
+  }
+
+  /**
+   * Lists attributed audit facts, most recent first.
+   *
+   * `reason` is deliberately absent. The free-text justification an administrator supplies with
+   * a replay is restricted and stays in `control.replay_requests`; publishing it on the audit
+   * list would widen its audience from the one administrator who can read that request to every
+   * administrator who can list audit events. The contract makes the field optional for exactly
+   * this reason.
+   */
+  public async listAuditEvents(
+    filter: AuditEventFilter,
+    page: PageRequest,
+  ): Promise<Page<AuditEventView>> {
+    const rows = await this.db
+      .selectFrom('audit.entries')
+      .selectAll()
+      .$if(Boolean(filter.projectId), (query) =>
+        query.where('project_id', '=', filter.projectId ?? ''),
+      )
+      .$if(Boolean(filter.operationId), (query) =>
+        query.where('operation_id', '=', filter.operationId ?? ''),
+      )
+      .$if(Boolean(page.cursor), (query) =>
+        query.where(seekDescending(page.cursor, 'occurred_at', 'id', 'uuid')),
+      )
+      .orderBy('occurred_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(page.limit + 1)
+      .execute();
+    const trimmed = paginate(rows, page.limit, (row) => ({
+      sortKey: toIsoTimestamp(row.occurred_at),
+      id: row.id,
+    }));
+    return {
+      items: trimmed.items.map((row) => ({
+        id: row.id,
+        actorId: row.actor_id,
+        actorRole: auditActorRole(row.actor_role),
+        projectId: row.project_id,
+        action: row.action,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        operationId: row.operation_id,
+        outcome: auditOutcome(row.outcome),
+        occurredAt: toIsoTimestamp(row.occurred_at),
+      })),
+      page: { limit: page.limit, nextCursor: trimmed.nextCursor },
     };
   }
 
@@ -1075,4 +2574,82 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       .executeTakeFirstOrThrow();
     await this.writeControlOutbox(tx, event, 'audit.events.v1', input.occurredAt);
   }
+}
+
+/**
+ * Builds the seek predicate for a page ordered by `(sortColumn DESC, idColumn DESC)`.
+ *
+ * WHY the row-value comparison rather than `sortColumn < x OR (sortColumn = x AND id < y)`: the
+ * two are logically identical, but only the row-value form is recognised by PostgreSQL as an
+ * index range condition. The disjunction degrades to a filter over the whole ordered set, which
+ * is precisely the cost keyset pagination exists to avoid.
+ *
+ * @param cursor Opaque token from the previous page; the caller guarantees it is present.
+ * @param sortColumn Leading order column, cast on the parameter side to match its type.
+ * @param idColumn Primary key breaking ties on `sortColumn`.
+ * @param idType PostgreSQL type of `idColumn`, needed so the parameter compares without a scan.
+ * @throws DomainError `VALIDATION_FAILED` when the cursor was not issued by this service.
+ */
+function seekDescending(
+  cursor: string | undefined,
+  sortColumn: string,
+  idColumn: string,
+  idType: 'uuid' | 'text',
+): RawBuilder<SqlBool> {
+  const position = decodePageCursor(cursor ?? '');
+  return sql<SqlBool>`(${sql.ref(sortColumn)}, ${sql.ref(idColumn)}) < (${position.sortKey}::timestamptz, ${sql.lit(position.id)}::${sql.raw(idType)})`;
+}
+
+/**
+ * Builds the seek predicate for a page ordered by a single ascending identifier.
+ *
+ * The catalog tables are ordered by their slug, which is already unique, so no tiebreaker
+ * column is needed and a plain comparison suffices.
+ *
+ * @throws DomainError `VALIDATION_FAILED` when the cursor was not issued by this service.
+ */
+function seekAscending(cursor: string | undefined, idColumn: string): RawBuilder<SqlBool> {
+  const position = decodePageCursor(cursor ?? '');
+  return sql<SqlBool>`${sql.ref(idColumn)} > ${position.id}`;
+}
+
+/**
+ * Narrows a stored actor role to the published enumeration.
+ *
+ * WHY not a bare cast: the column is free text, and a role written by an older or future
+ * deployment would otherwise be published as a value the client's generated type says is
+ * impossible. Falling back to `service` keeps the response schema-valid; the audit row itself
+ * is unchanged and still holds the original text for forensic reads.
+ */
+function auditActorRole(value: string): AuditEventView['actorRole'] {
+  const roles: readonly AuditEventView['actorRole'][] = [
+    'tenant_developer',
+    'platform_operator',
+    'platform_administrator',
+    'service',
+  ];
+  return roles.find((role) => role === value) ?? 'service';
+}
+
+/** Narrows a stored audit outcome to the published enumeration, defaulting to `rejected`. */
+function auditOutcome(value: string): AuditEventView['outcome'] {
+  const outcomes: readonly AuditEventView['outcome'][] = [
+    'accepted',
+    'succeeded',
+    'rejected',
+    'failed',
+  ];
+  return outcomes.find((outcome) => outcome === value) ?? 'rejected';
+}
+
+/**
+ * Extracts the 32-character trace ID from a W3C `traceparent`.
+ *
+ * Returns `null` for anything malformed. Acceptance must never fail because a caller sent an
+ * unusable trace header; the request itself is still valid intent.
+ */
+function traceIdOf(traceparent: string | undefined): string | null {
+  if (!traceparent) return null;
+  const match = /^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$/.exec(traceparent);
+  return match?.[1] ?? null;
 }

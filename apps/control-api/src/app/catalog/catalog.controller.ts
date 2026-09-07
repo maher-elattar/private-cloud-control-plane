@@ -54,8 +54,9 @@ export class CatalogController {
     @CurrentActor() actor: Actor,
     @Param('projectId', new ParseUUIDPipe()) projectId: string,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.application.listImages(actor, projectId, limit);
+    return this.application.listImages(actor, projectId, limit, cursor);
   }
 
   @Get('catalog/flavors')
@@ -63,8 +64,9 @@ export class CatalogController {
     @CurrentActor() actor: Actor,
     @Param('projectId', new ParseUUIDPipe()) projectId: string,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.application.listFlavors(actor, projectId, limit);
+    return this.application.listFlavors(actor, projectId, limit, cursor);
   }
 
   @Get('catalog/networks')
@@ -72,7 +74,8 @@ export class CatalogController {
     @CurrentActor() actor: Actor,
     @Param('projectId', new ParseUUIDPipe()) projectId: string,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.application.listNetworks(actor, projectId, limit);
+    return this.application.listNetworks(actor, projectId, limit, cursor);
   }
 }

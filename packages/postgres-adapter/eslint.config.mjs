@@ -10,5 +10,5 @@ export default [
       parserOptions: { projectService: true, project: null, tsconfigRootDir: import.meta.dirname },
     },
   },
-  { ignores: ['**/out-tsc'] },
+  { ignores: ['**/out-tsc', 'vite.config.ts', 'vitest.integration.config.ts'] },
 ];

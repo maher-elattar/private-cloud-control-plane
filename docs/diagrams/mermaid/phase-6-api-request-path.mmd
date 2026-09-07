@@ -1,0 +1,50 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"sequence":{"useMaxWidth":false,"diagramMarginX":28,"diagramMarginY":20,"actorMargin":42,"width":150,"height":58,"messageMargin":32,"noteMargin":12}}}%%
+sequenceDiagram
+  autonumber
+  actor Client as Postman
+  participant GW as Traefik Gateway
+  participant HR as HTTPRoute control-api
+  participant SVC as Service control-api<br/>(active) / -preview (green)
+  participant API as control-api pod
+  participant PG as PostgreSQL<br/>control + workflow schemas
+  participant DBZ as Debezium
+  participant K as Kafka<br/>provisioning.commands.v1
+  participant ORCH as orchestrator
+  participant PROV as proxmox-provider
+
+  Client->>GW: POST /v1/projects/{id}/instances<br/>Host: control-plane.test<br/>Idempotency-Key
+  GW->>HR: match rules
+  alt Header X-Canary: green
+    HR->>SVC: control-api-preview
+  else No canary header
+    HR->>SVC: control-api
+  end
+  SVC->>API: forward
+
+  API->>API: verify JWT, role, project membership
+  API->>PG: BEGIN
+  API->>PG: advisory lock on the idempotency scope
+  alt Key already used with the same payload
+    PG-->>API: stored response
+    API-->>Client: 202 replayed = true
+  else First use of this key
+    API->>PG: instance, operation, IPv4 lease,<br/>audit entry, outbox row
+    API->>PG: COMMIT
+    API-->>Client: 202 { operationId, targetId, statusUrl }
+  end
+
+  Note over PG,K: The command is committed before it is published.<br/>Nothing is sent that the database did not accept.
+
+  PG->>DBZ: logical replication of control.outbox
+  DBZ->>K: instance.create.requested
+  K->>ORCH: consume
+  ORCH->>PG: admit command, claim under lease + fencing token
+  ORCH->>PROV: gRPC provider calls, one stage per claim
+  PROV-->>ORCH: task results
+  ORCH->>PG: checkpoint each stage, then complete
+  PG->>DBZ: workflow.outbox
+  DBZ->>K: instance.mutation.completed
+  K->>API: projection consumer applies the read model
+
+  Client->>GW: GET .../operations/{operationId}
+  GW-->>Client: 200 { state: succeeded }

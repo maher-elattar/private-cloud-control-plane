@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto';
 import {
   FailureCategory,
   ObservedPowerState,
+  type InstanceCreateRequestedV1,
   type InstanceMutationCompletedV1,
   type InstanceMutationFailedV1,
   type WorkflowProgressedV1,
@@ -38,10 +39,11 @@ import { ProviderResultState, ProviderTaskState } from '@private-cloud/contracts
 import {
   ProviderTransportError,
   type CreateInstanceProviderPort,
+  type LifecycleProviderPort,
 } from '@private-cloud/provider-sdk';
-import type { ClaimedCreateWorkflow, WorkflowStore } from './ports.js';
+import type { ClaimedWorkflow, LifecycleCommand, WorkflowStore } from './ports.js';
 import { NOOP_APPLICATION_TELEMETRY, type ApplicationTelemetry } from './telemetry.js';
-import type { WorkflowStage } from './workflow-stage.js';
+import type { WorkflowAction, WorkflowStage } from './workflow-stage.js';
 
 /** Default lease length for one claim. Must sit inside the store's permitted 5-300 seconds. */
 const DEFAULT_LEASE_SECONDS = 30;
@@ -67,7 +69,20 @@ export interface WorkflowRecoveryOptions {
  * WHY this list exists: it decides whether a transport failure can be retried. See
  * {@link CreateInstanceWorkflow.handleProviderError}.
  */
-const MUTATION_STAGES: readonly WorkflowStage[] = ['submitting_create', 'configuring', 'starting'];
+/**
+ * Stages of the create capability whose failure could have applied a provider effect.
+ *
+ * Declared per capability rather than globally: which stages are mutations is the single most
+ * safety-critical fact about a workflow, because `handleProviderError` routes a failure in one of
+ * these to `manual_review` instead of retrying it. A capability that inherited the wrong set would
+ * retry a mutation that may already have been applied — the exact path to a duplicated destructive
+ * operation. Every capability must state its own, and test it.
+ */
+const CREATE_MUTATION_STAGES: readonly WorkflowStage[] = [
+  'submitting_create',
+  'configuring',
+  'starting',
+];
 
 /**
  * Translates a provider's failure category into the event contract's vocabulary.
@@ -109,7 +124,39 @@ function providerFailureCategory(
  *
  * The caller must claim again before the next step — see {@link CreateInstanceWorkflow.runOne}.
  */
-export class CreateInstanceWorkflow {
+/**
+ * The reusable half of a persisted lifecycle saga.
+ *
+ * PATTERN — Template method over a persisted saga. Everything a capability shares lives here:
+ * claiming under a lease, classifying a provider outcome, bounded retry with full jitter, governed
+ * dead-lettering, checkpointing, and the ownership and envelope construction that make a
+ * transition attributable. A capability supplies only its own stage table, its mutation stages,
+ * and the provider calls each stage makes.
+ *
+ * WHY a base class rather than a shared function library: `handleProviderError` has to know which
+ * stages of *this* capability are mutations, and that is the single most safety-critical fact a
+ * workflow carries. Making it an abstract member forces every capability to state it explicitly
+ * rather than inherit a default that might be wrong for it.
+ *
+ * @see docs/architecture/glossary.md#persisted-saga-workflow-state-machine
+ * @see docs/architecture/safety-invariants.md
+ */
+export abstract class LifecycleWorkflow<
+  TProvider extends LifecycleProviderPort = LifecycleProviderPort,
+  TCommand extends LifecycleCommand = LifecycleCommand,
+> {
+  /** The capability this workflow implements; the registry routes claims on it. */
+  public abstract readonly action: WorkflowAction;
+
+  /**
+   * Stages whose failure could have applied a provider effect.
+   *
+   * Declared per capability, never inherited. `handleProviderError` routes a failure in one of
+   * these to `manual_review` instead of retrying, so a capability that inherited another's set
+   * would retry a mutation that may already have been applied.
+   */
+  protected abstract readonly mutationStages: readonly WorkflowStage[];
+
   /**
    * @param store Leased, fenced workflow persistence.
    * @param provider The provider boundary. In practice a gRPC client to the provider service,
@@ -119,11 +166,11 @@ export class CreateInstanceWorkflow {
    * @param telemetry Application telemetry used for durable-stage spans and metrics.
    */
   public constructor(
-    private readonly store: WorkflowStore,
-    private readonly provider: CreateInstanceProviderPort,
-    private readonly workerId: string,
-    private readonly telemetry: ApplicationTelemetry = NOOP_APPLICATION_TELEMETRY,
-    private readonly recovery: WorkflowRecoveryOptions = {},
+    protected readonly store: WorkflowStore,
+    protected readonly provider: TProvider,
+    protected readonly workerId: string,
+    protected readonly telemetry: ApplicationTelemetry = NOOP_APPLICATION_TELEMETRY,
+    protected readonly recovery: WorkflowRecoveryOptions = {},
   ) {}
 
   /**
@@ -138,8 +185,21 @@ export class CreateInstanceWorkflow {
    *   work — or `false` when nothing was ready and the caller should back off.
    */
   public async runOne(leaseSeconds = DEFAULT_LEASE_SECONDS): Promise<boolean> {
-    const workflow = await this.store.claimNextCreate(this.workerId, leaseSeconds);
+    // Scoped to this capability's action. WHY not claim anything ready and check afterwards: the
+    // claim takes the lease and increments the fencing token, so a claim this executor cannot
+    // execute would strand the workflow until its lease expired. The registry rotates between
+    // executors, so an unscoped claim meant every capability fought over every workflow.
+    const workflow = await this.store.claimNext(this.workerId, leaseSeconds, this.action);
     if (!workflow) return false;
+    if (workflow.action !== this.action) {
+      // WHY throw rather than skip: the claim already incremented the fencing token and took the
+      // lease, so silently returning would strand the workflow until the lease expires. A worker
+      // reaching here means the registry routed a claim to the wrong capability, which is a
+      // wiring bug that must be loud.
+      throw new Error(
+        `Workflow ${workflow.command.operationId} has action ${workflow.action}, not ${this.action}.`,
+      );
+    }
     await this.telemetry.trace(
       'controlplane.workflow.stage',
       {
@@ -151,12 +211,14 @@ export class CreateInstanceWorkflow {
       },
       async () => {
         try {
-          await this.execute(workflow);
+          // Narrowed here, justified by the action check above: the registry guarantees only this
+          // capability's workflows reach this executor.
+          await this.execute(workflow as unknown as ClaimedWorkflow<TCommand>);
         } catch (error: unknown) {
           // Only transport failures are classified here. Anything else is a bug in this process
           // and is rethrown so the worker logs it, rather than being recorded as a provider fault.
           if (!(error instanceof ProviderTransportError)) throw error;
-          await this.handleProviderError(workflow, error);
+          await this.handleProviderError(workflow as unknown as ClaimedWorkflow<TCommand>, error);
         }
       },
       workflow.traceContext,
@@ -165,104 +227,12 @@ export class CreateInstanceWorkflow {
   }
 
   /**
-   * The transition table: dispatches on the persisted stage.
-   *
-   * Read alongside the stage table in `workflow-stage.ts`. Because `stage` is a union rather
-   * than a string, adding a stage without handling it here is a compile error.
-   */
-  private async execute(workflow: ClaimedCreateWorkflow): Promise<void> {
-    switch (workflow.stage) {
-      case 'accepted':
-        // No provider call — just move off the initial stage, so the very first checkpoint
-        // proves the workflow was picked up before anything external happens.
-        await this.progress(workflow, 'submitting_create');
-        return;
-      case 'submitting_create':
-        await this.submitCreate(workflow);
-        return;
-      case 'polling_create':
-        await this.pollTask(workflow, 'configuring');
-        return;
-      case 'configuring':
-        await this.configure(workflow);
-        return;
-      case 'polling_configuration':
-        await this.pollTask(workflow, 'starting');
-        return;
-      case 'starting':
-        await this.start(workflow);
-        return;
-      case 'polling_start':
-        await this.pollTask(workflow, 'observing');
-        return;
-      case 'observing':
-        await this.observe(workflow);
-        return;
-      default:
-        await this.fail(workflow, {
-          category: 'permanent',
-          code: 'WORKFLOW_STAGE_INVALID',
-          safeMessage: 'The persisted workflow stage is not supported.',
-        });
-    }
-  }
-
-  /** Asks the provider to create the VM. First stage that changes provider state. */
-  private async submitCreate(workflow: ClaimedCreateWorkflow): Promise<void> {
-    const command = workflow.command;
-    const result = (
-      await this.provider.submitCreateInstance({
-        context: this.context(workflow, 'create'),
-        imageId: command.data.imageId,
-        flavorId: command.data.flavorId,
-        hostname: command.data.hostname,
-        resources: this.resources(workflow),
-        network: this.network(workflow),
-        sshPublicKeys: [...(command.data.sshPublicKeys ?? [])],
-        ownershipMarkers: this.ownership(workflow),
-      })
-    ).result;
-    await this.handleMutationResult(workflow, result, 'polling_create', 'configuring');
-  }
-
-  /** Applies CPU, memory, network, and SSH configuration to the created VM. */
-  private async configure(workflow: ClaimedCreateWorkflow): Promise<void> {
-    const command = workflow.command;
-    const result = (
-      await this.provider.applyInstanceConfiguration({
-        context: this.context(workflow, 'configure'),
-        providerResourceId: this.requiredResource(workflow),
-        hostname: command.data.hostname,
-        resources: this.resources(workflow),
-        network: this.network(workflow),
-        sshPublicKeys: [...(command.data.sshPublicKeys ?? [])],
-        ownershipMarkers: this.ownership(workflow),
-      })
-    ).result;
-    await this.handleMutationResult(workflow, result, 'polling_configuration', 'starting');
-  }
-
-  /** Powers the VM on. The accepted command always requests a running instance. */
-  private async start(workflow: ClaimedCreateWorkflow): Promise<void> {
-    const result = (
-      await this.provider.startInstance({
-        request: {
-          context: this.context(workflow, 'start'),
-          providerResourceId: this.requiredResource(workflow),
-          expectedOwnershipMarkers: this.ownership(workflow),
-        },
-      })
-    ).result;
-    await this.handleMutationResult(workflow, result, 'polling_start', 'observing');
-  }
-
-  /**
    * Checks an in-flight asynchronous provider task.
    *
    * Read-only, so unlike the mutation stages this is safe to repeat freely.
    */
-  private async pollTask(
-    workflow: ClaimedCreateWorkflow,
+  protected async pollTask(
+    workflow: ClaimedWorkflow<TCommand>,
     successStage: WorkflowStage,
   ): Promise<void> {
     const taskReference = workflow.providerTaskReference;
@@ -284,59 +254,6 @@ export class CreateInstanceWorkflow {
   }
 
   /**
-   * Proves the VM exists, is ours, and is running — then completes the operation.
-   *
-   * WHY a separate observation stage rather than trusting the start call: a successful
-   * mutation response says the provider accepted the request, not that the result is what was
-   * asked for. Ownership markers are re-checked here so a VMID collision or an operator's
-   * manual edit cannot be mistaken for our instance.
-   *
-   * Anything short of complete proof goes to `manual_review`, never to `failed` — a create
-   * that may have partially succeeded must not be reported as if nothing happened.
-   */
-  private async observe(workflow: ClaimedCreateWorkflow): Promise<void> {
-    const observation = (
-      await this.provider.observeInstance({
-        context: this.context(workflow, 'observe'),
-        providerResourceId: this.requiredResource(workflow),
-        expectedOwnershipMarkers: this.ownership(workflow),
-      })
-    ).observation;
-
-    if (
-      !observation?.exists ||
-      !observation.ownership?.complete ||
-      !observation.ownership.match ||
-      observation.powerState !== ObservedPowerState.OBSERVED_POWER_STATE_RUNNING
-    ) {
-      await this.manualReview(workflow, {
-        category: 'manual_review',
-        code: 'CREATE_OBSERVATION_AMBIGUOUS',
-        safeMessage: 'Provider observation did not prove an owned running instance.',
-      });
-      return;
-    }
-
-    const event: InstanceMutationCompletedV1 = {
-      ...this.envelope(workflow, 'instance.mutation.completed'),
-      data: {
-        action: 'create_instance',
-        lifecycleState: 'active',
-        providerResourceId: this.requiredResource(workflow),
-        evidenceId: randomUUID(),
-      },
-    };
-    await this.store.complete({
-      operationId: workflow.command.operationId,
-      workerId: this.workerId,
-      fencingToken: workflow.fencingToken,
-      status: 'succeeded',
-      event,
-    });
-    this.telemetry.workflowTransition(workflow.stage, 'completed');
-  }
-
-  /**
    * Interprets the outcome of a provider mutation and picks the next stage.
    *
    * Providers may answer a mutation in one of three useful ways, and each needs a different
@@ -349,8 +266,8 @@ export class CreateInstanceWorkflow {
    * `UNKNOWN` is the dangerous one and goes to `manual_review`: the provider is telling us it
    * cannot say whether the mutation took effect, and no automated choice is safe.
    */
-  private async handleMutationResult(
-    workflow: ClaimedCreateWorkflow,
+  protected async handleMutationResult(
+    workflow: ClaimedWorkflow<TCommand>,
     result: ProviderMutationResult | undefined,
     acceptedStage: WorkflowStage,
     synchronousStage: WorkflowStage,
@@ -424,8 +341,8 @@ export class CreateInstanceWorkflow {
    * provider's history. Since the mutation may well have succeeded, this goes to
    * `manual_review` rather than being retried.
    */
-  private async handleTaskResult(
-    workflow: ClaimedCreateWorkflow,
+  protected async handleTaskResult(
+    workflow: ClaimedWorkflow<TCommand>,
     response: GetTaskResponse,
     successStage: WorkflowStage,
     taskReference: string,
@@ -472,11 +389,11 @@ export class CreateInstanceWorkflow {
    *
    * @see docs/architecture/failure-sequences.md
    */
-  private async handleProviderError(
-    workflow: ClaimedCreateWorkflow,
+  protected async handleProviderError(
+    workflow: ClaimedWorkflow<TCommand>,
     error: ProviderTransportError,
   ): Promise<void> {
-    const isMutationStage = MUTATION_STAGES.includes(workflow.stage);
+    const isMutationStage = this.mutationStages.includes(workflow.stage);
     if (isMutationStage && error.code !== 'protocol_error') {
       await this.manualReview(workflow, {
         category: 'unknown_outcome',
@@ -498,8 +415,8 @@ export class CreateInstanceWorkflow {
   }
 
   /** Applies the persisted eight-attempt, 15-minute full-jitter recovery policy. */
-  private async retryOrDeadLetter(
-    workflow: ClaimedCreateWorkflow,
+  protected async retryOrDeadLetter(
+    workflow: ClaimedWorkflow<TCommand>,
     error: ProviderTransportError,
   ): Promise<void> {
     return this.telemetry.trace(
@@ -521,7 +438,9 @@ export class CreateInstanceWorkflow {
           const event: InstanceMutationFailedV1 = {
             ...this.envelope(workflow, 'instance.mutation.failed'),
             data: {
-              action: 'create_instance',
+              // The executing capability, not create: a power or resize failure that
+              // reported itself as a create failure would be projected against the wrong action.
+              action: this.action,
               failure,
               compensationState: 'not_required',
             },
@@ -577,8 +496,8 @@ export class CreateInstanceWorkflow {
    * `undefined`. That matters twice: the event contract rejects explicit `undefined`, and the
    * store distinguishes "leave the task reference alone" (omitted) from "clear it" (`null`).
    */
-  private async progress(
-    workflow: ClaimedCreateWorkflow,
+  protected async progress(
+    workflow: ClaimedWorkflow<TCommand>,
     stage: WorkflowStage,
     options: {
       readonly providerResourceId?: string;
@@ -633,8 +552,8 @@ export class CreateInstanceWorkflow {
   }
 
   /** Terminates the workflow as failed: nothing was built, or nothing can be. */
-  private fail(
-    workflow: ClaimedCreateWorkflow,
+  protected fail(
+    workflow: ClaimedWorkflow<TCommand>,
     failure: InstanceMutationFailedV1['data']['failure'],
   ): Promise<void> {
     return this.finishFailure(workflow, failure, 'failed');
@@ -647,8 +566,8 @@ export class CreateInstanceWorkflow {
    * worse `fail` — it is a different claim: `failed` asserts nothing was left behind, and
    * `manual_review` explicitly declines to assert that.
    */
-  private manualReview(
-    workflow: ClaimedCreateWorkflow,
+  protected manualReview(
+    workflow: ClaimedWorkflow<TCommand>,
     failure: InstanceMutationFailedV1['data']['failure'],
   ): Promise<void> {
     return this.finishFailure(workflow, failure, 'manual_review');
@@ -661,15 +580,17 @@ export class CreateInstanceWorkflow {
    * clean up after an outcome it could not determine — deleting a VM that might be someone's
    * running workload is worse than leaving an orphan for an operator to inspect.
    */
-  private async finishFailure(
-    workflow: ClaimedCreateWorkflow,
+  protected async finishFailure(
+    workflow: ClaimedWorkflow<TCommand>,
     failure: InstanceMutationFailedV1['data']['failure'],
     status: 'failed' | 'manual_review',
   ): Promise<void> {
     const event: InstanceMutationFailedV1 = {
       ...this.envelope(workflow, 'instance.mutation.failed'),
       data: {
-        action: 'create_instance',
+        // The executing capability, not create: a power or resize failure that
+        // reported itself as a create failure would be projected against the wrong action.
+        action: this.action,
         failure,
         compensationState: status === 'manual_review' ? 'unsafe' : 'not_required',
       },
@@ -702,7 +623,7 @@ export class CreateInstanceWorkflow {
    * the retry as a duplicate instead of building a second VM — the client half of the
    * idempotency contract.
    */
-  private context(workflow: ClaimedCreateWorkflow, step: string): ProviderCallContext {
+  protected context(workflow: ClaimedWorkflow<TCommand>, step: string): ProviderCallContext {
     const command = workflow.command;
     return {
       requestId: `${command.operationId}:${step}`,
@@ -710,7 +631,7 @@ export class CreateInstanceWorkflow {
       correlationId: command.correlationId,
       projectId: command.projectId,
       instanceId: command.aggregateId,
-      providerProfileId: command.data.providerProfileId,
+      providerProfileId: this.providerProfileId(workflow),
       // WHY hardcoded: `requestId` must be byte-identical across replays for the provider to
       // recognise a duplicate. Phase 3 keeps only a per-claim counter, not a per-stage one, so
       // a real attempt number here would change between replays and defeat that recognition.
@@ -724,35 +645,13 @@ export class CreateInstanceWorkflow {
    * Written on create and re-checked on every later call. This is how the system refuses to
    * touch a VM it did not create, and how it recognises its own resource after a replay.
    */
-  private ownership(workflow: ClaimedCreateWorkflow): OwnershipMarkers {
+  protected ownership(workflow: ClaimedWorkflow<TCommand>): OwnershipMarkers {
     return {
       managedBy: 'private-cloud-control-plane',
       environment: 'lab',
       projectId: workflow.command.projectId,
       instanceId: workflow.command.aggregateId,
-      createOperationId: workflow.command.operationId,
-    };
-  }
-
-  /** Desired sizing from the accepted command. Stringified where the wire type is 64-bit. */
-  private resources(workflow: ClaimedCreateWorkflow) {
-    const resources = workflow.command.data.resources;
-    return {
-      cpuCount: resources.cpuCount,
-      memoryMib: String(resources.memoryMiB),
-      diskGib: String(resources.diskGiB),
-    };
-  }
-
-  /** Network attachment fixed at acceptance, when the address was reserved. */
-  private network(workflow: ClaimedCreateWorkflow) {
-    const data = workflow.command.data;
-    return {
-      networkId: data.networkId,
-      ipv4Address: data.ipv4.address,
-      ipv4PrefixLength: data.ipv4.prefixLength,
-      ipv4Gateway: data.ipv4.gateway,
-      dnsServers: [...data.ipv4.dnsServers],
+      createOperationId: this.createOperationId(workflow),
     };
   }
 
@@ -763,8 +662,8 @@ export class CreateInstanceWorkflow {
    * be walked backwards. `partitionKey` is the instance, which is what will preserve
    * per-instance ordering once Kafka replaces the poller in Phase 4.
    */
-  private envelope<SchemaName extends string>(
-    workflow: ClaimedCreateWorkflow,
+  protected envelope<SchemaName extends string>(
+    workflow: ClaimedWorkflow<TCommand>,
     schemaName: SchemaName,
   ) {
     const command = workflow.command;
@@ -792,7 +691,7 @@ export class CreateInstanceWorkflow {
    * {@link CreateInstanceWorkflow.handleProviderError}, which applies the same
    * did-the-provider-act analysis rather than assuming nothing happened.
    */
-  private requiredResource(workflow: ClaimedCreateWorkflow): string {
+  protected requiredResource(workflow: ClaimedWorkflow<TCommand>): string {
     if (!workflow.providerResourceId) {
       throw new ProviderTransportError('protocol_error', 'Provider resource ID is missing.', {
         retryable: false,
@@ -802,7 +701,7 @@ export class CreateInstanceWorkflow {
   }
 
   /** Converts a provider failure into contract form, substituting safe defaults. */
-  private failureValue(
+  protected failureValue(
     providerFailure: ProviderFailure | undefined,
     defaultCode: string,
   ): InstanceMutationFailedV1['data']['failure'] {
@@ -816,5 +715,274 @@ export class CreateInstanceWorkflow {
         ? { retryAfterMilliseconds: Number(providerFailure.retryAfterMilliseconds) }
         : {}),
     };
+  }
+  /**
+   * The capability's transition table: performs exactly one step from the persisted stage.
+   *
+   * Implementations must complete, fail, or checkpoint the workflow on every path. Returning
+   * without doing one of those leaves the workflow claimed but unadvanced until its lease expires.
+   */
+  protected abstract execute(workflow: ClaimedWorkflow<TCommand>): Promise<void>;
+
+  /**
+   * The provider profile every call for this workflow is scoped to.
+   *
+   * Abstract because each command carries it in its own payload. It is not derived from the
+   * instance record: the orchestrator must not read control-plane-owned tables, and the profile
+   * that a workflow was accepted against must not silently change under it mid-flight.
+   */
+  protected abstract providerProfileId(workflow: ClaimedWorkflow<TCommand>): string;
+
+  /**
+   * The operation whose id is written into the provider ownership markers.
+   *
+   * WHY abstract rather than `workflow.command.operationId`: the markers are written once, at
+   * create, and re-checked on every later call. A capability that presented its *own* operation id
+   * would fail the check against every VM it did not itself create — which is every VM. Only the
+   * create workflow may use its own id here.
+   */
+  protected abstract createOperationId(workflow: ClaimedWorkflow<TCommand>): string;
+}
+
+/**
+ * The create-instance capability.
+ *
+ * Roughly eight provider interactions spanning minutes: submit, poll, configure, poll, start,
+ * poll, then prove ownership by observation before reporting success.
+ */
+export class CreateInstanceWorkflow extends LifecycleWorkflow<
+  CreateInstanceProviderPort,
+  InstanceCreateRequestedV1
+> {
+  public readonly action: WorkflowAction = 'create_instance';
+
+  protected readonly mutationStages: readonly WorkflowStage[] = CREATE_MUTATION_STAGES;
+
+  /** The profile the request was accepted against, carried on the create command. */
+  protected providerProfileId(workflow: ClaimedWorkflow<InstanceCreateRequestedV1>): string {
+    return workflow.command.data.providerProfileId;
+  }
+
+  /** Create is the one capability whose own operation id *is* the create operation id. */
+  protected createOperationId(workflow: ClaimedWorkflow<InstanceCreateRequestedV1>): string {
+    return workflow.command.operationId;
+  }
+
+  /**
+   * The transition table: dispatches on the persisted stage.
+   *
+   * Read alongside the stage table in `workflow-stage.ts`. Because `stage` is a union rather
+   * than a string, adding a stage without handling it here is a compile error.
+   */
+  protected async execute(workflow: ClaimedWorkflow<InstanceCreateRequestedV1>): Promise<void> {
+    switch (workflow.stage) {
+      case 'accepted':
+        // No provider call — just move off the initial stage, so the very first checkpoint
+        // proves the workflow was picked up before anything external happens.
+        await this.progress(workflow, 'submitting_create');
+        return;
+      case 'submitting_create':
+        await this.submitCreate(workflow);
+        return;
+      case 'polling_create':
+        await this.pollTask(workflow, 'configuring');
+        return;
+      case 'configuring':
+        await this.configure(workflow);
+        return;
+      case 'polling_configuration':
+        await this.pollTask(workflow, 'starting');
+        return;
+      case 'starting':
+        await this.start(workflow);
+        return;
+      case 'polling_start':
+        await this.pollTask(workflow, 'observing');
+        return;
+      case 'observing':
+        await this.observe(workflow);
+        return;
+      default:
+        await this.fail(workflow, {
+          category: 'permanent',
+          code: 'WORKFLOW_STAGE_INVALID',
+          safeMessage: 'The persisted workflow stage is not supported.',
+        });
+    }
+  }
+
+  /** Asks the provider to create the VM. First stage that changes provider state. */
+  protected async submitCreate(
+    workflow: ClaimedWorkflow<InstanceCreateRequestedV1>,
+  ): Promise<void> {
+    const command = workflow.command;
+    const result = (
+      await this.provider.submitCreateInstance({
+        context: this.context(workflow, 'create'),
+        imageId: command.data.imageId,
+        flavorId: command.data.flavorId,
+        hostname: command.data.hostname,
+        resources: this.resources(workflow),
+        network: this.network(workflow),
+        sshPublicKeys: [...(command.data.sshPublicKeys ?? [])],
+        ownershipMarkers: this.ownership(workflow),
+      })
+    ).result;
+    await this.handleMutationResult(workflow, result, 'polling_create', 'configuring');
+  }
+
+  /** Applies CPU, memory, network, and SSH configuration to the created VM. */
+  protected async configure(workflow: ClaimedWorkflow<InstanceCreateRequestedV1>): Promise<void> {
+    const command = workflow.command;
+    const result = (
+      await this.provider.applyInstanceConfiguration({
+        context: this.context(workflow, 'configure'),
+        providerResourceId: this.requiredResource(workflow),
+        hostname: command.data.hostname,
+        resources: this.resources(workflow),
+        network: this.network(workflow),
+        sshPublicKeys: [...(command.data.sshPublicKeys ?? [])],
+        ownershipMarkers: this.ownership(workflow),
+      })
+    ).result;
+    await this.handleMutationResult(workflow, result, 'polling_configuration', 'starting');
+  }
+
+  /** Powers the VM on. The accepted command always requests a running instance. */
+  protected async start(workflow: ClaimedWorkflow<InstanceCreateRequestedV1>): Promise<void> {
+    const result = (
+      await this.provider.startInstance({
+        request: {
+          context: this.context(workflow, 'start'),
+          providerResourceId: this.requiredResource(workflow),
+          expectedOwnershipMarkers: this.ownership(workflow),
+        },
+      })
+    ).result;
+    await this.handleMutationResult(workflow, result, 'polling_start', 'observing');
+  }
+
+  /**
+   * Proves the VM exists, is ours, and is running — then completes the operation.
+   *
+   * WHY a separate observation stage rather than trusting the start call: a successful
+   * mutation response says the provider accepted the request, not that the result is what was
+   * asked for. Ownership markers are re-checked here so a VMID collision or an operator's
+   * manual edit cannot be mistaken for our instance.
+   *
+   * Anything short of complete proof goes to `manual_review`, never to `failed` — a create
+   * that may have partially succeeded must not be reported as if nothing happened.
+   */
+  protected async observe(workflow: ClaimedWorkflow<InstanceCreateRequestedV1>): Promise<void> {
+    const observation = (
+      await this.provider.observeInstance({
+        context: this.context(workflow, 'observe'),
+        providerResourceId: this.requiredResource(workflow),
+        expectedOwnershipMarkers: this.ownership(workflow),
+      })
+    ).observation;
+
+    if (
+      !observation?.exists ||
+      !observation.ownership?.complete ||
+      !observation.ownership.match ||
+      observation.powerState !== ObservedPowerState.OBSERVED_POWER_STATE_RUNNING
+    ) {
+      await this.manualReview(workflow, {
+        category: 'manual_review',
+        code: 'CREATE_OBSERVATION_AMBIGUOUS',
+        safeMessage: 'Provider observation did not prove an owned running instance.',
+      });
+      return;
+    }
+
+    const event: InstanceMutationCompletedV1 = {
+      ...this.envelope(workflow, 'instance.mutation.completed'),
+      data: {
+        action: 'create_instance',
+        lifecycleState: 'active',
+        providerResourceId: this.requiredResource(workflow),
+        evidenceId: randomUUID(),
+        // WHY carry the observation rather than let the read model infer it: the projection
+        // otherwise has to guess measured CPU, memory, and disk, and would publish the *desired*
+        // sizing as though it had been confirmed. Desired and observed disagreeing is exactly the
+        // drift the reconciler exists to find, so the read model must never conflate them.
+        observed: observedState(observation),
+      },
+    };
+    await this.store.complete({
+      operationId: workflow.command.operationId,
+      workerId: this.workerId,
+      fencingToken: workflow.fencingToken,
+      status: 'succeeded',
+      event,
+    });
+    this.telemetry.workflowTransition(workflow.stage, 'completed');
+  }
+
+  /** Desired sizing from the accepted command. Stringified where the wire type is 64-bit. */
+  protected resources(workflow: ClaimedWorkflow<InstanceCreateRequestedV1>) {
+    const resources = workflow.command.data.resources;
+    return {
+      cpuCount: resources.cpuCount,
+      memoryMib: String(resources.memoryMiB),
+      diskGib: String(resources.diskGiB),
+    };
+  }
+
+  /** Network attachment fixed at acceptance, when the address was reserved. */
+  protected network(workflow: ClaimedWorkflow<InstanceCreateRequestedV1>) {
+    const data = workflow.command.data;
+    return {
+      networkId: data.networkId,
+      ipv4Address: data.ipv4.address,
+      ipv4PrefixLength: data.ipv4.prefixLength,
+      ipv4Gateway: data.ipv4.gateway,
+      dnsServers: [...data.ipv4.dnsServers],
+    };
+  }
+}
+/**
+ * Converts a provider observation into the event contract's observed block.
+ *
+ * `resources` is omitted rather than defaulted when the provider did not report sizing. An absent
+ * measurement and a measurement of zero are different claims, and only one of them is ever true.
+ */
+function observedState(
+  observation: NonNullable<
+    Awaited<ReturnType<CreateInstanceProviderPort['observeInstance']>>['observation']
+  >,
+): NonNullable<InstanceMutationCompletedV1['data']['observed']> {
+  const resources = observation.resources;
+  return {
+    exists: Boolean(observation.exists),
+    powerState: observedPowerState(observation.powerState),
+    ...(resources && resources.cpuCount !== undefined
+      ? {
+          resources: {
+            cpuCount: resources.cpuCount,
+            memoryMiB: Number(resources.memoryMib),
+            diskGiB: Number(resources.diskGib),
+          },
+        }
+      : {}),
+    markerMatch: Boolean(observation.ownership?.match),
+    observedAt: observation.observedAt ?? new Date().toISOString(),
+  };
+}
+
+/** Maps the provider enum onto the event contract's observed power vocabulary. */
+function observedPowerState(
+  value: ObservedPowerState | undefined,
+): NonNullable<InstanceMutationCompletedV1['data']['observed']>['powerState'] {
+  switch (value) {
+    case ObservedPowerState.OBSERVED_POWER_STATE_RUNNING:
+      return 'running';
+    case ObservedPowerState.OBSERVED_POWER_STATE_STOPPED:
+      return 'stopped';
+    case ObservedPowerState.OBSERVED_POWER_STATE_SUSPENDED:
+      return 'suspended';
+    default:
+      return 'unknown';
   }
 }

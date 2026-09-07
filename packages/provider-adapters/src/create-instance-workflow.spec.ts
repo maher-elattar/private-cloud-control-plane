@@ -1,6 +1,7 @@
 import {
   CreateInstanceWorkflow,
-  type ClaimedCreateWorkflow,
+  type ClaimedWorkflow,
+  type CommandAdmission,
   type WorkflowEvent,
   type WorkflowStage,
   type WorkflowStore,
@@ -57,8 +58,8 @@ class MemoryWorkflowStore implements WorkflowStore {
 
   private checkpointFailed = false;
 
-  public admitCreateCommand(): Promise<'accepted' | 'duplicate' | 'rejected'> {
-    return Promise.resolve('accepted');
+  public admitCommand(): Promise<CommandAdmission> {
+    return Promise.resolve({ outcome: 'accepted' });
   }
 
   public admitReplayRequest(): Promise<'accepted' | 'duplicate' | 'rejected'> {
@@ -73,11 +74,12 @@ class MemoryWorkflowStore implements WorkflowStore {
     return Promise.resolve('dead_lettered');
   }
 
-  public claimNextCreate(): Promise<ClaimedCreateWorkflow | null> {
+  public claimNext(): Promise<ClaimedWorkflow | null> {
     if (this.terminal) return Promise.resolve(null);
     this.attempt += 1;
     this.fencingToken += 1n;
     return Promise.resolve({
+      action: 'create_instance' as const,
       command,
       traceContext: command.traceContext,
       stage: this.stage,

@@ -15,6 +15,7 @@ import {
 } from '@opentelemetry/api';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
+import { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import {
@@ -68,6 +69,59 @@ const ASYNC_LATENCY_BUCKETS_SECONDS = [
 const OPERATION_BUCKETS_SECONDS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60];
 const METRIC_CARDINALITY_LIMIT = 128;
 
+/**
+ * Attributes retained on the HTTP server duration histogram.
+ *
+ * WHY an allow list rather than the instrumentation's defaults: `@opentelemetry/instrumentation-http`
+ * emits `server.address`, `server.port`, `network.peer.address`, and `url.scheme` alongside the
+ * useful dimensions. Addresses are forbidden as metric labels (SAFE-034), and the Collector strips
+ * them on the OTLP path. The scrape path has no Collector in front of it, so the contract has to
+ * hold at the SDK, which is where this package already enforces every other attribute contract.
+ */
+export const HTTP_SERVER_METRIC_ATTRIBUTES = [
+  'http.request.method',
+  'http.response.status_code',
+  'http.route',
+  'error.type',
+] as const;
+
+/** Instrument and meter emitting the request histogram that rollout analysis reads. */
+export const HTTP_SERVER_DURATION_INSTRUMENT = 'http.server.request.duration';
+export const HTTP_INSTRUMENTATION_METER = '@opentelemetry/instrumentation-http';
+
+/**
+ * Prometheus name the {@link HTTP_SERVER_DURATION_INSTRUMENT} histogram is scraped under.
+ *
+ * Blue-green promotion analysis queries this series, so the mapping from the OpenTelemetry name
+ * to the Prometheus name is asserted by a test rather than left to the exporter's conventions.
+ */
+export const HTTP_SERVER_DURATION_SCRAPE_NAME = 'http_server_request_duration';
+
+/**
+ * Series ceiling for the HTTP server histogram.
+ *
+ * Higher than {@link METRIC_CARDINALITY_LIMIT} because the dimensions are a genuine cross product
+ * of routes, methods, and status codes rather than a small closed enumeration: 39 REST routes and
+ * the health endpoints, times the methods each accepts, times the status codes each can return.
+ * The value is still a hard ceiling, so a route explosion degrades to an overflow bucket instead
+ * of unbounded memory.
+ */
+const HTTP_SERVER_CARDINALITY_LIMIT = 512;
+
+/**
+ * Bucket boundaries for the HTTP server histogram, in seconds.
+ *
+ * Pinned rather than left to instrumentation advice for the same reason every other histogram in
+ * this file is pinned: a bucket layout that changes underneath a dashboard or an alert silently
+ * invalidates both. These are the boundaries the HTTP semantic conventions recommend.
+ */
+const HTTP_SERVER_DURATION_BUCKETS_SECONDS = [
+  0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10,
+];
+
+/** Default port for the scrape endpoint when one is enabled but not configured. */
+const DEFAULT_PROMETHEUS_SCRAPE_PORT = 9464;
+
 /** Attribute contracts are enforced by SDK views, not merely by call-site convention. */
 const CUSTOM_METRIC_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
   'controlplane.command.accepted': ['command.type', 'outcome'],
@@ -98,7 +152,7 @@ const CUSTOM_METRIC_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
   'controlplane.projection.event_age': ['event.schema.name', 'outcome'],
   'controlplane.dead_letter': ['event.schema.name', 'error.category', 'replay.allowed'],
   'controlplane.quarantine': ['failure.code'],
-  'controlplane.replay': ['outcome'],
+  'controlplane.replay': ['outcome', 'phase'],
   'controlplane.outbox.pending': ['outbox.owner'],
   'controlplane.outbox.oldest_age': ['outbox.owner'],
 };
@@ -164,7 +218,7 @@ export function createInMemoryTelemetryHarness(): InMemoryTelemetryHarness {
 
 /** Builds one exact SDK view per custom instrument to bound labels and series cardinality. */
 function metricViews(): ViewOptions[] {
-  return Object.entries(CUSTOM_METRIC_ATTRIBUTES).map(([instrumentName, allowed]) => ({
+  const customViews = Object.entries(CUSTOM_METRIC_ATTRIBUTES).map(([instrumentName, allowed]) => ({
     instrumentName,
     meterName: TELEMETRY_INSTRUMENTATION_NAME,
     attributesProcessors: [createAllowListAttributesProcessor([...allowed])],
@@ -178,6 +232,52 @@ function metricViews(): ViewOptions[] {
         }
       : {}),
   }));
+
+  return [
+    ...customViews,
+    {
+      instrumentName: HTTP_SERVER_DURATION_INSTRUMENT,
+      meterName: HTTP_INSTRUMENTATION_METER,
+      attributesProcessors: [
+        createAllowListAttributesProcessor([...HTTP_SERVER_METRIC_ATTRIBUTES]),
+      ],
+      aggregationCardinalityLimit: HTTP_SERVER_CARDINALITY_LIMIT,
+      aggregation: {
+        type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM as const,
+        options: { boundaries: [...HTTP_SERVER_DURATION_BUCKETS_SECONDS] },
+      },
+    },
+  ];
+}
+
+/**
+ * Builds the scrape reader when a port is configured, and nothing otherwise.
+ *
+ * WHY a second reader rather than reusing the Collector's Prometheus exporter: the Collector
+ * aggregates every replica into one series set, which is exactly the wrong shape for blue-green
+ * analysis. A promotion decision has to be able to read the green replicas alone, and the only
+ * dimension that separates them from the blue ones is the pod they run in. Scraping each pod
+ * directly preserves that dimension; pushing through a shared Collector destroys it.
+ *
+ * Both readers observe the same instruments and views, so the scrape endpoint cannot disagree
+ * with the OTLP pipeline about what a metric means.
+ *
+ * @returns {PrometheusExporter | undefined} Reader to install, or `undefined` when unconfigured.
+ */
+function prometheusScrapeReader(): PrometheusExporter | undefined {
+  const raw = process.env.PROMETHEUS_METRICS_PORT?.trim();
+  if (!raw) return undefined;
+  const port = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('PROMETHEUS_METRICS_PORT must be an integer between 1 and 65535.');
+  }
+  return new PrometheusExporter({
+    port: port === 0 ? DEFAULT_PROMETHEUS_SCRAPE_PORT : port,
+    host: process.env.PROMETHEUS_METRICS_HOST?.trim() || '0.0.0.0',
+    endpoint: process.env.PROMETHEUS_METRICS_PATH?.trim() || '/metrics',
+    // Scrape-side target metadata is supplied by the scrape configuration, not by the process.
+    appendTimestamp: false,
+  });
 }
 
 /** Narrow text-map getter used for HTTP, gRPC, outbox, and Kafka W3C carriers. */
@@ -240,7 +340,15 @@ export function startTelemetry(options: TelemetryRuntimeOptions): void {
       exportTimeoutMillis,
     });
 
+  const scrapeReader = prometheusScrapeReader();
+
   sdk = new NodeSDK({
+    // WHY no detectors: the default set adds `host.name`, `process.command_line`,
+    // `process.owner`, and the full argv to every exported resource. The Collector deletes all of
+    // it on the OTLP path, but the scrape endpoint publishes the resource as `target_info` with
+    // no Collector in front of it. Not collecting host and process identity in the first place is
+    // the only version of this that is true on both pipelines.
+    resourceDetectors: [],
     resource: resourceFromAttributes({
       'service.name': options.serviceName,
       'service.namespace': 'private-cloud-control-plane',
@@ -251,7 +359,7 @@ export function startTelemetry(options: TelemetryRuntimeOptions): void {
     ...(options.spanProcessor
       ? { spanProcessors: [options.spanProcessor] }
       : { traceExporter: options.traceExporter ?? new OTLPTraceExporter({ url: endpoint }) }),
-    metricReaders: [metricReader],
+    metricReaders: scrapeReader ? [metricReader, scrapeReader] : [metricReader],
     views: metricViews(),
     instrumentations: options.disableAutoInstrumentation
       ? []
@@ -594,9 +702,19 @@ export function recordQuarantine(failureCode: string): void {
   instruments?.quarantines.add(1, { 'failure.code': failureCode });
 }
 
-/** Records one governed replay result. */
-export function recordReplay(outcome: string): void {
-  instruments?.replays.add(1, { outcome });
+/**
+ * Records one governed replay decision.
+ *
+ * `phase` separates the two decisions this counter used to conflate: authorizing an
+ * administrator's replay *request*, and admitting the restored *command* when Kafka delivers it
+ * back. Both can be rejected, for entirely different reasons, and an operator reading a spike in
+ * rejections needs to know which half of the loop produced it.
+ *
+ * @param outcome Result of the decision, e.g. `accepted`, `duplicate`, `rejected`.
+ * @param phase Which half of the two-phase replay produced this outcome.
+ */
+export function recordReplay(outcome: string, phase: 'request' | 'command'): void {
+  instruments?.replays.add(1, { outcome, phase });
 }
 
 /** Updates process-local values observed by the outbox backlog gauges. */

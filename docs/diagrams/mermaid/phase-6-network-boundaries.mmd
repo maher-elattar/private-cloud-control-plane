@@ -1,0 +1,59 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"flowchart":{"useMaxWidth":false,"nodeSpacing":45,"rankSpacing":60}}}%%
+flowchart LR
+  subgraph EXT["Outside the namespace"]
+    GW["traefik namespace<br/>Gateway"]
+    MON["monitoring namespace<br/>Prometheus"]
+    DNS["kube-system<br/>kube-dns"]
+  end
+
+  subgraph NS["private-cloud - default deny, ingress and egress"]
+    API["control-api<br/>3000 http, 50051 grpc, 9464 metrics"]
+    ORCH["provisioning-orchestrator<br/>3001, 9464"]
+    PROV["proxmox-provider<br/>3002, 50052 grpc, 9464"]
+    REC["reconciler<br/>3003, 9464"]
+    LOAD["rollout-load<br/>promotion traffic generator"]
+    OIDC["local-oidc<br/>18080 test issuer"]
+    OTEL["otel-collector<br/>4317, 4318"]
+    PG[("control-plane-postgres<br/>5432 - CloudNativePG")]
+    KFK[["control-plane-kafka<br/>9093 TLS + SCRAM - Strimzi"]]
+    CONN["kafka-connect<br/>Debezium outbox connector"]
+  end
+
+  GW -- "http 3000<br/>allow-gateway-to-control-api" --> API
+  LOAD -- "http 3000<br/>X-Canary green reaches preview" --> API
+  MON -- "metrics 9464<br/>allow-metrics-scrape" --> API
+  MON --> ORCH
+  MON --> PROV
+  MON --> REC
+  MON --> OTEL
+
+  ORCH -- "grpc 50052<br/>allow-provider-grpc" --> PROV
+  REC -. "grpc 50052 - reads only" .-> PROV
+
+  API -- "5432" --> PG
+  ORCH --> PG
+  REC --> PG
+  CONN --> PG
+
+  API -- "9093" --> KFK
+  ORCH --> KFK
+  REC --> KFK
+  CONN --> KFK
+
+  API -- "4317 OTLP" --> OTEL
+  ORCH --> OTEL
+  PROV --> OTEL
+  REC --> OTEL
+
+  API -- "18080" --> OIDC
+
+  NS -- "53 UDP and TCP<br/>allow-dns-egress" --> DNS
+
+  classDef svc fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+  classDef data fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef ext fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+  classDef fixture fill:#fef3c7,stroke:#b45309,color:#78350f
+  class API,ORCH,PROV,REC,OTEL,CONN svc
+  class PG,KFK data
+  class GW,MON,DNS ext
+  class LOAD,OIDC fixture

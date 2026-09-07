@@ -18,7 +18,22 @@
   "exclude": ["eslint.config.js", "eslint.config.cjs", "eslint.config.mjs"],
   "references": [
     {
+      "path": "../../packages/provider-sdk/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/postgres-adapter/tsconfig.lib.json"
+    },
+    {
       "path": "../../packages/observability/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/domain/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/contracts/tsconfig.lib.json"
+    },
+    {
+      "path": "../../packages/application/tsconfig.lib.json"
     }
   ]
 }

@@ -1,0 +1,9 @@
+# Sync wave 0 — namespace, identities, boundaries, and configuration.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - service-accounts.yaml
+  - rbac.yaml
+  - network-policies.yaml
+  - pod-disruption-budgets.yaml

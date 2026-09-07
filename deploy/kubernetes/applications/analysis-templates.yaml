@@ -1,0 +1,138 @@
+# Sync wave 4 — the promotion gate.
+#
+# A blue-green deployment only means something if the decision to switch traffic is made from
+# evidence about the new environment. These templates are that evidence. Argo Rollouts runs them
+# against the green ReplicaSet before it moves the active Service, and again afterwards; a failure
+# in either place aborts the rollout and leaves — or puts back — the blue environment serving.
+#
+# All three read the cluster Prometheus. They are scoped to the **preview** Service, which Argo
+# Rollouts keeps selecting the green ReplicaSet by pod-template-hash, so every number below is a
+# statement about green and never an average across both environments.
+#
+# WHY three metrics rather than one success rate: a success rate is a ratio, and a ratio computed
+# over no requests is not a passing grade, it is an absence of information. `green-traffic-floor`
+# refuses to let silence read as health, and `green-scrape-health` refuses to let a single
+# surviving pod stand in for the whole environment. Each failure also names its own cause, which a
+# combined expression could not.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: green-http-success-rate
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  args:
+    - name: preview-service
+    - name: namespace
+      value: private-cloud
+    - name: prometheus-address
+      value: http://my-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+    - name: success-rate-threshold
+      value: '0.90'
+  metrics:
+    - name: green-http-200-rate
+      # Long enough for the green pods to pass readiness, join the preview Service, and be
+      # scraped at least twice at the ServiceMonitor's 10s interval. Measuring before that reports
+      # the absence of a target as a failure of the target.
+      initialDelay: 45s
+      interval: 20s
+      count: 4
+      # More than 90% of responses from the green environment must be HTTP 200.
+      successCondition: result[0] >= {{args.success-rate-threshold}}
+      # One bad sample is a scrape landing mid-restart. Two consecutive is a trend.
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: '{{args.prometheus-address}}'
+          # `or vector(0)` on the numerator and `clamp_min` on the denominator make this total: an
+          # empty result would be reported as a measurement *error*, which reads as an
+          # infrastructure problem, when the honest answer for an environment serving nothing is
+          # a success rate of zero.
+          query: |
+            (
+              sum(rate(http_server_request_duration_count{
+                namespace="{{args.namespace}}",
+                service="{{args.preview-service}}",
+                http_response_status_code="200"
+              }[1m])) or vector(0)
+            )
+            /
+            clamp_min(
+              sum(rate(http_server_request_duration_count{
+                namespace="{{args.namespace}}",
+                service="{{args.preview-service}}"
+              }[1m])) or vector(0),
+              0.001
+            )
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: green-traffic-floor
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  args:
+    - name: preview-service
+    - name: namespace
+      value: private-cloud
+    - name: prometheus-address
+      value: http://my-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+    # Two replicas answering a liveness and a readiness probe every ten seconds produce roughly
+    # 0.4 requests per second on their own, so this floor is met by an idle pod that is genuinely
+    # healthy and missed by one that is not answering at all.
+    - name: minimum-request-rate
+      value: '0.10'
+  metrics:
+    - name: green-request-rate
+      initialDelay: 45s
+      interval: 20s
+      count: 4
+      successCondition: result[0] >= {{args.minimum-request-rate}}
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: '{{args.prometheus-address}}'
+          query: |
+            sum(rate(http_server_request_duration_count{
+              namespace="{{args.namespace}}",
+              service="{{args.preview-service}}"
+            }[1m])) or vector(0)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: green-scrape-health
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  args:
+    - name: preview-service
+    - name: namespace
+      value: private-cloud
+    - name: prometheus-address
+      value: http://my-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+    - name: minimum-ready-replicas
+      value: '1'
+  metrics:
+    - name: green-ready-replicas
+      initialDelay: 45s
+      interval: 20s
+      count: 4
+      successCondition: result[0] >= {{args.minimum-ready-replicas}}
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: '{{args.prometheus-address}}'
+          # `up` exists only for a pod Prometheus could scrape, and a pod only joins the preview
+          # Service's endpoints after its readiness probe passes. Counting `up == 1` therefore
+          # answers "how many green pods are both ready and answering" with one series and no
+          # dependency on kube-state-metrics label allowlists.
+          query: |
+            count(up{
+              namespace="{{args.namespace}}",
+              service="{{args.preview-service}}"
+            } == 1) or vector(0)

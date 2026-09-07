@@ -1,0 +1,11 @@
+# Cluster bootstrap: the two controllers that everything else in this directory depends on.
+#
+# This layer is deliberately NOT managed by Argo CD. Argo CD cannot install itself before it
+# exists, and self-managing the Rollouts controller through a Rollout is a circular dependency
+# that turns a controller outage into an unrecoverable one. Apply it with
+# `node tools/kubernetes/bootstrap.mjs`, which checks digests and existing installs first.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - argocd
+  - argo-rollouts

@@ -29,6 +29,9 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 const statusByCode: Readonly<Record<DomainErrorCode, number>> = {
   ADMIN_REQUIRED: HttpStatus.FORBIDDEN,
   DEAD_LETTER_NOT_FOUND: HttpStatus.NOT_FOUND,
+  // 422 rather than 409: the request is well formed and the instance is not busy — the size is
+  // simply not permitted, which is the same shape as a quota refusal.
+  DISK_SHRINK_FORBIDDEN: HttpStatus.UNPROCESSABLE_ENTITY,
   IDEMPOTENCY_CONFLICT: HttpStatus.CONFLICT,
   INSTANCE_BUSY: HttpStatus.CONFLICT,
   INSTANCE_NOT_FOUND: HttpStatus.NOT_FOUND,
@@ -38,6 +41,10 @@ const statusByCode: Readonly<Record<DomainErrorCode, number>> = {
   PROJECT_NOT_FOUND: HttpStatus.NOT_FOUND,
   QUOTA_EXCEEDED: HttpStatus.UNPROCESSABLE_ENTITY,
   REPLAY_NOT_ALLOWED: HttpStatus.CONFLICT,
+  SNAPSHOT_NOT_FOUND: HttpStatus.NOT_FOUND,
+  // 409 rather than 404: the snapshot exists, but not on the instance the caller named. Reporting
+  // it as missing would leave a caller retrying a request that can never succeed.
+  SNAPSHOT_OWNERSHIP_MISMATCH: HttpStatus.CONFLICT,
   VALIDATION_FAILED: HttpStatus.UNPROCESSABLE_ENTITY,
 };
 

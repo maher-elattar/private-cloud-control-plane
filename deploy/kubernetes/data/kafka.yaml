@@ -1,0 +1,202 @@
+# Sync wave 2 — the Kafka cluster, its identities, and its topics.
+#
+# The broker is KRaft-mode Strimzi with one combined node. Strimzi 1.x serves this API at
+# `kafka.strimzi.io/v1` and runs KRaft with node pools unconditionally, so the `strimzi.io/kraft`
+# and `strimzi.io/node-pools` annotations earlier versions required are gone with the mode switch
+# they used to select. The single listener is TLS with
+# SCRAM-SHA-512 authentication and ACL authorization, so no client reaches a topic without an
+# identity Strimzi issued and an ACL this file granted.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: combined
+  namespace: private-cloud
+  labels:
+    strimzi.io/cluster: control-plane-kafka
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  replicas: 1
+  # Controller and broker in one process. WHY: dedicated controllers exist to keep quorum
+  # available when brokers fail, which needs more than one node to mean anything. On one node the
+  # split costs a second JVM and buys nothing.
+  roles:
+    - controller
+    - broker
+  storage:
+    type: persistent-claim
+    size: 3Gi
+    class: standard
+    deleteClaim: false
+  resources:
+    requests: { cpu: 200m, memory: 768Mi }
+    limits: { cpu: 2000m, memory: 1536Mi }
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: control-plane-kafka
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  kafka:
+    version: 4.3.1
+    metadataVersion: 4.3-IV0
+    listeners:
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+        authentication:
+          type: scram-sha-512
+    authorization:
+      type: simple
+    config:
+      # Every replication factor is 1 because there is one broker. On a multi-node cluster these
+      # move together with the node-pool replica count; the tradeoff is documented in
+      # `docs/architecture/phase-6-gitops-deployment.md`.
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      default.replication.factor: 1
+      min.insync.replicas: 1
+      auto.create.topics.enable: false
+      # The outbox publisher stamps its own timestamps; broker-assigned append time is what makes
+      # publish delay measurable rather than self-reported.
+      log.message.timestamp.type: LogAppendTime
+  entityOperator:
+    topicOperator:
+      resources:
+        requests: { cpu: 50m, memory: 256Mi }
+        limits: { cpu: 500m, memory: 512Mi }
+    userOperator:
+      resources:
+        requests: { cpu: 50m, memory: 256Mi }
+        limits: { cpu: 500m, memory: 512Mi }
+---
+# The control plane's own identity. Strimzi generates the password into a Secret named after this
+# object; the repository never sees it.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: control-plane
+  namespace: private-cloud
+  labels:
+    strimzi.io/cluster: control-plane-kafka
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      # Read-only on every application topic. The control plane consumes; it never produces to
+      # Kafka directly, because everything it publishes goes through the transactional outbox and
+      # is delivered by change data capture. An ACL that granted Write here would make it possible
+      # to publish an event with no committed database row behind it.
+      - resource: { type: topic, name: provisioning., patternType: prefix }
+        operations: [Read, Describe]
+      - resource: { type: topic, name: reconciliation., patternType: prefix }
+        operations: [Read, Describe]
+      - resource: { type: topic, name: audit., patternType: prefix }
+        operations: [Read, Describe]
+      - resource: { type: group, name: control-api., patternType: prefix }
+        operations: [Read, Describe]
+      - resource: { type: group, name: provisioning-orchestrator., patternType: prefix }
+        operations: [Read, Describe]
+---
+# Kafka Connect's identity. It reads the database and writes the application topics, which is the
+# exact inverse of the control plane's grant above.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: kafka-connect
+  namespace: private-cloud
+  labels:
+    strimzi.io/cluster: control-plane-kafka
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource: { type: topic, name: provisioning., patternType: prefix }
+        operations: [Write, Create, Describe, DescribeConfigs]
+      - resource: { type: topic, name: reconciliation., patternType: prefix }
+        operations: [Write, Create, Describe, DescribeConfigs]
+      - resource: { type: topic, name: audit., patternType: prefix }
+        operations: [Write, Create, Describe, DescribeConfigs]
+      # Connect's own internal state: configs, offsets, and status.
+      - resource: { type: topic, name: connect., patternType: prefix }
+        operations: [Read, Write, Create, Describe, DescribeConfigs]
+      - resource: { type: group, name: private-cloud-connect, patternType: literal }
+        operations: [Read, Describe]
+      - resource: { type: cluster, name: kafka-cluster, patternType: literal }
+        operations: [DescribeConfigs]
+---
+# The namespace's default-deny applies to broker pods too.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kafka
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '2' }
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: strimzi.io/cluster, operator: Exists }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+        - podSelector:
+            matchExpressions:
+              - { key: strimzi.io/cluster, operator: Exists }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: strimzi-system }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: keda }
+      ports:
+        - { protocol: TCP, port: 9090 }
+        - { protocol: TCP, port: 9091 }
+        - { protocol: TCP, port: 9093 }
+        - { protocol: TCP, port: 8083 }
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - { protocol: TCP, port: 9404 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector:
+            matchExpressions:
+              - { key: strimzi.io/cluster, operator: Exists }
+    # Kafka Connect reaches the database, and every Strimzi component talks to the API server.
+    - to:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: control-plane-postgres }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0 }
+      ports:
+        - { protocol: TCP, port: 6443 }
+        - { protocol: TCP, port: 8443 }

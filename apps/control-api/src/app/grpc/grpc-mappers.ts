@@ -1,4 +1,8 @@
 import type {
+  AcceptedMutation,
+  AdministrativeOperationView,
+  AuditEventView,
+  DeadLetterView,
   FlavorView,
   ImageView,
   InstanceView,
@@ -14,6 +18,10 @@ import {
   InstanceLifecycleState,
   ObservedPowerState,
   OperationState,
+  type AdministrativeOperation,
+  type AuditEvent,
+  type MutationAccepted,
+  type DeadLetter,
   type Flavor,
   type Image,
   type Instance,
@@ -216,5 +224,72 @@ export function grpcOperation(view: OperationView): Operation {
     ...(view.errorCode ? { errorCode: view.errorCode } : {}),
     ...(view.errorMessage ? { errorMessage: view.errorMessage } : {}),
     manualReviewRequired: view.manualReviewRequired,
+  };
+}
+
+export function grpcAdministrativeOperation(
+  view: AdministrativeOperationView,
+): AdministrativeOperation {
+  return {
+    operation: grpcOperation(view),
+    // Protobuf cannot distinguish an unset string from an empty one, so an absent correlation
+    // is sent as `''` here only because the field is non-optional in the message. Every other
+    // field is `optional` and is omitted instead.
+    correlationId: view.correlationId ?? '',
+    ...(view.causationId ? { causationId: view.causationId } : {}),
+    ...(view.traceId ? { traceId: view.traceId } : {}),
+    retryCount: view.retryCount ?? 0,
+    ...(view.checkpoint ? { checkpoint: view.checkpoint } : {}),
+    ...(view.deadLetterEventId ? { deadLetterEventId: view.deadLetterEventId } : {}),
+    ...(view.providerTaskReference ? { providerTaskReference: view.providerTaskReference } : {}),
+  };
+}
+
+export function grpcDeadLetter(view: DeadLetterView): DeadLetter {
+  return {
+    eventId: view.eventId,
+    schemaName: view.schemaName,
+    schemaVersion: view.schemaVersion,
+    aggregateId: view.aggregateId,
+    projectId: view.projectId,
+    operationId: view.operationId,
+    category: failureCategories[view.category],
+    ...(view.safeMessage ? { safeMessage: view.safeMessage } : {}),
+    attempts: view.attempts,
+    deadLetteredAt: grpcTimestamp(view.deadLetteredAt),
+    replayAllowed: view.replayAllowed,
+    ...(view.lastReplayAt ? { lastReplayAt: grpcTimestamp(view.lastReplayAt) } : {}),
+  };
+}
+
+export function grpcAuditEvent(view: AuditEventView): AuditEvent {
+  return {
+    id: view.id,
+    actorId: view.actorId,
+    actorRole: view.actorRole,
+    ...(view.projectId ? { projectId: view.projectId } : {}),
+    action: view.action,
+    targetType: view.targetType,
+    targetId: view.targetId,
+    ...(view.operationId ? { operationId: view.operationId } : {}),
+    outcome: view.outcome,
+    ...(view.reason ? { reason: view.reason } : {}),
+    occurredAt: grpcTimestamp(view.occurredAt),
+  };
+}
+
+/**
+ * Maps a `202 Accepted` acceptance onto its protobuf form.
+ *
+ * Shared by every RPC that accepts a mutation, so the `statusUrl` to `status_uri` rename and
+ * the timestamp conversion cannot drift between transports.
+ */
+export function grpcMutationAccepted(accepted: AcceptedMutation): MutationAccepted {
+  return {
+    operationId: accepted.operationId,
+    targetId: accepted.targetId,
+    acceptedAt: grpcTimestamp(accepted.acceptedAt),
+    statusUri: accepted.statusUrl,
+    replayed: accepted.replayed,
   };
 }

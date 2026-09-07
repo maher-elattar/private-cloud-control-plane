@@ -3,26 +3,66 @@
   "$id": "https://contracts.private-cloud.invalid/events/control-plane-events.v1.schema.json",
   "title": "ControlPlaneEventV1",
   "oneOf": [
-    { "$ref": "#/$defs/InstanceCreateRequested" },
-    { "$ref": "#/$defs/InstancePowerRequested" },
-    { "$ref": "#/$defs/InstanceResizeRequested" },
-    { "$ref": "#/$defs/SnapshotCreateRequested" },
-    { "$ref": "#/$defs/SnapshotRollbackRequested" },
-    { "$ref": "#/$defs/SnapshotDeleteRequested" },
-    { "$ref": "#/$defs/InstanceRetentionRequested" },
-    { "$ref": "#/$defs/InstancePurgeRequested" },
-    { "$ref": "#/$defs/ReconciliationRequested" },
-    { "$ref": "#/$defs/ProvisioningReplayRequested" },
-    { "$ref": "#/$defs/WorkflowProgressed" },
-    { "$ref": "#/$defs/InstanceMutationCompleted" },
-    { "$ref": "#/$defs/InstanceMutationFailed" },
-    { "$ref": "#/$defs/ProvisioningReplayResolved" },
-    { "$ref": "#/$defs/InstanceObserved" },
-    { "$ref": "#/$defs/DriftDetected" },
-    { "$ref": "#/$defs/UnknownOutcomeResolved" },
-    { "$ref": "#/$defs/ManualReviewCreated" },
-    { "$ref": "#/$defs/ProvisioningDeadLettered" },
-    { "$ref": "#/$defs/AuditRecorded" }
+    {
+      "$ref": "#/$defs/InstanceCreateRequested"
+    },
+    {
+      "$ref": "#/$defs/InstancePowerRequested"
+    },
+    {
+      "$ref": "#/$defs/InstanceResizeRequested"
+    },
+    {
+      "$ref": "#/$defs/SnapshotCreateRequested"
+    },
+    {
+      "$ref": "#/$defs/SnapshotRollbackRequested"
+    },
+    {
+      "$ref": "#/$defs/SnapshotDeleteRequested"
+    },
+    {
+      "$ref": "#/$defs/InstanceRetentionRequested"
+    },
+    {
+      "$ref": "#/$defs/InstancePurgeRequested"
+    },
+    {
+      "$ref": "#/$defs/ReconciliationRequested"
+    },
+    {
+      "$ref": "#/$defs/ProvisioningReplayRequested"
+    },
+    {
+      "$ref": "#/$defs/WorkflowProgressed"
+    },
+    {
+      "$ref": "#/$defs/InstanceMutationCompleted"
+    },
+    {
+      "$ref": "#/$defs/InstanceMutationFailed"
+    },
+    {
+      "$ref": "#/$defs/ProvisioningReplayResolved"
+    },
+    {
+      "$ref": "#/$defs/InstanceObserved"
+    },
+    {
+      "$ref": "#/$defs/DriftDetected"
+    },
+    {
+      "$ref": "#/$defs/UnknownOutcomeResolved"
+    },
+    {
+      "$ref": "#/$defs/ManualReviewCreated"
+    },
+    {
+      "$ref": "#/$defs/ProvisioningDeadLettered"
+    },
+    {
+      "$ref": "#/$defs/AuditRecorded"
+    }
   ],
   "$defs": {
     "TraceContext": {
@@ -35,7 +75,10 @@
           "maxLength": 55,
           "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
         },
-        "tracestate": { "type": "string", "maxLength": 512 }
+        "tracestate": {
+          "type": "string",
+          "maxLength": 512
+        }
       }
     },
     "EventEnvelope": {
@@ -55,18 +98,56 @@
         "partitionKey"
       ],
       "properties": {
-        "eventId": { "type": "string", "format": "uuid" },
-        "schemaName": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "schemaVersion": { "type": "integer", "minimum": 1 },
-        "aggregateType": { "type": "string", "minLength": 1, "maxLength": 64 },
-        "aggregateId": { "type": "string", "format": "uuid" },
-        "projectId": { "type": "string", "format": "uuid" },
-        "operationId": { "type": "string", "format": "uuid" },
-        "correlationId": { "type": "string", "format": "uuid" },
-        "causationId": { "type": "string", "format": "uuid" },
-        "occurredAt": { "type": "string", "format": "date-time" },
-        "traceContext": { "$ref": "#/$defs/TraceContext" },
-        "partitionKey": { "type": "string", "minLength": 1, "maxLength": 128 }
+        "eventId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "schemaName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "aggregateType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "aggregateId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "projectId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "operationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "correlationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "causationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "traceContext": {
+          "$ref": "#/$defs/TraceContext"
+        },
+        "partitionKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       }
     },
     "Ipv4Configuration": {
@@ -80,14 +161,25 @@
           "x-classification": "tenant-configuration",
           "x-telemetry": "prohibited"
         },
-        "prefixLength": { "type": "integer", "minimum": 1, "maximum": 32 },
-        "gateway": { "type": "string", "format": "ipv4", "x-telemetry": "prohibited" },
+        "prefixLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "gateway": {
+          "type": "string",
+          "format": "ipv4",
+          "x-telemetry": "prohibited"
+        },
         "dnsServers": {
           "type": "array",
           "minItems": 1,
           "maxItems": 4,
           "uniqueItems": true,
-          "items": { "type": "string", "format": "ipv4" }
+          "items": {
+            "type": "string",
+            "format": "ipv4"
+          }
         }
       }
     },
@@ -96,9 +188,21 @@
       "additionalProperties": false,
       "required": ["cpuCount", "memoryMiB", "diskGiB"],
       "properties": {
-        "cpuCount": { "type": "integer", "minimum": 1, "maximum": 64 },
-        "memoryMiB": { "type": "integer", "minimum": 512, "maximum": 262144 },
-        "diskGiB": { "type": "integer", "minimum": 8, "maximum": 2048 }
+        "cpuCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "memoryMiB": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 262144
+        },
+        "diskGiB": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 2048
+        }
       }
     },
     "Failure": {
@@ -119,22 +223,42 @@
             "manual_review"
           ]
         },
-        "code": { "type": "string", "minLength": 1, "maxLength": 80 },
-        "safeMessage": { "type": "string", "maxLength": 512, "x-classification": "tenant-safe" },
-        "retryAfterMilliseconds": { "type": "integer", "minimum": 1, "maximum": 86400000 }
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "safeMessage": {
+          "type": "string",
+          "maxLength": 512,
+          "x-classification": "tenant-safe"
+        },
+        "retryAfterMilliseconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        }
       }
     },
     "InstanceCreateRequested": {
       "title": "InstanceCreateRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "instance.create.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "instance.create.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
@@ -148,23 +272,47 @@
                 "providerProfileId"
               ],
               "properties": {
-                "imageId": { "type": "string", "minLength": 1, "maxLength": 63 },
-                "flavorId": { "type": "string", "minLength": 1, "maxLength": 63 },
-                "networkId": { "type": "string", "minLength": 1, "maxLength": 63 },
-                "providerProfileId": { "type": "string", "minLength": 1, "maxLength": 63 },
+                "imageId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63
+                },
+                "flavorId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63
+                },
+                "networkId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63
+                },
+                "providerProfileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63
+                },
                 "hostname": {
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 63,
                   "x-classification": "tenant-configuration"
                 },
-                "resources": { "$ref": "#/$defs/Resources" },
-                "ipv4": { "$ref": "#/$defs/Ipv4Configuration" },
+                "resources": {
+                  "$ref": "#/$defs/Resources"
+                },
+                "ipv4": {
+                  "$ref": "#/$defs/Ipv4Configuration"
+                },
                 "sshPublicKeys": {
                   "type": "array",
                   "maxItems": 5,
                   "uniqueItems": true,
-                  "items": { "type": "string", "minLength": 32, "maxLength": 8192 },
+                  "items": {
+                    "type": "string",
+                    "minLength": 32,
+                    "maxLength": 8192
+                  },
                   "x-classification": "tenant-configuration",
                   "x-telemetry": "prohibited"
                 }
@@ -178,20 +326,40 @@
     "InstancePowerRequested": {
       "title": "InstancePowerRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "instance.power.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "instance.power.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["action"],
+              "required": ["action", "providerProfileId", "createOperationId"],
               "properties": {
-                "action": { "type": "string", "enum": ["start", "shutdown", "stop", "reboot"] }
+                "action": {
+                  "type": "string",
+                  "enum": ["start", "shutdown", "stop", "reboot"]
+                },
+                "providerProfileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "createOperationId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
               }
             }
           }
@@ -202,21 +370,44 @@
     "InstanceResizeRequested": {
       "title": "InstanceResizeRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "instance.resize.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "instance.resize.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["flavorId", "targetResources"],
+              "required": ["flavorId", "targetResources", "providerProfileId", "createOperationId"],
               "properties": {
-                "flavorId": { "type": "string", "minLength": 1, "maxLength": 63 },
-                "targetResources": { "$ref": "#/$defs/Resources" }
+                "flavorId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63
+                },
+                "targetResources": {
+                  "$ref": "#/$defs/Resources"
+                },
+                "providerProfileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "createOperationId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
               }
             }
           }
@@ -227,26 +418,50 @@
     "SnapshotCreateRequested": {
       "title": "SnapshotCreateRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "snapshot.create.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "snapshot.create.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["snapshotId", "name"],
+              "required": ["snapshotId", "name", "providerProfileId", "createOperationId"],
               "properties": {
-                "snapshotId": { "type": "string", "format": "uuid" },
-                "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "snapshotId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
                 "description": {
                   "type": "string",
                   "maxLength": 256,
                   "x-classification": "tenant-configuration",
                   "x-telemetry": "prohibited"
+                },
+                "providerProfileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "createOperationId": {
+                  "type": "string",
+                  "format": "uuid"
                 }
               }
             }
@@ -258,19 +473,51 @@
     "SnapshotRollbackRequested": {
       "title": "SnapshotRollbackRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "snapshot.rollback.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "snapshot.rollback.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["snapshotId"],
-              "properties": { "snapshotId": { "type": "string", "format": "uuid" } }
+              "required": [
+                "snapshotId",
+                "providerProfileId",
+                "createOperationId",
+                "providerSnapshotReference"
+              ],
+              "properties": {
+                "snapshotId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "providerProfileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "createOperationId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "providerSnapshotReference": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              }
             }
           }
         }
@@ -280,19 +527,51 @@
     "SnapshotDeleteRequested": {
       "title": "SnapshotDeleteRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "snapshot.delete.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "snapshot.delete.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["snapshotId"],
-              "properties": { "snapshotId": { "type": "string", "format": "uuid" } }
+              "required": [
+                "snapshotId",
+                "providerProfileId",
+                "createOperationId",
+                "providerSnapshotReference"
+              ],
+              "properties": {
+                "snapshotId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "providerProfileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "createOperationId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "providerSnapshotReference": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              }
             }
           }
         }
@@ -302,23 +581,48 @@
     "InstanceRetentionRequested": {
       "title": "InstanceRetentionRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "instance.retention.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "instance.retention.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["retentionDeadline", "leaseReleaseMode"],
+              "required": [
+                "retentionDeadline",
+                "leaseReleaseMode",
+                "providerProfileId",
+                "createOperationId"
+              ],
               "properties": {
-                "retentionDeadline": { "type": "string", "format": "date-time" },
+                "retentionDeadline": {
+                  "type": "string",
+                  "format": "date-time"
+                },
                 "leaseReleaseMode": {
                   "type": "string",
                   "enum": ["quarantine_until_purge", "release_on_retain"]
+                },
+                "providerProfileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "createOperationId": {
+                  "type": "string",
+                  "format": "uuid"
                 }
               }
             }
@@ -330,22 +634,54 @@
     "InstancePurgeRequested": {
       "title": "InstancePurgeRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "instance.purge.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "instance.purge.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["purgeAuthorizationId", "retentionDeadline", "reasonReference"],
+              "required": [
+                "purgeAuthorizationId",
+                "retentionDeadline",
+                "reasonReference",
+                "providerProfileId",
+                "createOperationId"
+              ],
               "properties": {
-                "purgeAuthorizationId": { "type": "string", "format": "uuid" },
-                "retentionDeadline": { "type": "string", "format": "date-time" },
-                "reasonReference": { "type": "string", "format": "uuid" }
+                "purgeAuthorizationId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "retentionDeadline": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "reasonReference": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "providerProfileId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "createOperationId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
               }
             }
           }
@@ -356,19 +692,32 @@
     "ReconciliationRequested": {
       "title": "ReconciliationRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "reconciliation.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "reconciliation.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
               "required": ["reasonReference"],
-              "properties": { "reasonReference": { "type": "string", "format": "uuid" } }
+              "properties": {
+                "reasonReference": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
             }
           }
         }
@@ -378,22 +727,39 @@
     "ProvisioningReplayRequested": {
       "title": "ProvisioningReplayRequestedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "provisioning.replay.requested" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "provisioning.replay.requested"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
               "required": ["replayRequestId", "originalEventId", "requestedAt"],
               "properties": {
-                "replayRequestId": { "type": "string", "format": "uuid" },
-                "originalEventId": { "type": "string", "format": "uuid" },
-                "requestedAt": { "type": "string", "format": "date-time" }
+                "replayRequestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "originalEventId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "requestedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               }
             }
           }
@@ -404,14 +770,22 @@
     "ProvisioningReplayResolved": {
       "title": "ProvisioningReplayResolvedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "provisioning.replay.resolved" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "provisioning.replay.resolved"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
@@ -423,11 +797,26 @@
                 "resolvedAt"
               ],
               "properties": {
-                "replayRequestId": { "type": "string", "format": "uuid" },
-                "originalEventId": { "type": "string", "format": "uuid" },
-                "outcome": { "type": "string", "enum": ["completed", "rejected"] },
-                "replayGeneration": { "type": "integer", "minimum": 0 },
-                "resolvedAt": { "type": "string", "format": "date-time" }
+                "replayRequestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "originalEventId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": ["completed", "rejected"]
+                },
+                "replayGeneration": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "resolvedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               }
             }
           }
@@ -438,21 +827,36 @@
     "WorkflowProgressed": {
       "title": "WorkflowProgressedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "workflow.progressed" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "workflow.progressed"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
               "required": ["stage", "attempt", "operationState"],
               "properties": {
-                "stage": { "type": "string", "minLength": 1, "maxLength": 80 },
-                "attempt": { "type": "integer", "minimum": 1 },
+                "stage": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "attempt": {
+                  "type": "integer",
+                  "minimum": 1
+                },
                 "operationState": {
                   "type": "string",
                   "enum": ["running", "retry_wait", "compensating", "unknown_outcome"]
@@ -463,7 +867,10 @@
                   "x-classification": "restricted-operational",
                   "x-telemetry": "bounded"
                 },
-                "nextActionAt": { "type": "string", "format": "date-time" }
+                "nextActionAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               }
             }
           }
@@ -474,28 +881,50 @@
     "InstanceMutationCompleted": {
       "title": "InstanceMutationCompletedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "instance.mutation.completed" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "instance.mutation.completed"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
               "required": ["action", "lifecycleState", "evidenceId"],
               "properties": {
-                "action": { "type": "string", "minLength": 1, "maxLength": 64 },
-                "lifecycleState": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "action": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "lifecycleState": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
                 "providerResourceId": {
                   "type": "string",
                   "maxLength": 128,
                   "x-classification": "restricted-operational",
                   "x-telemetry": "prohibited"
                 },
-                "evidenceId": { "type": "string", "format": "uuid" }
+                "evidenceId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "observed": {
+                  "$ref": "#/$defs/ObservedState"
+                }
               }
             }
           }
@@ -506,21 +935,35 @@
     "InstanceMutationFailed": {
       "title": "InstanceMutationFailedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "instance.mutation.failed" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "instance.mutation.failed"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
               "required": ["action", "failure", "compensationState"],
               "properties": {
-                "action": { "type": "string", "minLength": 1, "maxLength": 64 },
-                "failure": { "$ref": "#/$defs/Failure" },
+                "action": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "failure": {
+                  "$ref": "#/$defs/Failure"
+                },
                 "compensationState": {
                   "type": "string",
                   "enum": ["not_required", "pending", "succeeded", "failed", "unsafe"]
@@ -535,28 +978,48 @@
     "InstanceObserved": {
       "title": "InstanceObservedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "instance.observed" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "instance.observed"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
               "required": ["exists", "powerState", "markerMatch", "observedAt", "evidenceId"],
               "properties": {
-                "exists": { "type": "boolean" },
+                "exists": {
+                  "type": "boolean"
+                },
                 "powerState": {
                   "type": "string",
                   "enum": ["running", "stopped", "suspended", "unknown"]
                 },
-                "resources": { "$ref": "#/$defs/Resources" },
-                "markerMatch": { "type": "boolean" },
-                "observedAt": { "type": "string", "format": "date-time" },
-                "evidenceId": { "type": "string", "format": "uuid" }
+                "resources": {
+                  "$ref": "#/$defs/Resources"
+                },
+                "markerMatch": {
+                  "type": "boolean"
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "evidenceId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
               }
             }
           }
@@ -567,14 +1030,22 @@
     "DriftDetected": {
       "title": "DriftDetectedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "drift.detected" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "drift.detected"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
@@ -592,8 +1063,13 @@
                     "ambiguous"
                   ]
                 },
-                "dangerous": { "type": "boolean" },
-                "evidenceId": { "type": "string", "format": "uuid" }
+                "dangerous": {
+                  "type": "boolean"
+                },
+                "evidenceId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
               }
             }
           }
@@ -604,14 +1080,22 @@
     "UnknownOutcomeResolved": {
       "title": "UnknownOutcomeResolvedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "unknown_outcome.resolved" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "unknown_outcome.resolved"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
@@ -621,8 +1105,13 @@
                   "type": "string",
                   "enum": ["succeeded", "failed", "manual_review"]
                 },
-                "ownershipProven": { "type": "boolean" },
-                "evidenceId": { "type": "string", "format": "uuid" }
+                "ownershipProven": {
+                  "type": "boolean"
+                },
+                "evidenceId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
               }
             }
           }
@@ -633,20 +1122,31 @@
     "ManualReviewCreated": {
       "title": "ManualReviewCreatedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "manual_review.created" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "manual_review.created"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
               "required": ["reviewId", "category", "summary", "evidenceId"],
               "properties": {
-                "reviewId": { "type": "string", "format": "uuid" },
+                "reviewId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
                 "category": {
                   "type": "string",
                   "enum": [
@@ -662,7 +1162,10 @@
                   "maxLength": 512,
                   "x-classification": "restricted-operational"
                 },
-                "evidenceId": { "type": "string", "format": "uuid" }
+                "evidenceId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
               }
             }
           }
@@ -673,14 +1176,22 @@
     "ProvisioningDeadLettered": {
       "title": "ProvisioningDeadLetteredV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "provisioning.dead_lettered" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "instance" },
+            "schemaName": {
+              "const": "provisioning.dead_lettered"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "instance"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
@@ -694,13 +1205,33 @@
                 "deadLetteredAt"
               ],
               "properties": {
-                "originalEventId": { "type": "string", "format": "uuid" },
-                "originalSchemaName": { "type": "string", "minLength": 1, "maxLength": 120 },
-                "originalSchemaVersion": { "type": "integer", "minimum": 1 },
-                "failure": { "$ref": "#/$defs/Failure" },
-                "attempts": { "type": "integer", "minimum": 1 },
-                "replayAllowed": { "type": "boolean" },
-                "deadLetteredAt": { "type": "string", "format": "date-time" }
+                "originalEventId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "originalSchemaName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "originalSchemaVersion": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "failure": {
+                  "$ref": "#/$defs/Failure"
+                },
+                "attempts": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "replayAllowed": {
+                  "type": "boolean"
+                },
+                "deadLetteredAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
               }
             }
           }
@@ -711,14 +1242,22 @@
     "AuditRecorded": {
       "title": "AuditRecordedV1",
       "allOf": [
-        { "$ref": "#/$defs/EventEnvelope" },
+        {
+          "$ref": "#/$defs/EventEnvelope"
+        },
         {
           "type": "object",
           "required": ["data"],
           "properties": {
-            "schemaName": { "const": "audit.recorded" },
-            "schemaVersion": { "const": 1 },
-            "aggregateType": { "const": "audit" },
+            "schemaName": {
+              "const": "audit.recorded"
+            },
+            "schemaVersion": {
+              "const": 1
+            },
+            "aggregateType": {
+              "const": "audit"
+            },
             "data": {
               "type": "object",
               "additionalProperties": false,
@@ -740,9 +1279,21 @@
                     "service"
                   ]
                 },
-                "action": { "type": "string", "minLength": 1, "maxLength": 80 },
-                "targetType": { "type": "string", "minLength": 1, "maxLength": 80 },
-                "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "action": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "targetType": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "targetId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
                 "outcome": {
                   "type": "string",
                   "enum": ["accepted", "succeeded", "rejected", "failed"]
@@ -759,6 +1310,30 @@
         }
       ],
       "unevaluatedProperties": false
+    },
+    "ObservedState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists", "powerState", "markerMatch", "observedAt"],
+      "properties": {
+        "exists": {
+          "type": "boolean"
+        },
+        "powerState": {
+          "type": "string",
+          "enum": ["running", "stopped", "suspended", "unknown"]
+        },
+        "resources": {
+          "$ref": "#/$defs/Resources"
+        },
+        "markerMatch": {
+          "type": "boolean"
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     }
   },
   "x-max-payload-bytes": 262144,

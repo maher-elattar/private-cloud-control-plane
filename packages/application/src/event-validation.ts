@@ -8,6 +8,7 @@ import type {
   ProvisioningReplayRequestedV1,
   WorkflowProgressedV1,
 } from '@private-cloud/contracts';
+import { WORKFLOW_ACTIONS } from './workflow-stage.js';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -214,12 +215,19 @@ export function isInstanceMutationCompletedV1(
     value.schemaVersion === 1 &&
     value.aggregateType === 'instance' &&
     objectValue(data) &&
-    onlyKeys(data, ['action', 'lifecycleState', 'providerResourceId', 'evidenceId']) &&
-    data.action === 'create_instance' &&
-    data.lifecycleState === 'active' &&
-    stringInRange(data.providerResourceId, 1, 128) &&
+    onlyKeys(data, ['action', 'lifecycleState', 'providerResourceId', 'evidenceId', 'observed']) &&
+    // WHY the action set rather than a literal: this used to require `create_instance` and
+    // `active`, which silently made every other capability's terminal event unprojectable — a
+    // power or resize workflow could never report success. The guard still refuses an action this
+    // deployment does not implement, because an unrecognised one cannot be projected correctly.
+    isWorkflowAction(data.action) &&
+    isInstanceLifecycleState(data.lifecycleState) &&
+    // Optional per the contract: only capabilities that create or re-identify a provider resource
+    // carry it. When present it stays bounded.
+    optional(data.providerResourceId, (value) => stringInRange(value, 1, 128)) &&
     typeof data.evidenceId === 'string' &&
-    uuidPattern.test(data.evidenceId)
+    uuidPattern.test(data.evidenceId) &&
+    optional(data.observed, isObservedState)
   );
 }
 
@@ -234,7 +242,7 @@ export function isInstanceMutationFailedV1(
     value.aggregateType === 'instance' &&
     objectValue(data) &&
     onlyKeys(data, ['action', 'failure', 'compensationState']) &&
-    data.action === 'create_instance' &&
+    isWorkflowAction(data.action) &&
     failureValue(data.failure) &&
     ['not_required', 'pending', 'succeeded', 'failed', 'unsafe'].includes(
       String(data.compensationState),
@@ -280,4 +288,209 @@ function positiveInteger(value: unknown): value is number {
 /** Checks a bounded integer such as an IPv4 prefix length. */
 function integerInRange(value: unknown, minimum: number, maximum: number): value is number {
   return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
+}
+
+/** Lifecycle states the instance read model may be moved to by a terminal event. */
+const INSTANCE_LIFECYCLE_STATES: readonly string[] = [
+  'pending',
+  'provisioning',
+  'active',
+  'updating',
+  'failed',
+  'unknown_outcome',
+  'retained',
+  'purge_pending',
+  'purged',
+  'manual_review',
+];
+
+/** Narrows a terminal event's action to a capability this deployment implements. */
+function isWorkflowAction(value: unknown): boolean {
+  return typeof value === 'string' && (WORKFLOW_ACTIONS as readonly string[]).includes(value);
+}
+
+/** Narrows a terminal event's lifecycle state to the published enumeration. */
+function isInstanceLifecycleState(value: unknown): boolean {
+  return typeof value === 'string' && INSTANCE_LIFECYCLE_STATES.includes(value);
+}
+
+/**
+ * Checks the optional observed block a terminal event may carry.
+ *
+ * `resources` stays optional because an absent measurement and a measured zero are different
+ * claims. A projection that defaulted the absent case would publish desired sizing as though the
+ * provider had confirmed it, which is precisely the drift reconciliation exists to detect.
+ */
+function isObservedState(value: unknown): boolean {
+  if (!objectValue(value)) return false;
+  const resources = value['resources'];
+  return (
+    onlyKeys(value, ['exists', 'powerState', 'resources', 'markerMatch', 'observedAt']) &&
+    typeof value['exists'] === 'boolean' &&
+    ['running', 'stopped', 'suspended', 'unknown'].includes(String(value['powerState'])) &&
+    typeof value['markerMatch'] === 'boolean' &&
+    dateTime(value['observedAt']) &&
+    optional(
+      resources,
+      (candidate) =>
+        objectValue(candidate) &&
+        onlyKeys(candidate, ['cpuCount', 'memoryMiB', 'diskGiB']) &&
+        integerInRange(candidate['cpuCount'], 1, 64) &&
+        integerInRange(candidate['memoryMiB'], 512, 262_144) &&
+        integerInRange(candidate['diskGiB'], 8, 2_048),
+    )
+  );
+}
+
+/**
+ * Checks a power command before it can admit a workflow.
+ *
+ * The action is re-narrowed here even though the API validated it at acceptance: this is the
+ * Kafka trust boundary, and a command arriving from the broker has not necessarily passed through
+ * this deployment's API.
+ */
+export function isInstancePowerRequestedV1(
+  value: EventEnvelope & { readonly data?: unknown },
+): boolean {
+  const data = value.data;
+  return (
+    value.schemaName === 'instance.power.requested' &&
+    value.schemaVersion === 1 &&
+    value.aggregateType === 'instance' &&
+    objectValue(data) &&
+    onlyKeys(data, ['action', 'providerProfileId', 'createOperationId']) &&
+    ['start', 'shutdown', 'stop', 'reboot'].includes(String(data['action'])) &&
+    // The routing identity the workflow needs to reach the provider. Omitting these from the
+    // guard when the schema gained them meant every real power command failed validation and was
+    // dead-lettered — a bug no store-level test could see, because acceptance never runs it.
+    snapshotRouting(data)
+  );
+}
+
+/** Checks a resize command before it can admit a workflow. */
+export function isInstanceResizeRequestedV1(
+  value: EventEnvelope & { readonly data?: unknown },
+): boolean {
+  const data = value.data;
+  if (!objectValue(data)) return false;
+  const resources = data['targetResources'];
+  return (
+    value.schemaName === 'instance.resize.requested' &&
+    value.schemaVersion === 1 &&
+    value.aggregateType === 'instance' &&
+    onlyKeys(data, ['flavorId', 'targetResources', 'providerProfileId', 'createOperationId']) &&
+    stringInRange(data['flavorId'], 1, 63) &&
+    stringInRange(data['providerProfileId'], 1, 64) &&
+    typeof data['createOperationId'] === 'string' &&
+    uuidPattern.test(data['createOperationId']) &&
+    objectValue(resources) &&
+    onlyKeys(resources, ['cpuCount', 'memoryMiB', 'diskGiB']) &&
+    integerInRange(resources['cpuCount'], 1, 64) &&
+    integerInRange(resources['memoryMiB'], 512, 262_144) &&
+    integerInRange(resources['diskGiB'], 8, 2_048)
+  );
+}
+
+/** Checks a snapshot creation command before it can admit a workflow. */
+export function isSnapshotCreateRequestedV1(
+  value: EventEnvelope & { readonly data?: unknown },
+): boolean {
+  const data = value.data;
+  return (
+    value.schemaName === 'snapshot.create.requested' &&
+    value.schemaVersion === 1 &&
+    objectValue(data) &&
+    onlyKeys(data, [
+      'snapshotId',
+      'name',
+      'description',
+      'providerProfileId',
+      'createOperationId',
+    ]) &&
+    typeof data['snapshotId'] === 'string' &&
+    uuidPattern.test(data['snapshotId']) &&
+    stringInRange(data['name'], 1, 63) &&
+    optional(data['description'], (candidate) => stringInRange(candidate, 0, 256)) &&
+    snapshotRouting(data)
+  );
+}
+
+/** Checks a snapshot rollback or delete command before it can admit a workflow. */
+export function isSnapshotActionRequestedV1(
+  value: EventEnvelope & { readonly data?: unknown },
+  schemaName: 'snapshot.rollback.requested' | 'snapshot.delete.requested',
+): boolean {
+  const data = value.data;
+  return (
+    value.schemaName === schemaName &&
+    value.schemaVersion === 1 &&
+    objectValue(data) &&
+    onlyKeys(data, [
+      'snapshotId',
+      'providerSnapshotReference',
+      'providerProfileId',
+      'createOperationId',
+    ]) &&
+    typeof data['snapshotId'] === 'string' &&
+    uuidPattern.test(data['snapshotId']) &&
+    stringInRange(data['providerSnapshotReference'], 1, 128) &&
+    snapshotRouting(data)
+  );
+}
+
+/** The routing identity every snapshot command carries so the workflow can reach the provider. */
+function snapshotRouting(data: Record<string, unknown>): boolean {
+  return (
+    stringInRange(data['providerProfileId'], 1, 64) &&
+    typeof data['createOperationId'] === 'string' &&
+    uuidPattern.test(data['createOperationId'])
+  );
+}
+
+/** Checks a retention command before it can admit a workflow. */
+export function isInstanceRetentionRequestedV1(
+  value: EventEnvelope & { readonly data?: unknown },
+): boolean {
+  const data = value.data;
+  return (
+    value.schemaName === 'instance.retention.requested' &&
+    value.schemaVersion === 1 &&
+    value.aggregateType === 'instance' &&
+    objectValue(data) &&
+    onlyKeys(data, [
+      'retentionDeadline',
+      'leaseReleaseMode',
+      'providerProfileId',
+      'createOperationId',
+    ]) &&
+    dateTime(data['retentionDeadline']) &&
+    ['quarantine_until_purge', 'release_on_retain'].includes(String(data['leaseReleaseMode'])) &&
+    snapshotRouting(data)
+  );
+}
+
+/** Checks a purge command before it can admit a workflow. */
+export function isInstancePurgeRequestedV1(
+  value: EventEnvelope & { readonly data?: unknown },
+): boolean {
+  const data = value.data;
+  return (
+    value.schemaName === 'instance.purge.requested' &&
+    value.schemaVersion === 1 &&
+    value.aggregateType === 'instance' &&
+    objectValue(data) &&
+    onlyKeys(data, [
+      'purgeAuthorizationId',
+      'retentionDeadline',
+      'reasonReference',
+      'providerProfileId',
+      'createOperationId',
+    ]) &&
+    typeof data['purgeAuthorizationId'] === 'string' &&
+    uuidPattern.test(data['purgeAuthorizationId']) &&
+    dateTime(data['retentionDeadline']) &&
+    typeof data['reasonReference'] === 'string' &&
+    uuidPattern.test(data['reasonReference']) &&
+    snapshotRouting(data)
+  );
 }

@@ -1,0 +1,82 @@
+# Sync wave 4 — event-driven autoscaling for the orchestrator.
+#
+# The orchestrator's work arrives as Kafka records and is executed against a provider that takes
+# seconds to answer. CPU is therefore a misleading signal: a worker blocked on a provider call
+# looks idle at exactly the moment the backlog is growing. Consumer-group lag is the honest one.
+#
+# **KEDA scales the `Rollout`, not a `Deployment`.** `scaleTargetRef` names
+# `argoproj.io/v1alpha1 Rollout`, and Argo Rollouts cooperates: it reads the replica count from
+# the scale subresource between rollouts and takes control back while one is in progress, so an
+# autoscaler cannot resize a green ReplicaSet out from under a promotion gate.
+#
+# `minReplicaCount: 2` rather than zero. Scaling a leased worker to zero is not free: an in-flight
+# workflow holds a lease with a fencing token, and the lease has to expire before another worker
+# can take the checkpoint. Two replicas keep the floor above that condition entirely.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: kafka-consumer-lag
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  secretTargetRef:
+    # Strimzi generated both. KEDA reads them from the cluster; the repository names them.
+    - { parameter: sasl, name: control-plane-keda, key: sasl }
+    - { parameter: username, name: control-plane-keda, key: username }
+    - { parameter: password, name: control-plane, key: password }
+    - { parameter: tls, name: control-plane-keda, key: tls }
+    - { parameter: ca, name: control-plane-kafka-cluster-ca-cert, key: ca.crt }
+---
+# The two literal switches KEDA's Kafka scaler needs beside the generated credentials. These are
+# protocol selections, not secrets: `sasl` names the mechanism and `tls` turns transport security
+# on. Keeping them in their own Secret rather than inlining them keeps every value KEDA reads on
+# the same code path.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: control-plane-keda
+  namespace: private-cloud
+  labels: { app.kubernetes.io/part-of: private-cloud-control-plane }
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+type: Opaque
+stringData:
+  sasl: scram_sha512
+  tls: enable
+  username: control-plane
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: provisioning-orchestrator
+  namespace: private-cloud
+  labels:
+    app.kubernetes.io/name: provisioning-orchestrator
+    app.kubernetes.io/part-of: private-cloud-control-plane
+  annotations: { argocd.argoproj.io/sync-wave: '4' }
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: provisioning-orchestrator
+  minReplicaCount: 2
+  maxReplicaCount: 6
+  pollingInterval: 15
+  # Long enough that a burst of commands does not immediately un-scale when the queue drains, and
+  # short enough that idle replicas do not sit on a single-node cluster's memory for an hour.
+  cooldownPeriod: 300
+  triggers:
+    - type: kafka
+      authenticationRef:
+        name: kafka-consumer-lag
+      metadata:
+        bootstrapServers: control-plane-kafka-kafka-bootstrap.private-cloud.svc.cluster.local:9093
+        consumerGroup: provisioning-orchestrator.v1
+        topic: provisioning.commands.v1
+        # One extra replica per ten waiting commands.
+        lagThreshold: '10'
+        # A partition with no committed offset is not evidence of a backlog. Without this, a
+        # freshly created topic reads as maximum lag and scales the worker to its ceiling for
+        # nothing.
+        offsetResetPolicy: latest
+        allowIdleConsumers: 'false'

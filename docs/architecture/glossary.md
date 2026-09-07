@@ -71,11 +71,10 @@ back together.
 - `workflow.outbox` — written by `PostgresWorkflowStore.writeEvent`, in the same transaction
   as each workflow checkpoint.
 
-**Phase 4 note.** Today the reader is a database poller (`PostgresWorkflowStore.receiveCommand`,
-`PostgresProjectionStore.applyNextWorkflowEvent`). Phase 4 replaces the *reader* with
-Debezium and Kafka per ADR [0005](../adr/0005-debezium-transactional-outbox.md). The tables,
-the transaction boundary, and the event contracts do not change. That is the point of the
-pattern.
+**Phase 4 note.** Phase 3 read the outbox with a database poller. Phase 4 replaced that *reader*
+with Debezium and Kafka per ADR [0005](../adr/0005-debezium-transactional-outbox.md); the pollers
+have since been deleted. The tables, the transaction boundary, and the event contracts did not
+change. That is the point of the pattern.
 
 See also [Data Ownership Map](data-ownership.md).
 
@@ -176,10 +175,10 @@ contract. Building it once, when the state actually changes, keeps reads trivial
 `listImages`/`listFlavors`/`listNetworks` read `control.*` directly — catalog data is static
 enough not to need a projection.
 
-**Ordering matters.** The claim query in `applyNextWorkflowEvent` admits an event only if no
-*earlier* unconsumed event exists for the same aggregate. Without that, a `completed` event
-could overtake a `progressed` event and be overwritten by it, leaving an instance
-permanently stuck at `provisioning`.
+**Ordering matters.** Ordering is now the broker's job: commands and events are partitioned by
+`partitionKey`, so everything touching one aggregate lands on one partition and is consumed in
+order. Without that guarantee a `completed` event could overtake a `progressed` event and be
+overwritten by it, leaving an instance permanently stuck at `provisioning`.
 
 ---
 

@@ -17,12 +17,14 @@
     "./control-plane": {
       "private-cloud-control-plane": "./src/generated/proto/privatecloud/controlplane/v1/control_plane.pb.ts",
       "types": "./dist/generated/proto/privatecloud/controlplane/v1/control_plane.pb.d.ts",
-      "import": "./dist/generated/proto/privatecloud/controlplane/v1/control_plane.pb.js"
+      "import": "./dist/generated/proto/privatecloud/controlplane/v1/control_plane.pb.js",
+      "default": "./dist/generated/proto/privatecloud/controlplane/v1/control_plane.pb.js"
     },
     "./provider": {
       "private-cloud-control-plane": "./src/generated/proto/privatecloud/provider/v1/provider.pb.ts",
       "types": "./dist/generated/proto/privatecloud/provider/v1/provider.pb.d.ts",
-      "import": "./dist/generated/proto/privatecloud/provider/v1/provider.pb.js"
+      "import": "./dist/generated/proto/privatecloud/provider/v1/provider.pb.js",
+      "default": "./dist/generated/proto/privatecloud/provider/v1/provider.pb.js"
     }
   },
   "dependencies": {

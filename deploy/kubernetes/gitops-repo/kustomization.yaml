@@ -1,0 +1,6 @@
+# The in-cluster Git repository. Part of bootstrap, not of the GitOps tree: Argo CD cannot
+# reconcile the repository it reads from without a circular dependency.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - repository-server.yaml

@@ -1,0 +1,9 @@
+# Argo Rollouts' own namespace, for the same reason as Argo CD's: the vendored install manifest
+# assumes the namespace exists.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argo-rollouts
+  labels:
+    app.kubernetes.io/part-of: argo-rollouts
+    pod-security.kubernetes.io/enforce: baseline

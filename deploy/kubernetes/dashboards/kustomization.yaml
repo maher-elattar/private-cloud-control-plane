@@ -1,0 +1,9 @@
+# Sync wave 5 — dashboards and alerts.
+#
+# Last, because a dashboard that renders before the series it queries exist is a dashboard full of
+# "no data" panels, and an alert rule that loads before its subject is running fires on absence.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - prometheus-rules.yaml
+  - grafana-dashboard.yaml

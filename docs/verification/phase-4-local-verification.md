@@ -1,13 +1,13 @@
 # Phase 4 Local Verification
 
-- Execution date: 2026-08-31 Africa/Cairo
-- Runtime: Node.js 24.18.0, pnpm 11.3.0, Docker 29.7.1, and Compose 5.4.0
+- Execution date: 2026-09-04 Africa/Cairo
+- Runtime: Node.js 24.18.0, pnpm 11.3.0, Docker 29.7.2, and Compose 5.5.0
 - Dependencies: PostgreSQL 16.10, Apache Kafka 4.1.2 in KRaft mode, Debezium Connect 3.4.3,
   OpenTelemetry Collector Contrib 0.158.0, Tempo 2.10.7, Prometheus 3.12.0, and Grafana 13.1.0
 - Provider: Proxmox adapter over gRPC to a local TLS Proxmox-compatible HTTP simulator; no live
   hypervisor was contacted or mutated
 - Evidence status: `passed`
-- End-to-end duration: 465.4 seconds from clean named volumes
+- End-to-end duration: 625.7 seconds from clean named volumes, including the production image build
 
 The authoritative gate is:
 
@@ -33,6 +33,11 @@ leaves the persistent Compose stack running for inspection.
 | Retry exhaustion | The safely replayable workflow exhausted at exactly eight attempts and entered governed dead-letter recovery |
 | Replay authorization | A denied replay returned HTTP `403`; an authorized replay admitted generation one while retaining the original logical event ID |
 | Replay tracing | The new administrative trace contained one link to the original failed trace rather than using it as a parent |
+| Authorized replay delivery | The generation-one command receipt carried real broker coordinates on `provisioning.commands.v1`; the durable authorization reached `completed` with its `authorized_outbox_id` matching the published outbox row; the broker record itself carried `replay-generation: 1`, the authorized outbox identity, and the preserved W3C carrier |
+| Unauthorized replay command | A delivery for a generation with no matching authorization was quarantined as `REPLAY_COMMAND_UNAUTHORIZED` without consuming the live authorization or reopening a workflow |
+| Conflicting replay identity | A different payload under an already-received generation was quarantined as `REPLAY_COMMAND_IDENTITY_CONFLICT`, proving the two rejection causes are now distinguishable |
+| Duplicate replay request | Repeating the request under the same idempotency key replayed the stored response and created no second authorization |
+| Outbox drain | Both owner outboxes returned to zero unconsumed records, and the exported gauge agreed with the database |
 | Poison delivery | One quarantine record was added and raw payload storage remained false |
 | Restricted telemetry | Prohibited metric-label count, restricted metric values, and restricted trace values were all zero |
 
@@ -40,6 +45,13 @@ The recovery sequence proves two distinct duplicate boundaries. A normal broker 
 generation zero and cannot repeat a provider effect. Governed replay preserves the logical event ID
 but allocates generation one in the authoritative replay transaction. The replay-admitted original
 receipt has no fabricated Kafka coordinates.
+
+The replay drills are deliberately asymmetric, because admission deduplicates on
+`(event_id, replay_generation)` and the payload hash **before** it consults durable authority. A
+byte-identical redelivery of an already-received generation is therefore a duplicate and never
+reaches the authority check — which is correct, and is why the unauthorized-replay drill uses a
+generation with no receipt yet, while the identity-conflict drill mutates the payload under a
+generation that already has one.
 
 Transactional audit publication was also verified with `pnpm run verify:audit-topology`: two Control
 API and three Orchestrator audit facts matched their relational audit entries and reached
@@ -115,10 +127,11 @@ states. Connect's scheduled rebalance delay is bounded to five seconds for deter
 ## Static Evidence
 
 The closing uncached Nx target matrix completed successfully across all 14 workspace projects and
-executed 56 tests. The separately developed console's generated typecheck target is disabled by its
-project configuration; every backend and shared-package typecheck ran normally. Contract
-regeneration remained clean at 39 REST operations, 54 RPCs, 20 event messages, and 888 field rows.
-All four migrations and the seed were idempotently reapplied.
+executed 66 tests, plus three `node:test` cases for the database readiness helper that are now part
+of `pnpm run test` rather than orphaned. The separately developed console's generated typecheck
+target is disabled by its project configuration; every backend and shared-package typecheck ran
+normally. Contract regeneration is stable and validates at 39 REST operations, 54 RPCs, 20 event
+messages, and 895 field rows. All six migrations and the seed were idempotently reapplied.
 
 The standalone audit-topology drill passed twice back-to-back against the populated persistent
 database after its synthetic request identities, broker coordinates, and evidence queries were made

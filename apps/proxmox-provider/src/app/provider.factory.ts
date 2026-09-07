@@ -19,7 +19,14 @@ import {
   ProxmoxProvider,
   type FakeProviderConfiguration,
 } from '@private-cloud/provider-adapters';
-import type { CreateInstanceProviderPort } from '@private-cloud/provider-sdk';
+import type {
+  CreateInstanceProviderPort,
+  PowerProviderPort,
+  PurgeProviderPort,
+  ResizeProviderPort,
+  RetentionProviderPort,
+  SnapshotProviderPort,
+} from '@private-cloud/provider-sdk';
 
 export type LocalFakeProviderScenario =
   | 'ambiguous'
@@ -106,7 +113,12 @@ export function fakeProviderConfiguration(
  * @throws Error if `PROVIDER_ADAPTER` is unrecognised, or if Proxmox mode is selected with
  *   any setting missing or malformed.
  */
-export function createProvider(): CreateInstanceProviderPort {
+export function createProvider(): CreateInstanceProviderPort &
+  PowerProviderPort &
+  ResizeProviderPort &
+  SnapshotProviderPort &
+  RetentionProviderPort &
+  PurgeProviderPort {
   // Defaults to `fake`: selecting a live provider must always be a deliberate act.
   const adapter = process.env.PROVIDER_ADAPTER?.trim() || 'fake';
   if (adapter === 'fake') {

@@ -56,6 +56,8 @@ export type InstancePowerRequestedV1 = EventEnvelope & {
   aggregateType?: 'instance';
   data: {
     action: 'start' | 'shutdown' | 'stop' | 'reboot';
+    providerProfileId: string;
+    createOperationId: string;
   };
 };
 export type InstanceResizeRequestedV1 = EventEnvelope & {
@@ -65,6 +67,8 @@ export type InstanceResizeRequestedV1 = EventEnvelope & {
   data: {
     flavorId: string;
     targetResources: Resources;
+    providerProfileId: string;
+    createOperationId: string;
   };
 };
 export type SnapshotCreateRequestedV1 = EventEnvelope & {
@@ -75,6 +79,8 @@ export type SnapshotCreateRequestedV1 = EventEnvelope & {
     snapshotId: string;
     name: string;
     description?: string;
+    providerProfileId: string;
+    createOperationId: string;
   };
 };
 export type SnapshotRollbackRequestedV1 = EventEnvelope & {
@@ -83,6 +89,9 @@ export type SnapshotRollbackRequestedV1 = EventEnvelope & {
   aggregateType?: 'instance';
   data: {
     snapshotId: string;
+    providerProfileId: string;
+    createOperationId: string;
+    providerSnapshotReference: string;
   };
 };
 export type SnapshotDeleteRequestedV1 = EventEnvelope & {
@@ -91,6 +100,9 @@ export type SnapshotDeleteRequestedV1 = EventEnvelope & {
   aggregateType?: 'instance';
   data: {
     snapshotId: string;
+    providerProfileId: string;
+    createOperationId: string;
+    providerSnapshotReference: string;
   };
 };
 export type InstanceRetentionRequestedV1 = EventEnvelope & {
@@ -100,6 +112,8 @@ export type InstanceRetentionRequestedV1 = EventEnvelope & {
   data: {
     retentionDeadline: string;
     leaseReleaseMode: 'quarantine_until_purge' | 'release_on_retain';
+    providerProfileId: string;
+    createOperationId: string;
   };
 };
 export type InstancePurgeRequestedV1 = EventEnvelope & {
@@ -110,6 +124,8 @@ export type InstancePurgeRequestedV1 = EventEnvelope & {
     purgeAuthorizationId: string;
     retentionDeadline: string;
     reasonReference: string;
+    providerProfileId: string;
+    createOperationId: string;
   };
 };
 export type ReconciliationRequestedV1 = EventEnvelope & {
@@ -151,6 +167,7 @@ export type InstanceMutationCompletedV1 = EventEnvelope & {
     lifecycleState: string;
     providerResourceId?: string;
     evidenceId: string;
+    observed?: ObservedState;
   };
 };
 export type InstanceMutationFailedV1 = EventEnvelope & {
@@ -296,6 +313,13 @@ export interface Ipv4Configuration {
     | [string, string]
     | [string, string, string]
     | [string, string, string, string];
+}
+export interface ObservedState {
+  exists: boolean;
+  powerState: 'running' | 'stopped' | 'suspended' | 'unknown';
+  resources?: Resources;
+  markerMatch: boolean;
+  observedAt: string;
 }
 export interface Failure {
   category:

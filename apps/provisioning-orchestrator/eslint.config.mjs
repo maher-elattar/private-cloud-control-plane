@@ -14,4 +14,5 @@ export default [
       },
     },
   },
+  { ignores: ['**/out-tsc', 'vite.config.ts'] },
 ];
