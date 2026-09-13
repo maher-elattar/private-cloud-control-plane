@@ -1,0 +1,739 @@
+{
+  "capturedAt": "2026-09-13T23:39:26.392Z",
+  "endpoint": "https://testsrv.mosalam.com:8006",
+  "authenticatedAs": "root@pam",
+  "capabilityGroups": [
+    "access",
+    "dc",
+    "mapping",
+    "nodes",
+    "sdn",
+    "storage",
+    "vms"
+  ],
+  "version": {
+    "release": "9.2",
+    "version": "9.2.11",
+    "repoid": "f6997e698c7933ea"
+  },
+  "node": "proxtest",
+  "nodeCount": 1,
+  "clusterOptions": {
+    "allowed-tags": [],
+    "mac_prefix": "BC:24:11",
+    "description": ""
+  },
+  "storage": [
+    {
+      "storage": "SBMazeed",
+      "type": "pbs",
+      "active": 1,
+      "content": "backup"
+    },
+    {
+      "storage": "SBMosalam",
+      "type": "pbs",
+      "active": 1,
+      "content": "backup"
+    },
+    {
+      "storage": "local",
+      "type": "dir",
+      "active": 1,
+      "content": "backup,vztmpl,rootdir,images,iso,snippets"
+    }
+  ],
+  "network": [
+    {
+      "iface": "vmbr200",
+      "type": "bridge",
+      "active": 1,
+      "cidr": "192.168.32.1/20",
+      "address": "192.168.32.1",
+      "bridgePorts": ""
+    },
+    {
+      "iface": "enp41s0.4021",
+      "type": "vlan",
+      "active": 1,
+      "cidr": null,
+      "address": null,
+      "bridgePorts": null
+    },
+    {
+      "iface": "enp41s0.4022",
+      "type": "vlan",
+      "active": 1,
+      "cidr": null,
+      "address": null,
+      "bridgePorts": null
+    },
+    {
+      "iface": "vmbr1",
+      "type": "bridge",
+      "active": 1,
+      "cidr": "192.168.4.1/22",
+      "address": "192.168.4.1",
+      "bridgePorts": ""
+    },
+    {
+      "iface": "vmbr4022",
+      "type": "bridge",
+      "active": 1,
+      "cidr": null,
+      "address": null,
+      "bridgePorts": "enp41s0.4022"
+    },
+    {
+      "iface": "vi1",
+      "type": "bridge",
+      "active": 1,
+      "cidr": "192.168.0.1/22",
+      "address": "192.168.0.1",
+      "bridgePorts": ""
+    },
+    {
+      "iface": "vmbr44",
+      "type": "bridge",
+      "active": 1,
+      "cidr": "192.168.18.1/24",
+      "address": "192.168.18.1",
+      "bridgePorts": ""
+    },
+    {
+      "iface": "enp41s0",
+      "type": "eth",
+      "active": 1,
+      "cidr": "157.90.75.55/28",
+      "address": "157.90.75.55",
+      "bridgePorts": null
+    },
+    {
+      "iface": "vmbr4021",
+      "type": "bridge",
+      "active": 1,
+      "cidr": null,
+      "address": null,
+      "bridgePorts": "enp41s0.4021"
+    }
+  ],
+  "template": {
+    "vmid": 110,
+    "isTemplate": true,
+    "name": "UbuntuNoble24.04",
+    "diskSpecification": "local:110/base-110-disk-0.raw,discard=on,iothread=1,size=32G,ssd=1",
+    "diskGiB": 32,
+    "storage": "local",
+    "cpuCores": 2,
+    "sockets": 1,
+    "memoryMib": "4096",
+    "guestAgent": "1",
+    "cloudInitDrive": "local:110/vm-110-cloudinit.raw,media=cdrom,size=4M",
+    "networkDevice": "virtio=BC:24:11:89:33:77,bridge=vmbr1,firewall=1,mtu=1400",
+    "nameserver": "1.1.1.1",
+    "cloudInitUser": "root",
+    "powerState": "stopped",
+    "configuration": {
+      "sockets": 1,
+      "vmgenid": "7629c62c-0880-4f03-b30b-ada1f33ae2d9",
+      "smbios1": "uuid=8b43bed2-a3e2-4361-b893-1d704893cd3c",
+      "ciuser": "root",
+      "cpu": "host",
+      "cores": 2,
+      "net0": "virtio=BC:24:11:89:33:77,bridge=vmbr1,firewall=1,mtu=1400",
+      "cipassword": "<redacted>",
+      "onboot": 0,
+      "memory": "4096",
+      "template": 1,
+      "meta": "creation-qemu=9.2.0,ctime=1754844279",
+      "machine": "q35",
+      "searchdomain": "1.1.1.1",
+      "scsihw": "virtio-scsi-single",
+      "ide2": "none,media=cdrom",
+      "nameserver": "1.1.1.1",
+      "name": "UbuntuNoble24.04",
+      "numa": 0,
+      "ide0": "local:110/vm-110-cloudinit.raw,media=cdrom,size=4M",
+      "vcpus": 2,
+      "agent": "1",
+      "sshkeys": "<redacted>",
+      "ostype": "l26",
+      "scsi0": "local:110/base-110-disk-0.raw,discard=on,iothread=1,size=32G,ssd=1",
+      "digest": "04b6cadfd13b74011bb1007888bd805cd3768d3d",
+      "boot": "order=scsi0;ide2;net0"
+    }
+  },
+  "inventory": {
+    "virtualMachineCount": 211,
+    "lowestVmid": 101,
+    "highestVmid": 317,
+    "attachedToExpectedBridge": 134,
+    "configurationScanMs": 1866,
+    "configurationScanConcurrency": 12,
+    "estimatedSerialScanSeconds": 22
+  },
+  "reservedRange": {
+    "minimum": 910000,
+    "maximum": 910099,
+    "occupied": [],
+    "free": true,
+    "nextIdRestriction": null
+  },
+  "addressesInUseOnBridge": {
+    "bridge": "vmbr1",
+    "cidr": "192.168.4.1/22",
+    "count": 110,
+    "addresses": [
+      {
+        "address": "192.168.7.102",
+        "vmid": 126,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.103",
+        "vmid": 134,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.106",
+        "vmid": 139,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.107",
+        "vmid": 146,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.108",
+        "vmid": 149,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.111",
+        "vmid": 242,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.112",
+        "vmid": 241,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.115",
+        "vmid": 238,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.116",
+        "vmid": 237,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.117",
+        "vmid": 209,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.118",
+        "vmid": 236,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.119",
+        "vmid": 127,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.120",
+        "vmid": 235,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.121",
+        "vmid": 170,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.125",
+        "vmid": 234,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.126",
+        "vmid": 232,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.127",
+        "vmid": 231,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.128",
+        "vmid": 229,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.129",
+        "vmid": 228,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.130",
+        "vmid": 230,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.131",
+        "vmid": 226,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.132",
+        "vmid": 225,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.133",
+        "vmid": 224,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.134",
+        "vmid": 222,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.135",
+        "vmid": 221,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.136",
+        "vmid": 220,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.137",
+        "vmid": 218,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.138",
+        "vmid": 219,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.139",
+        "vmid": 217,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.140",
+        "vmid": 216,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.141",
+        "vmid": 215,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.143",
+        "vmid": 214,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.146",
+        "vmid": 227,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.148",
+        "vmid": 212,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.149",
+        "vmid": 211,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.150",
+        "vmid": 210,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.151",
+        "vmid": 208,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.152",
+        "vmid": 207,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.154",
+        "vmid": 206,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.155",
+        "vmid": 192,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.156",
+        "vmid": 205,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.157",
+        "vmid": 203,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.158",
+        "vmid": 201,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.159",
+        "vmid": 202,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.160",
+        "vmid": 200,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.161",
+        "vmid": 199,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.164",
+        "vmid": 213,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.166",
+        "vmid": 196,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.167",
+        "vmid": 194,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.168",
+        "vmid": 193,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.169",
+        "vmid": 191,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.170",
+        "vmid": 190,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.172",
+        "vmid": 189,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.173",
+        "vmid": 188,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.174",
+        "vmid": 187,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.180",
+        "vmid": 185,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.181",
+        "vmid": 184,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.182",
+        "vmid": 183,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.183",
+        "vmid": 156,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.184",
+        "vmid": 182,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.185",
+        "vmid": 181,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.188",
+        "vmid": 179,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.189",
+        "vmid": 177,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.191",
+        "vmid": 195,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.192",
+        "vmid": 176,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.194",
+        "vmid": 178,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.195",
+        "vmid": 173,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.196",
+        "vmid": 175,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.197",
+        "vmid": 122,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.198",
+        "vmid": 167,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.199",
+        "vmid": 204,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.200",
+        "vmid": 171,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.201",
+        "vmid": 169,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.202",
+        "vmid": 136,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.203",
+        "vmid": 166,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.204",
+        "vmid": 261,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.205",
+        "vmid": 161,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.206",
+        "vmid": 160,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.207",
+        "vmid": 159,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.211",
+        "vmid": 243,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.213",
+        "vmid": 239,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.214",
+        "vmid": 233,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.215",
+        "vmid": 158,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.216",
+        "vmid": 172,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.217",
+        "vmid": 197,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.220",
+        "vmid": 153,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.221",
+        "vmid": 152,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.222",
+        "vmid": 150,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.223",
+        "vmid": 151,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.226",
+        "vmid": 147,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.227",
+        "vmid": 148,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.229",
+        "vmid": 144,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.230",
+        "vmid": 168,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.233",
+        "vmid": 143,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.234",
+        "vmid": 142,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.236",
+        "vmid": 223,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.238",
+        "vmid": 128,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.239",
+        "vmid": 141,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.240",
+        "vmid": 137,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.241",
+        "vmid": 140,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.242",
+        "vmid": 299,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.244",
+        "vmid": 125,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.245",
+        "vmid": 123,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.246",
+        "vmid": 154,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.247",
+        "vmid": 120,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.248",
+        "vmid": 119,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.249",
+        "vmid": 117,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.250",
+        "vmid": 116,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.251",
+        "vmid": 121,
+        "prefixLength": 22
+      },
+      {
+        "address": "192.168.7.252",
+        "vmid": 118,
+        "prefixLength": 22
+      }
+    ]
+  }
+}
