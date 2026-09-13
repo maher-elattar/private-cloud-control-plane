@@ -64,6 +64,11 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | Phase 6 token acquisition       | `mermaid/phase-6-token-acquisition.mmd` | `rendered/phase-6-token-acquisition.mermaid.svg` |
 | Phase 6 API request path        | `mermaid/phase-6-api-request-path.mmd` | `rendered/phase-6-api-request-path.mermaid.svg` |
 | Phase 6 manifest map            | `mermaid/phase-6-manifest-map.mmd`     | `rendered/phase-6-manifest-map.mermaid.svg`   |
+| VPC physical topology           | `mermaid/vpc-physical-topology.mmd`    | `rendered/vpc-physical-topology.mermaid.svg`  |
+| VPC tenant isolation            | `mermaid/vpc-tenant-isolation.mmd`     | `rendered/vpc-tenant-isolation.mermaid.svg`   |
+| VPC control-plane model         | `mermaid/vpc-control-plane-model.mmd`  | `rendered/vpc-control-plane-model.mermaid.svg` |
+| VPC SDN apply serialization     | `mermaid/vpc-sdn-apply-serialization.mmd` | `rendered/vpc-sdn-apply-serialization.mermaid.svg` |
+| VPC instance dual NIC           | `mermaid/vpc-instance-dual-nic.mmd`    | `rendered/vpc-instance-dual-nic.mermaid.svg`  |
 
 ## Mermaid Editing And Validation
 

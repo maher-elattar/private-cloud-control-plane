@@ -1,0 +1,37 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"flowchart":{"useMaxWidth":false,"nodeSpacing":45,"rankSpacing":60}}}%%
+flowchart TB
+  subgraph REQ["Concurrent tenant intent"]
+    R1["tenant A - create VPC"]
+    R2["tenant B - create subnet"]
+    R3["tenant C - delete subnet"]
+  end
+
+  Q["SDN change queue<br/>control.sdn_changes<br/>one row per pending mutation"]
+  LOCK{"global SDN advisory lock<br/>single writer, cluster-wide"}
+
+  subgraph CRITICAL["Serialized critical section - one at a time, never concurrent"]
+    direction TB
+    S1["1. write the SDN objects<br/>terraform apply, platform workspace"]
+    S2["2. read back pending state<br/>zone.pending must name only this change"]
+    S3{"3. foreign pending config present?"}
+    S4["4. snapshot current known-good SDN config"]
+    S5["5. PUT /cluster/sdn<br/>direct API call, not a Terraform resource"]
+    S6["6. verify every node converged"]
+    S1 --> S2 --> S3
+    S3 -- no --> S4 --> S5 --> S6
+  end
+
+  OK["mark change applied<br/>record new known-good snapshot"]
+  MR["manual_review<br/>never auto-apply someone else's pending config"]
+  FAIL["re-apply last known-good snapshot<br/>Proxmox has no SDN rollback of its own"]
+
+  R1 --> Q
+  R2 --> Q
+  R3 --> Q
+  Q --> LOCK --> CRITICAL
+  S3 -- yes --> MR
+  S6 -- converged --> OK
+  S6 -- "node did not converge" --> FAIL --> MR
+
+  WHY["WHY this exists:<br/>PUT /cluster/sdn applies ALL pending SDN config cluster-wide.<br/>Two concurrent tenant applies would each publish the other's<br/>half-written configuration. This is the one place in the system<br/>where per-tenant isolation is impossible and a global lock is the fix."]
+  LOCK -.-> WHY

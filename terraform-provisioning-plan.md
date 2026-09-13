@@ -4,7 +4,13 @@ Replacing the direct Proxmox API adapter with the `bpg/proxmox` Terraform provid
 first-class inventory of Terraform state.
 
 **Status:** research and design only. Nothing in this plan has been implemented. It is written to
-be executed against a live Proxmox test server once one is available.
+be executed against a **single standalone Proxmox test server** once one is available.
+
+**Deferred.** Software-defined networking — VPCs, EVPN zones, VRFs, AZ-scoped subnets, public
+addressing — is **out of scope here** and parked in
+[Tenant VPC Topology](vpc-topology-plan.md), which is unscheduled and should not be started
+alongside this work. This plan changes only _how_ the existing lifecycle workflow reaches Proxmox.
+See §1.1.
 
 ---
 
@@ -30,6 +36,51 @@ Two things must **not** change, and the plan is built around them:
 
 Terraform makes the second point harder, not easier. That is the central risk in this plan and
 section 6 is devoted to it.
+
+### 1.1 Scope and non-goals
+
+**In scope: the nine lifecycle capabilities that exist today, executed through Terraform instead
+of through hand-written HTTP calls.** Create, observed status, power, CPU and memory resize, disk
+growth, snapshots, soft deletion, administrative purge, reconciliation. The REST and gRPC
+contracts, the event schemas, the workflow stages, the lease and fencing model, and the
+authorization rules are all unchanged. A caller cannot tell which adapter served their request.
+
+**Explicitly deferred, and not to be designed into this work:**
+
+| Deferred                                                 | Where it goes                               |
+| -------------------------------------------------------- | ------------------------------------------- |
+| VPCs, EVPN zones, VRFs, overlapping tenant address space | [Tenant VPC Topology](vpc-topology-plan.md) |
+| Tenant-managed subnets, VNets, VNIs, anycast gateways    | same                                        |
+| Availability zones and placement across failure domains  | same                                        |
+| Public addressing, exit nodes, SNAT                      | same                                        |
+| Cluster-wide SDN apply and its global writer             | same                                        |
+| HA groups, live migration, cross-node replication        | same                                        |
+
+Networking stays exactly what it is today: one allowlisted bridge and one address pool that a
+platform operator seeds into `control.networks`, with `allocateIpv4` leasing out of it. The
+module takes a bridge name and an address; it does not create networks.
+
+This matters for more than scope discipline. The SDN work introduces an operation whose blast
+radius is an entire cluster rather than one VM, and it needs a Terraform runner that has already
+been proven against real hardware. Building both at once would mean debugging a new execution
+engine and a new class of outage at the same time.
+
+### 1.2 The test environment is one standalone node
+
+Verification runs against **a single Proxmox server, not a cluster.** That is a simplification,
+and the plan leans on it deliberately:
+
+- **`node_name` is a single fixed value.** No placement, no node selection, no `/cluster/nextid`.
+  The module sets `migrate = false`, so a node change would be a replacement — and §6.1's gate
+  refuses replacements, which is the behaviour we want.
+- **No shared storage, no HA, no migration.** One storage id, allowlisted.
+- **Cluster-scoped resources are not used at all.** No `proxmox_virtual_environment_cluster_*`,
+  no SDN resources, no HA resources. The API token can therefore be scoped to a single pool.
+- **Concurrency still gets tested properly.** Per-instance workspace locking (§4.2) is a property
+  of PostgreSQL, not of Proxmox, so the containerized layer exercises it fully without a cluster.
+
+Nothing in the design assumes a single node in a way that would have to be unpicked later — a
+cluster would add node selection above this layer, not change the per-instance model beneath it.
 
 ---
 
@@ -321,7 +372,8 @@ The single exception is the purge workflow, which passes an explicit
 and it already carries the `verifying_purge` stage that proves live provider ownership before
 acting (SAFE-006).
 
-This gate is mechanical, it is unit-testable against recorded plan JSON with no cluster, and it
+This gate is mechanical, it is unit-testable against recorded plan JSON with no server at all,
+and it
 is strictly stronger than anything the current adapter has — today's adapter is safe because it
 simply has no delete code, which stops being true the moment Terraform can emit one.
 
@@ -525,27 +577,34 @@ explicit operation cap SAFE-030 requires.
 | **Runner crash mid-apply**                           | Advisory lock self-releases; import-on-resume (§6.5) handles the orphan window; Job-backed runs survive pod restarts                                                                                                                                                                             |
 | **Provider bugs affecting real hardware**            | Exact version pin, committed lock file, air-gapped mirror, no floating constraints                                                                                                                                                                                                               |
 | **Scope**                                            | This touches the most dangerous file in the repository. The direct adapter must be kept and selectable by `PROVIDER_ADAPTER` throughout — Terraform is a third option beside `fake` and `proxmox`, not a replacement, until T-15 passes                                                          |
+| **Networking creeping back in**                      | The deferred SDN work (§1.1) would add an operation whose blast radius is a whole cluster. It must not be designed into the module, the runner, or the inventory schema "for later" — a `vnet` variable nobody sets is still a commitment. Revisit only after T-15                               |
 
 ---
 
 ## 11. What I need from the test server
 
-Before T-14:
+One standalone Proxmox host is enough. Before T-14:
 
-- **Endpoint and API token** with the privileges bpg needs for the VM lifecycle: `VM.Allocate`,
-  `VM.Clone`, `VM.Config.*`, `VM.PowerMgmt`, `VM.Audit`, `Datastore.AllocateSpace`,
-  `Datastore.Audit`, and — for the direct-API half — `VM.Snapshot` and `VM.Snapshot.Rollback`.
-  Scoped to the lab pool, not cluster-wide.
+- **Endpoint and an API token** with the privileges bpg needs for the VM lifecycle:
+  `VM.Allocate`, `VM.Clone`, `VM.Config.*`, `VM.PowerMgmt`, `VM.Audit`,
+  `Datastore.AllocateSpace`, `Datastore.Audit`, and — for the direct-API half — `VM.Snapshot`
+  and `VM.Snapshot.Rollback`. Scoped to one lab pool. No cluster, SDN, HA, or node-configuration
+  privileges: this plan calls none of those APIs, and a token that cannot reach them is a
+  boundary rather than a promise.
 - **A cloud-init-ready template VMID.** Inline cloud-init needs a template with the cloud-init
   drive and `qemu-guest-agent`; without the agent, `observeInstance` cannot read guest IPs.
 - **The reserved VMID range** to use. The current adapter uses `910000–910099`; confirm that is
   free on the test server or name another.
-- **Node name, storage id, and bridge**, to fill the allowlist that has no defaults.
+- **The node name, storage id, and bridge** — one value each, to fill the allowlist that has no
+  defaults.
 - **Whether the TLS certificate is trusted or self-signed.** The current adapter never disables
   verification and that must not change; a self-signed certificate means providing the CA to the
   runner image rather than setting `insecure = true`.
 - **Confirmation that snippets are not needed** — if inline cloud-init is genuinely sufficient
   (§2), no SSH access to the node is required at all, which keeps the blast radius much smaller.
+
+Not needed, and deliberately not requested: a second node, shared storage, a cluster quorum, or
+any SDN configuration.
 
 ## 12. Open questions for you
 

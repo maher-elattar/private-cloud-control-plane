@@ -1,0 +1,32 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"flowchart":{"useMaxWidth":false,"nodeSpacing":45,"rankSpacing":60}}}%%
+flowchart TB
+  subgraph FABRIC["One EVPN fabric - VNIs are globally unique, CIDRs are not"]
+    direction TB
+
+    subgraph TA["Tenant A - EVPN zone, VRF VNI 10001"]
+      direction TB
+      TA1["VNet vni 11001<br/>10.50.10.0/24 - AZ-A"]
+      TA2["VNet vni 11002<br/>10.50.20.0/24 - AZ-B"]
+      TA3["VNet vni 11003<br/>10.50.30.0/24 - AZ-C"]
+      TAG["distributed anycast gateway<br/>same .1 on every node"]
+      TA1 --- TAG
+      TA2 --- TAG
+      TA3 --- TAG
+    end
+
+    subgraph TB2["Tenant B - EVPN zone, VRF VNI 20001"]
+      direction TB
+      TB1["VNet vni 21001<br/>10.50.10.0/24 - AZ-A"]
+      TB2b["VNet vni 21002<br/>10.50.20.0/24 - AZ-B"]
+      TB3["VNet vni 21003<br/>10.50.30.0/24 - AZ-C"]
+      TBG["distributed anycast gateway"]
+      TB1 --- TBG
+      TB2b --- TBG
+      TB3 --- TBG
+    end
+  end
+
+  NOTE["Identical CIDRs are legal because the VRFs<br/>are separate routing tables.<br/>The cost: VPC peering between them is impossible<br/>without NAT or renumbering - same rule as AWS."]
+
+  TA -.-> NOTE
+  TB2 -.-> NOTE

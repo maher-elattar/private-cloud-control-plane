@@ -1,0 +1,26 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"flowchart":{"useMaxWidth":false,"nodeSpacing":45,"rankSpacing":60}}}%%
+flowchart LR
+  subgraph VM["Instance - two NICs, two MTUs, one default route"]
+    direction TB
+    N0["net0 - private<br/>bridge = tenant VNet<br/>10.50.10.20/24<br/>MTU 1370"]
+    N1["net1 - public, optional<br/>bridge = vmbr4000<br/>routed public /28<br/>MTU 1400"]
+    RT["routing<br/>default via public gateway<br/>VPC CIDR via VNet gateway"]
+    N0 --- RT
+    N1 --- RT
+  end
+
+  VNET["EVPN VNet<br/>anycast gateway .1"]
+  PUB["vmbr4000<br/>Hetzner routed subnet gateway"]
+  PEER["another instance in the same VPC<br/>different AZ, different node"]
+  INET["Internet"]
+
+  N0 --> VNET
+  N1 --> PUB
+  VNET --> PEER
+  PUB --> INET
+
+  MTUNOTE["MTU budget<br/>1500 minus WireGuard ~80 minus VXLAN ~50 = 1370 private<br/>1400 public, set by Hetzner vSwitch<br/>both written by cloud-init, never guessed by the guest"]
+  MATH["Capacity ceiling<br/>32 MACs per vSwitch port means at most ~32<br/>public NICs per node before frames are dropped.<br/>The control plane refuses allocation past the cap."]
+
+  RT -.-> MTUNOTE
+  N1 -.-> MATH

@@ -269,6 +269,13 @@ Start here if you are new to the codebase. It is not a conventional `Controller 
 - [Contracts and Provider Port](docs/architecture/contracts-and-provider-port.md): wire authorities, compatibility rules, provider outcomes, and conformance behavior
 - [Quality Gates](docs/architecture/quality-gates.md): CI stages, failure policy, dependency audit, and container scanning
 
+### Planned Work
+
+These are design documents for work that has not been implemented. They are plans, not descriptions of the system.
+
+- [Terraform-Backed Provisioning](terraform-provisioning-plan.md): replacing the direct Proxmox API adapter with the `bpg/proxmox` Terraform provider, the per-instance state model, the plan gate that refuses any destructive plan, and the state inventory. Verified against a single standalone Proxmox server
+- [Tenant VPC Topology](vpc-topology-plan.md) — **deferred, not scheduled**: multi-tenant SDN — VPCs with overlapping address space, AZ-scoped subnets, public addressing, and the serialized global writer that a cluster-wide SDN apply forces. Needs a multi-node cluster and is not part of the Terraform work
+
 ### Security and Decisions
 
 - [Trust Boundaries](docs/security/trust-boundaries.md): identities, crossings, required controls, and network intent

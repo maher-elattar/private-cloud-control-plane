@@ -1,0 +1,47 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"flowchart":{"useMaxWidth":false,"nodeSpacing":45,"rankSpacing":60}}}%%
+flowchart TB
+  NET["Public Internet"]
+
+  subgraph EDGE["Hetzner public edge - outside every tenant VRF"]
+    VS["vSwitch VLAN 4000 - vmbr4000<br/>routed public subnets, MTU 1400<br/>hard limit 32 MAC addresses per port"]
+  end
+
+  subgraph FAB["SDN fabric underlay - platform infrastructure, bootstrapped once"]
+    WG["WireGuard fabric - PVE 9.2<br/>encrypted node-to-node transport<br/>no Terraform resource exists"]
+    EVPN["EVPN controller over the fabric<br/>BGP control plane, ASN 65000"]
+  end
+
+  subgraph AZA["AZ-A - failure domain"]
+    N1["node A<br/>public vmbr0"]
+    Z1[("local ZFS")]
+  end
+  subgraph AZB["AZ-B - failure domain"]
+    N2["node B<br/>public vmbr0"]
+    Z2[("local ZFS")]
+  end
+  subgraph AZC["AZ-C - failure domain"]
+    N3["node C<br/>public vmbr0"]
+    Z3[("local ZFS")]
+  end
+
+  NET --> VS
+  NET --- N1
+  NET --- N2
+  NET --- N3
+
+  N1 --- WG
+  N2 --- WG
+  N3 --- WG
+  WG --> EVPN
+
+  N1 --- Z1
+  N2 --- Z2
+  N3 --- Z3
+
+  Z1 -. "async ZFS replication - RPO 0 to 60s<br/>NOT synchronous multi-AZ storage" .-> Z2
+  Z2 -. "async" .-> Z3
+  Z3 -. "async" .-> Z1
+
+  VS -. "second NIC on selected VMs only" .-> N1
+  VS -.-> N2
+  VS -.-> N3

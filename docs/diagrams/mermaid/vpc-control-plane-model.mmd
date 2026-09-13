@@ -1,0 +1,40 @@
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, Arial, sans-serif","primaryColor":"#e0f2fe","primaryBorderColor":"#0369a1","secondaryColor":"#dcfce7","secondaryBorderColor":"#15803d","tertiaryColor":"#fef3c7","tertiaryBorderColor":"#b45309","lineColor":"#475569","actorBkg":"#f8fafc","actorBorder":"#475569","signalColor":"#334155","noteBkgColor":"#fef9c3","noteBorderColor":"#ca8a04"},"flowchart":{"useMaxWidth":false,"nodeSpacing":45,"rankSpacing":60}}}%%
+flowchart LR
+  subgraph CP["Control-plane aggregates - authoritative intent"]
+    direction TB
+    PRJ["Project<br/>existing tenant boundary"]
+    VPC["Vpc<br/>address plan, VRF VNI"]
+    SUB["Subnet<br/>CIDR, gateway, MTU, AZ, VNet VNI"]
+    INS["Instance<br/>existing aggregate"]
+    LEASE["Ipv4Lease<br/>existing - re-scoped to subnet"]
+    PIP["PublicIpAddress<br/>new platform pool"]
+    AZ["AvailabilityZone<br/>platform catalog, maps to a node"]
+
+    PRJ --> VPC --> SUB
+    SUB --> LEASE
+    INS --> LEASE
+    INS --> PIP
+    SUB --> AZ
+  end
+
+  subgraph PVE["Proxmox SDN objects - derived, never authoritative"]
+    direction TB
+    ZONE["EVPN zone<br/>proxmox_sdn_zone_evpn"]
+    VNET["VNet<br/>proxmox_sdn_vnet"]
+    PSUB["Subnet<br/>proxmox_sdn_subnet"]
+    HA["HA node-affinity rule<br/>proxmox_harule"]
+    REP["ZFS replication job<br/>proxmox_replication"]
+    APPLY["cluster SDN apply<br/>PUT /cluster/sdn"]
+  end
+
+  VPC ==> ZONE
+  SUB ==> VNET
+  SUB ==> PSUB
+  AZ ==> HA
+  INS ==> REP
+  ZONE --> APPLY
+  VNET --> APPLY
+  PSUB --> APPLY
+
+  RULE["Rule that holds the whole design together:<br/>Postgres holds intent. Proxmox holds a projection of it.<br/>When they disagree that is drift to report - SAFE-029 -<br/>never a conflict to resolve automatically."]
+  CP -.-> RULE
