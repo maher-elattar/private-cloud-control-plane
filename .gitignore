@@ -20,11 +20,35 @@ playwright-report/
 *.key
 *.p12
 
+# Provider credentials supplied for local testing. Never committed: SAFE-036 governs what enters
+# history, and a credentials file is the one thing that must never reach it.
+/terraformProxServerTestCredntails.txt
+
+# Terraform and OpenTofu working state.
+#
+# WHY `*.tfstate*` is a secrets pattern and not build output: state records every attribute of
+# every resource, including the cloud-init user password and any SSH key material. It is
+# credential material that happens to be JSON.
+#
+# `.terraform.lock.hcl` is deliberately NOT ignored — the dependency lock is meant to be
+# committed, and pinning the provider by hash is a supply-chain control. `.terraform/` carries a
+# trailing slash so it matches only the plugin cache directory, never that lock file.
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+.terraform/
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+
 # Tool and operating-system state
 .DS_Store
 .idea/
 .vscode/
 *.log
+.*.kate-swp
 
 
 
