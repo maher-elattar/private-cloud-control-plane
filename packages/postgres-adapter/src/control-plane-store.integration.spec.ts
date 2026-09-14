@@ -984,3 +984,133 @@ describe('acceptPurge', () => {
     expect(second.operationId).toBe(first.operationId);
   });
 });
+
+/**
+ * The live test server's catalog rows, seeded additively by `db/seeds/0002_proxmox_testsrv.sql`.
+ *
+ * WHY this is tested here rather than only by the configuration cross-check: the cross-check
+ * proves the rows agree with the `PROXMOX_*` environment, which is a different claim from the
+ * rows being *mutually* consistent enough for acceptance to succeed. `loadAcceptanceContext`
+ * resolves the provider profile through the image and refuses unless
+ * `profile.network_id = network.id`, so a self-inconsistent trio is rejected with a message that
+ * blames the catalog generally. These cases prove the trio actually accepts a create, and that
+ * the allocator hands out an address clear of the 110 measured as already live on that bridge.
+ */
+describe('the live test server catalog', () => {
+  const testsrvProjectId = '00000000-0000-4000-8000-0000000000a1';
+
+  const testsrvActor: Actor = {
+    subject: 'integration-actor',
+    roles: ['tenant_developer'],
+    projects: [testsrvProjectId],
+  };
+
+  function testsrvCommand(overrides: Partial<CreateInstanceCommand> = {}): CreateInstanceCommand {
+    return {
+      actor: testsrvActor,
+      projectId: testsrvProjectId,
+      idempotencyKey: `key-${randomUUID()}`,
+      correlationId: randomUUID(),
+      traceparent: `00-${randomUUID().replaceAll('-', '')}-0123456789abcdef-01`,
+      imageId: 'ubuntu-noble-2404',
+      flavorId: 'lab-small',
+      networkId: 'testsrv-vmbr1',
+      hostname: `tf-${randomUUID().slice(0, 8)}`,
+      sshPublicKeys: [],
+      ...overrides,
+    };
+  }
+
+  it('accepts a create and allocates clear of the addresses already live on the bridge', async () => {
+    const input = testsrvCommand();
+    const accepted = await store.acceptCreate(input, hashOf(input));
+
+    expect(accepted.operationId).toBeTruthy();
+
+    const lease = await db
+      .selectFrom('control.ipv4_leases')
+      .selectAll()
+      .where('network_id', '=', 'testsrv-vmbr1')
+      .where('state', '=', 'active')
+      .executeTakeFirstOrThrow();
+
+    // The allocator returns the lowest free address. .1 is the gateway and is always excluded,
+    // so the first instance must land on .2 — a long way below the occupied 192.168.7.x region.
+    expect(lease.address).toBe('192.168.4.2');
+
+    const instance = await db
+      .selectFrom('control.instances')
+      .selectAll()
+      .where('id', '=', accepted.targetId)
+      .executeTakeFirstOrThrow();
+
+    expect(instance.provider_profile_id).toBe('proxmox-testsrv');
+    // lab-small must equal template 110 exactly, or assertResources refuses every create.
+    // These are bigint columns, so pg hands them back as strings.
+    expect(Number(instance.desired_disk_gib)).toBe(32);
+    expect(Number(instance.desired_cpu_count)).toBe(2);
+    expect(Number(instance.desired_memory_mib)).toBe(4096);
+  });
+
+  it('never allocates an address that the survey measured as already live', async () => {
+    const network = await db
+      .selectFrom('control.networks')
+      .selectAll()
+      .where('id', '=', 'testsrv-vmbr1')
+      .executeTakeFirstOrThrow();
+
+    const exclusions = new Set(network.exclusions as readonly string[]);
+    expect(exclusions.size).toBeGreaterThan(0);
+
+    // The project quota deliberately caps this at three instances (SAFE-030), so exhaust it and
+    // assert every address handed out avoided the exclusion list.
+    const handed: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const input = testsrvCommand();
+      await store.acceptCreate(input, hashOf(input));
+    }
+    const leases = await db
+      .selectFrom('control.ipv4_leases')
+      .select(['address'])
+      .where('network_id', '=', 'testsrv-vmbr1')
+      .where('state', '=', 'active')
+      .execute();
+    for (const lease of leases) handed.push(String(lease.address));
+
+    expect(handed).toHaveLength(3);
+    for (const address of handed) expect(exclusions.has(address)).toBe(false);
+    expect(handed).not.toContain('192.168.4.1');
+  });
+
+  it('enforces the tight live-hardware quota', async () => {
+    for (let index = 0; index < 3; index += 1) {
+      const input = testsrvCommand();
+      await store.acceptCreate(input, hashOf(input));
+    }
+    // The fourth must be refused. On real hardware the quota is the cap that keeps a runaway loop
+    // from consuming the reserved VMID interval.
+    const beyond = testsrvCommand();
+    await expect(store.acceptCreate(beyond, hashOf(beyond))).rejects.toThrowError(DomainError);
+  });
+
+  it('has a restore entry for every seeded project quota', async () => {
+    // `resetIntegrationState` restores quotas per project, because one project's cap is
+    // deliberately tighter than another's. A seeded project missing from that map would have its
+    // quota left wherever a previous test moved it — and for the live-hardware project that means
+    // a safety cap silently widened. Asserting the map against the database is what keeps the two
+    // in step as seeds are added.
+    const quotas = await db.selectFrom('control.quotas').select(['project_id']).execute();
+    const seeded = quotas.map((row) => String(row.project_id)).sort();
+
+    expect(seeded).toEqual(
+      ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-0000000000a1'].sort(),
+    );
+  });
+
+  it('refuses an image and network that do not share a provider profile', async () => {
+    // The fake catalog's network with the real server's image. Acceptance must reject the
+    // combination rather than resolve a profile the adapter will not accept.
+    const crossed = testsrvCommand({ networkId: 'lab-primary' });
+    await expect(store.acceptCreate(crossed, hashOf(crossed))).rejects.toThrowError(DomainError);
+  });
+});

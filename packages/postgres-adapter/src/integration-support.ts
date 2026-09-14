@@ -12,19 +12,41 @@
 import type { PostgresClient } from './database.js';
 
 /**
- * The seeded project quota, mirrored from `db/seeds/0001_phase3_fake.sql`.
+ * The seeded project quotas, mirrored from the seeds, **per project**.
  *
  * Restored on every reset because quota is seed data that tests legitimately mutate — a resize
- * test has to tighten it to prove the delta check — and the seed's `ON CONFLICT DO NOTHING` cannot
- * put it back.
+ * test has to tighten it to prove the delta check — and the seeds' `ON CONFLICT` clauses cannot
+ * put a changed row back.
+ *
+ * WHY this is keyed by project rather than applied to every row: it used to be a single
+ * `UPDATE control.quotas SET ...` with no `WHERE`, which was correct while exactly one project
+ * existed. `db/seeds/0002_proxmox_testsrv.sql` adds a second with a deliberately tight quota —
+ * three instances, because that project reaches real hardware and SAFE-030 requires a small
+ * explicit cap — and the unqualified update silently replaced that cap with the fake project's
+ * generous one. A reset that widens a safety limit is worse than one that leaves rows behind.
+ *
+ * Adding a seeded project means adding it here. The entries are asserted against the database in
+ * `control-plane-store.integration.spec.ts`, so a missing one fails rather than drifting.
  */
-const SEEDED_QUOTA = {
-  instances: 20,
-  cpu_count: 160,
-  memory_mib: '327680',
-  disk_gib: '2560',
-  ipv4_addresses: 20,
-  snapshots: 60,
+const SEEDED_QUOTAS: Readonly<Record<string, Record<string, unknown>>> = {
+  // db/seeds/0001_phase3_fake.sql — the fake catalog, generous on purpose.
+  '00000000-0000-4000-8000-000000000001': {
+    instances: 20,
+    cpu_count: 160,
+    memory_mib: '327680',
+    disk_gib: '2560',
+    ipv4_addresses: 20,
+    snapshots: 60,
+  },
+  // db/seeds/0002_proxmox_testsrv.sql — the live test server, capped at three instances.
+  '00000000-0000-4000-8000-0000000000a1': {
+    instances: 3,
+    cpu_count: 8,
+    memory_mib: '16384',
+    disk_gib: '192',
+    ipv4_addresses: 3,
+    snapshots: 8,
+  },
 };
 
 /** The default retention policy, mirrored from migration `0007_phase5_lifecycle.sql`. */
@@ -72,11 +94,14 @@ export async function resetIntegrationState(db: PostgresClient): Promise<void> {
   await db.deleteFrom('control.operations').execute();
   await db.deleteFrom('control.instances').execute();
 
-  // Seed rows a test may have changed in place.
-  await db
-    .updateTable('control.quotas')
-    .set({ ...SEEDED_QUOTA, updated_at: new Date() })
-    .execute();
+  // Seed rows a test may have changed in place, each restored to its own project's values.
+  for (const [projectId, quota] of Object.entries(SEEDED_QUOTAS)) {
+    await db
+      .updateTable('control.quotas')
+      .set({ ...quota, updated_at: new Date() })
+      .where('project_id', '=', projectId)
+      .execute();
+  }
   await db
     .updateTable('control.retention_policy')
     .set({ ...SEEDED_RETENTION_POLICY, updated_at: new Date() })

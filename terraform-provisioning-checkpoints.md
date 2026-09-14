@@ -18,9 +18,9 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-6 — Catalog rows, configuration, and the config cross-check
-- Last completed checkpoint: T-5 — Ownership-marker defect
-- Completed so far: T-0, T-1, T-2, T-3, T-4, T-5. T-4 was taken ahead of T-3 because the operator
+- Current checkpoint: T-7 — Inventory schema
+- Last completed checkpoint: T-6 — Catalog rows, configuration, and the config cross-check
+- Completed so far: T-0 through T-6. T-4 was taken ahead of T-3 because the operator
   authorised the token creation directly and it is a live-server action; T-3 is offline and was
   unaffected by the order.
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
@@ -28,7 +28,7 @@ into this work.
 - Committed so far: `726bc22` (gitignore and credential boundary), `167871f` (plan scoped to one
   server, VPC work deferred), `495dab6` (server survey and this ledger), `c218936` (manual
   Terraform walkthrough), `7bdeec8` (scoped API token), `dbdc069`
-  (readiness probe and capability flags).
+  (readiness probe and capability flags), `0c58ba4` (ownership markers).
 - **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
   administrator password is retained in the credentials file only so that token can be
   re-minted; it was read into a session transcript during this work and **should be rotated**.
@@ -402,8 +402,54 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-6 — Catalog rows, configuration, and the config cross-check
 
-- Status: Pending
-- Required work:
+- Status: Complete
+- Evidence recorded 2026-09-14:
+  - `db/seeds/0002_proxmox_testsrv.sql`, additive and with new identifiers throughout, so the
+    fake catalog is untouched and cannot accidentally select one of these rows. New project,
+    quota, network, provider profile and image; **no new flavours**, because template 110 is
+    2 vCPU / 4096 MiB / 32 GiB and `lab-small` already describes that exactly. That is
+    load-bearing rather than lucky: `assertResources` refuses a create unless the requested disk
+    equals the template's disk exactly, so a flavour off by one gibibyte would fail every create.
+  - **The seed is generated, not hand-written.** `tools/proxmox/generate-lab-seed.mjs` derives it
+    from the survey evidence, because its interesting content is the list of 110 addresses already
+    live on the bridge — a measurement, and exactly the kind of thing hand-transcription gets
+    quietly wrong. `pnpm run proxmox:generate-seed:check` asserts the committed file is current.
+  - The live project's quota is deliberately tight: **three instances**. SAFE-030 requires a small
+    explicit cap for live-provider work, and the reserved interval holds 100 identifiers, so the
+    quota exhausts long before the interval does.
+  - `tools/db/seed.mjs` now applies the whole `db/seeds` directory in order. It named one file,
+    which meant adding a second seed silently did nothing until the loader was also edited.
+  - `tools/proxmox/check-config.mjs` (`pnpm run proxmox:check-config`) asserts the seeded catalog
+    and the `PROXMOX_*` environment describe the same server — 21 comparisons. Three of these are
+    checked at runtime today by `assertNetwork` and `submitCreateInstance`, but only at the point
+    of use, minutes into a workflow, and only as `protocol_error` with a message that does not say
+    which value disagreed. It also checks the trap that has no runtime guard until far too late:
+    that an enabled flavour's `minimum_disk_gib` equals the template's measured disk.
+- **A defect the new seed exposed, and fixed.** `resetIntegrationState` restored quotas with an
+  unqualified `UPDATE control.quotas SET ...` — correct while exactly one project existed, and
+  silently wrong the moment a second appeared: it replaced the live-hardware project's
+  three-instance cap with the fake project's twenty. **A reset that widens a safety limit is worse
+  than one that leaves rows behind.** Quotas are now restored per project, and a new case asserts
+  the restore map covers every seeded project, so the two cannot drift as seeds are added.
+- Verification:
+
+  | Gate                                                   | Result                                                 |
+  | ------------------------------------------------------ | ------------------------------------------------------ |
+  | `pnpm run test:integration`                            | 5 files, **93 tests** — was 88; five added             |
+  | The quota case against the unqualified reset           | fails, which is what exposed the defect                |
+  | `pnpm run proxmox:check-config`, correct configuration | 21 of 21 agree                                         |
+  | Same with a wrong gateway and a wrong image            | 2 of 21 disagree, exit 1                               |
+  | Same with no `PROXMOX_*` set                           | names the missing settings, exit 1                     |
+  | `pnpm run proxmox:generate-seed:check`                 | current: 110 exclusions from the 2026-09-14 survey     |
+  | `pnpm run test`                                        | 11 projects, 0 failures — the fake path is undisturbed |
+  | `pnpm run format:check`, `lint`, `typecheck`, `build`  | clean; 14 projects each                                |
+  | `pnpm run docs:validate`                               | 61 Markdown files, 46 Mermaid artifacts                |
+
+  The "fake path is undisturbed" row is the one the additive design exists to satisfy: the
+  integration suites and the Postman collection depend on seed 0001's values, and they still pass
+  with seed 0002 applied.
+
+- Superseded required work:
   - `db/seeds/0002_proxmox_testsrv.sql`, **additive, new ids only**. `0001_phase3_fake.sql` is not
     touched: the integration suites and the Postman collection depend on its values, and its
     `ON CONFLICT DO NOTHING` means an edit would not take effect on an existing database anyway.
