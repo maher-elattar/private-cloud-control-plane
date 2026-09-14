@@ -19,14 +19,16 @@ into this work.
 
 - Overall status: In progress
 - Current checkpoint: T-3 — Readiness probe defect
-- Last completed checkpoint: T-2 — Manual Terraform walkthrough
+- Last completed checkpoint: T-4 — Scoped API token (taken ahead of T-3; see its entry)
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
 - Target server: `https://testsrv.mosalam.com:8006`, node `proxtest`, PVE 9.2.11, standalone.
 - Committed so far: `726bc22` (gitignore and credential boundary), `167871f` (plan scoped to one
-  server, VPC work deferred), `495dab6` (server survey and this ledger).
-- **Credential note.** The supplied credentials are `root@pam` plus a password. They were read
-  into a session transcript in the course of this work, so that password should be rotated once a
-  scoped API token exists. A token is required regardless — see the T-1 findings.
+  server, VPC work deferred), `495dab6` (server survey and this ledger), `c218936` (manual
+  Terraform walkthrough).
+- **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
+  administrator password is retained in the credentials file only so that token can be
+  re-minted; it was read into a session transcript during this work and **should be rotated**.
+  Rotating it does not invalidate the token.
 
 ## Survey findings that shape everything below
 
@@ -219,6 +221,15 @@ Evidence: [`docs/verification/evidence/testsrv-survey.json`](docs/verification/e
 
   Evidence: `docs/architecture/terraform-manual-walkthrough.md` and `terraform-state/fixtures/`.
 
+#### Addendum from T-4
+
+Re-creating from scratch under the scoped token surfaced one further inherited value that the
+evolved workspace had hidden — `cpu.hotplugged`, which the template sets through `vcpus`. The
+methodological lesson is the durable part: **convergence must be verified from a fresh create, not
+from a workspace that was incrementally fixed into shape.** A repaired workspace proves the
+configuration and the server agree; it does not prove the configuration is complete enough to
+build a correct VM from nothing.
+
 #### Deviation recorded
 
 `prevent_destroy` was removed from the manual configuration to tear the lab VM down. That was
@@ -248,14 +259,61 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-4 — Scoped API token
 
-- Status: Pending
+- Status: Complete
+- Taken ahead of T-3 because the operator authorised the token creation directly and it is a
+  live-server action; T-3 is offline and unaffected by the order.
 - Rationale: the direct adapter authenticates only with `PVEAPIToken`, so the supplied root
   password cannot drive the six operations that must stay on the direct API. `root@pam` also
   grants far more than this work needs on a server hosting 211 other machines.
-- Required work: a token carrying only the VM lifecycle and datastore privileges the work uses,
-  scoped to one pool; the credentials file restructured; the root password retired from tooling.
-- Verification required: the token reads `/version`; a path outside its scope returns 403 — a
-  boundary proven rather than promised.
+- Evidence recorded 2026-09-14:
+  - New tool `tools/proxmox/create-api-token.mjs`, wired as `pnpm run proxmox:token` and
+    `proxmox:token:verify`. Idempotent; it re-mints the token because Proxmox returns a secret
+    only once, and the secret is written straight into the gitignored credentials file — never
+    printed, logged or returned.
+  - Created: role `ControlPlaneLifecycle` with 17 named privileges, role `ControlPlaneNodeAudit`
+    (`Sys.Audit`), role `ControlPlaneBridgeUse` (`SDN.Use`), pool `control-plane-lab`, user
+    `control-plane@pve` with no password, and token `control-plane@pve!provisioner`.
+  - **The reserved VMID interval is enumerated as 100 individual ACL entries.** Proxmox ACL paths
+    have no range syntax, and `/vms` would have granted authority over all 211 machines on the
+    node. Being structurally unable to name a VM outside the interval is a stronger guarantee than
+    intending not to.
+  - The privilege list deliberately excludes `VM.Console`, `VM.Backup`, `VM.Migrate`,
+    `VM.Replicate` and every guest-agent privilege except `VM.GuestAgent.Audit`. The built-in
+    `PVEVMAdmin` carries all of them, and `VM.GuestAgent.Unrestricted` in particular would let the
+    token run arbitrary commands inside any guest it can reach.
+  - `terraform apply` performs a complete create under the token — clone, cloud-init, boot — in
+    35 s, and the following plan is a clean no-op. That is the proof the ACL set is sufficient, not
+    merely plausible.
+  - Two pre-existing identities were found and left alone: an unused `terraform-prov@pve` with no
+    tokens, and an existing `root@pam!terraform` token holding `PVEVMAdmin` on `/` and `/vms`.
+    The second is far broader than anything created here and is not this work's to change, but it
+    is worth the operator knowing it exists.
+- Finding: **a bridge is invisible without `SDN.Use` on it.** With `Sys.Audit` on the node the
+  token saw 3 of 9 interfaces and `vmbr1` was not among them, which would have made
+  `validateProfile` report the bridge absent rather than merely unchecked. The minimal grant is
+  `SDN.Use` on `/sdn/zones/localnetwork/vmbr1` — one bridge, not SDN administration, and the token
+  still holds nothing on `/sdn` itself.
+- Design correction: §11 asked for a token with VM lifecycle and datastore privileges. It also
+  needs that single bridge grant.
+- Verification:
+
+  | Gate                                           | Result                                                                      |
+  | ---------------------------------------------- | --------------------------------------------------------------------------- |
+  | `pnpm run proxmox:token:verify`                | token verified; 6 capability reads allowed, 10 privilege assertions correct |
+  | Effective privileges on our reserved VMID      | 17                                                                          |
+  | Effective privileges on another tenant's VM    | **0**                                                                       |
+  | Effective privileges one past the interval     | **0**                                                                       |
+  | Effective privileges on `/`, `/access`, `/sdn` | **0** each                                                                  |
+  | Reads of another tenant's config and status    | **403**                                                                     |
+  | Read of VMID 910100                            | **403**                                                                     |
+  | Reads of node syslog and cluster backup jobs   | **403**                                                                     |
+  | Full `terraform apply` under the token         | create in 35 s, then a clean no-op                                          |
+  | Teardown                                       | 211 VMs, none inside the reserved interval                                  |
+
+  Boundaries were asserted through `/access/permissions` rather than by attempting forbidden
+  calls. The boundary that matters is that the token cannot stop or delete one of 211 machines
+  belonging to other people, and proving that by _trying_ would mean discovering a wrong ACL by
+  destroying someone's VM.
 
 ### Checkpoint T-5 — Ownership-marker defect
 

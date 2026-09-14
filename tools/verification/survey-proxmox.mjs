@@ -20,7 +20,9 @@
  *   node tools/verification/survey-proxmox.mjs
  *   node tools/verification/survey-proxmox.mjs --credentials=/path/to/file
  *
- * The credentials file is three lines — endpoint, username, password — and is gitignored.
+ * The credentials file is gitignored. This tool uses the administrative credentials in it, not
+ * the scoped token: the token cannot see other tenants' VMs or the bridge inventory, which is
+ * exactly what this survey exists to measure.
  * Evidence: docs/verification/evidence/testsrv-survey.json
  *
  * @see terraform-provisioning-plan.md
@@ -54,12 +56,44 @@ const RESERVED_VMID_MAXIMUM = 910_099;
 /** Config keys whose values are credential material and must never be written to evidence. */
 const REDACTED_KEYS = new Set(['cipassword', 'sshkeys', 'ticket', 'CSRFPreventionToken']);
 
-/** Reads the three-line credentials file without letting its contents reach stdout. */
+/**
+ * Reads the credentials file without letting its contents reach stdout.
+ *
+ * Accepts the KEY=value layout that `tools/proxmox/create-api-token.mjs` writes, preferring the
+ * scoped API token, and falls back to the original three-line endpoint/username/password layout.
+ */
 async function credentials(path) {
   const lines = (await readFile(path, 'utf8'))
     .split('\n')
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter((line) => line && !line.startsWith('#'));
+
+  if (lines.some((line) => /^[A-Z][A-Z0-9_]*=/.test(line))) {
+    const values = Object.fromEntries(
+      lines
+        .filter((line) => line.includes('='))
+        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+    );
+    const endpoint = values.PROXMOX_ENDPOINT?.replace(/\/$/, '');
+    if (!endpoint) throw new Error(`${path}: PROXMOX_ENDPOINT is missing.`);
+    // WHY administrative credentials are preferred *here* specifically, when everywhere else the
+    // scoped token is: this tool's whole purpose is to see the server as it really is — every VM,
+    // every address in use on the bridge, the whole VMID inventory. The token is deliberately
+    // blind to all of that, so surveying with it would produce a confident, wrong answer.
+    if (values.PROXMOX_ROOT_USERNAME && values.PROXMOX_ROOT_PASSWORD) {
+      return {
+        endpoint,
+        username: values.PROXMOX_ROOT_USERNAME,
+        password: values.PROXMOX_ROOT_PASSWORD,
+      };
+    }
+    return {
+      endpoint,
+      tokenId: values.PROXMOX_API_TOKEN_ID,
+      tokenSecret: values.PROXMOX_API_TOKEN_SECRET,
+    };
+  }
+
   if (lines.length < 3) {
     throw new Error(`${path} must hold three lines: endpoint, username, password.`);
   }
@@ -120,8 +154,13 @@ const credentialsPath = resolve(
 );
 
 const secrets = await credentials(credentialsPath);
-const session = await login(secrets);
-const headers = { cookie: `PVEAuthCookie=${session.ticket}` };
+
+// A token needs no login round trip, which is also why it is preferred: there is no session to
+// leak and nothing to expire mid-survey.
+const session = secrets.tokenId ? { username: secrets.tokenId, cap: {} } : await login(secrets);
+const headers = secrets.tokenId
+  ? { Authorization: `PVEAPIToken=${secrets.tokenId}=${secrets.tokenSecret}` }
+  : { cookie: `PVEAuthCookie=${session.ticket}` };
 
 /** Issues one read-only API call, recording an error rather than throwing. */
 async function get(path) {

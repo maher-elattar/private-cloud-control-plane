@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-09-13T23:39:26.392Z",
+  "capturedAt": "2026-09-14T00:32:36.817Z",
   "endpoint": "https://testsrv.mosalam.com:8006",
   "authenticatedAs": "root@pam",
   "capabilityGroups": [
@@ -12,9 +12,9 @@
     "vms"
   ],
   "version": {
+    "repoid": "f6997e698c7933ea",
     "release": "9.2",
-    "version": "9.2.11",
-    "repoid": "f6997e698c7933ea"
+    "version": "9.2.11"
   },
   "node": "proxtest",
   "nodeCount": 1,
@@ -24,6 +24,12 @@
     "description": ""
   },
   "storage": [
+    {
+      "storage": "local",
+      "type": "dir",
+      "active": 1,
+      "content": "iso,snippets,vztmpl,backup,images,rootdir"
+    },
     {
       "storage": "SBMazeed",
       "type": "pbs",
@@ -35,30 +41,16 @@
       "type": "pbs",
       "active": 1,
       "content": "backup"
-    },
-    {
-      "storage": "local",
-      "type": "dir",
-      "active": 1,
-      "content": "backup,vztmpl,rootdir,images,iso,snippets"
     }
   ],
   "network": [
     {
-      "iface": "vmbr200",
+      "iface": "vmbr1",
       "type": "bridge",
       "active": 1,
-      "cidr": "192.168.32.1/20",
-      "address": "192.168.32.1",
+      "cidr": "192.168.4.1/22",
+      "address": "192.168.4.1",
       "bridgePorts": ""
-    },
-    {
-      "iface": "enp41s0.4021",
-      "type": "vlan",
-      "active": 1,
-      "cidr": null,
-      "address": null,
-      "bridgePorts": null
     },
     {
       "iface": "enp41s0.4022",
@@ -69,35 +61,19 @@
       "bridgePorts": null
     },
     {
-      "iface": "vmbr1",
-      "type": "bridge",
-      "active": 1,
-      "cidr": "192.168.4.1/22",
-      "address": "192.168.4.1",
-      "bridgePorts": ""
-    },
-    {
-      "iface": "vmbr4022",
-      "type": "bridge",
+      "iface": "enp41s0.4021",
+      "type": "vlan",
       "active": 1,
       "cidr": null,
       "address": null,
-      "bridgePorts": "enp41s0.4022"
+      "bridgePorts": null
     },
     {
-      "iface": "vi1",
+      "iface": "vmbr200",
       "type": "bridge",
       "active": 1,
-      "cidr": "192.168.0.1/22",
-      "address": "192.168.0.1",
-      "bridgePorts": ""
-    },
-    {
-      "iface": "vmbr44",
-      "type": "bridge",
-      "active": 1,
-      "cidr": "192.168.18.1/24",
-      "address": "192.168.18.1",
+      "cidr": "192.168.32.1/20",
+      "address": "192.168.32.1",
       "bridgePorts": ""
     },
     {
@@ -115,6 +91,30 @@
       "cidr": null,
       "address": null,
       "bridgePorts": "enp41s0.4021"
+    },
+    {
+      "iface": "vmbr44",
+      "type": "bridge",
+      "active": 1,
+      "cidr": "192.168.18.1/24",
+      "address": "192.168.18.1",
+      "bridgePorts": ""
+    },
+    {
+      "iface": "vmbr4022",
+      "type": "bridge",
+      "active": 1,
+      "cidr": null,
+      "address": null,
+      "bridgePorts": "enp41s0.4022"
+    },
+    {
+      "iface": "vi1",
+      "type": "bridge",
+      "active": 1,
+      "cidr": "192.168.0.1/22",
+      "address": "192.168.0.1",
+      "bridgePorts": ""
     }
   ],
   "template": {
@@ -134,33 +134,33 @@
     "cloudInitUser": "root",
     "powerState": "stopped",
     "configuration": {
-      "sockets": 1,
-      "vmgenid": "7629c62c-0880-4f03-b30b-ada1f33ae2d9",
-      "smbios1": "uuid=8b43bed2-a3e2-4361-b893-1d704893cd3c",
-      "ciuser": "root",
-      "cpu": "host",
-      "cores": 2,
       "net0": "virtio=BC:24:11:89:33:77,bridge=vmbr1,firewall=1,mtu=1400",
       "cipassword": "<redacted>",
       "onboot": 0,
       "memory": "4096",
       "template": 1,
-      "meta": "creation-qemu=9.2.0,ctime=1754844279",
-      "machine": "q35",
-      "searchdomain": "1.1.1.1",
-      "scsihw": "virtio-scsi-single",
-      "ide2": "none,media=cdrom",
-      "nameserver": "1.1.1.1",
+      "sockets": 1,
+      "smbios1": "uuid=8b43bed2-a3e2-4361-b893-1d704893cd3c",
+      "vmgenid": "7629c62c-0880-4f03-b30b-ada1f33ae2d9",
+      "ciuser": "root",
+      "cpu": "host",
+      "cores": 2,
       "name": "UbuntuNoble24.04",
-      "numa": 0,
       "ide0": "local:110/vm-110-cloudinit.raw,media=cdrom,size=4M",
       "vcpus": 2,
+      "numa": 0,
       "agent": "1",
       "sshkeys": "<redacted>",
       "ostype": "l26",
       "scsi0": "local:110/base-110-disk-0.raw,discard=on,iothread=1,size=32G,ssd=1",
       "digest": "04b6cadfd13b74011bb1007888bd805cd3768d3d",
-      "boot": "order=scsi0;ide2;net0"
+      "boot": "order=scsi0;ide2;net0",
+      "meta": "creation-qemu=9.2.0,ctime=1754844279",
+      "searchdomain": "1.1.1.1",
+      "machine": "q35",
+      "scsihw": "virtio-scsi-single",
+      "ide2": "none,media=cdrom",
+      "nameserver": "1.1.1.1"
     }
   },
   "inventory": {
@@ -168,9 +168,9 @@
     "lowestVmid": 101,
     "highestVmid": 317,
     "attachedToExpectedBridge": 134,
-    "configurationScanMs": 1866,
+    "configurationScanMs": 1770,
     "configurationScanConcurrency": 12,
-    "estimatedSerialScanSeconds": 22
+    "estimatedSerialScanSeconds": 21
   },
   "reservedRange": {
     "minimum": 910000,

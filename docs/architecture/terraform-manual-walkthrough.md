@@ -233,6 +233,48 @@ cause is benign — bpg writes the deprecated string form of the `user` key, and
 about it twice — but any readiness check keying on cloud-init's exit code would read a healthy
 guest as failed.
 
+### 10. A bridge is invisible without `SDN.Use` on it, even with no SDN configured
+
+Found while replacing `root@pam` with a scoped token. With `Sys.Audit` on the node — which is what
+`validateProfile`'s node-status check needs — the token saw **3 of 9** interfaces from
+`/nodes/{node}/network`, and `vmbr1` was not among them. Every bridge was filtered out; only the
+physical NIC and its two VLAN children were visible.
+
+Proxmox gates bridge visibility on `SDN.Use` for the bridge, filing plain Linux bridges under a
+synthetic `localnetwork` zone even on a host with no SDN objects at all (`/cluster/sdn/zones`
+returns `[]` here). The minimal grant that restores it is `SDN.Use` on
+`/sdn/zones/localnetwork/vmbr1`.
+
+Two things worth stating precisely, because "the deployment needs an SDN privilege" reads alarming
+next to a plan that defers all SDN work:
+
+- This is not SDN administration. The grant is `SDN.Use` on **one bridge**. The token holds
+  nothing on `/sdn` itself, so it can neither enumerate nor create zones, vnets or subnets —
+  verified by effective-privilege assertion, not by assumption.
+- Without it `validateProfile` does not merely lose a check, it reports a *wrong* one: the bridge
+  match is by `iface` against that listing, so a filtered bridge is indistinguishable from a
+  missing one, and profile validation would fail with the bridge apparently absent.
+
+### 11. `cpu.hotplugged` is another inherited value that cannot be cleared
+
+The template sets `vcpus 2`, which bpg surfaces as `cpu.hotplugged`. Left undeclared, bpg computes
+`0`, plans a change to clear it, and the clear does not stick — the same shape as finding 3.
+Declaring `hotplugged` equal to the core count settles it, and is also what a VM without CPU
+hotplug should report.
+
+### 12. A fresh create shows diffs an evolved workspace does not
+
+Finding 11 is only visible from a **fresh** create. The first clean no-op recorded here was
+reached on a workspace that had been incrementally corrected across several applies, and those
+applies had already normalised `vcpus` as a side effect. Re-creating from scratch under the scoped
+token surfaced the diff immediately.
+
+The methodological lesson matters more than the attribute: **convergence must be verified from a
+fresh create, not from a workspace that was fixed into shape.** An incrementally-repaired
+workspace proves that the configuration and the server agree; it does not prove that the
+configuration is complete enough to create a correct VM from nothing. The product module's
+convergence test therefore has to start from an empty workspace.
+
 ## Corrections to the design document
 
 | § | Claim | Correction |
@@ -243,6 +285,7 @@ guest as failed.
 | §6.5 | Covers the VM-exists-but-state-does-not case | A third case exists: state exists but is tainted, and the resolution is `untaint` then converge, not import (finding 2) |
 | §7 | The module sets no `initialization.user_account.password` | The operator has asked for a password, so it is set. The template's own baked-in key is the larger exposure (finding 4) |
 | §12 q1 | Power through Terraform or the direct API, to be decided on latency | Measured: 7–19 s per power operation against a sub-second API call |
+| §11 | Asks for an API token with the VM lifecycle privileges | Also needs `SDN.Use` on the one bridge, or `validateProfile` reports it absent (finding 10) |
 
 ## Fixtures produced
 

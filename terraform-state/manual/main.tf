@@ -32,6 +32,11 @@ resource "proxmox_virtual_environment_vm" "instance" {
     cores   = var.cpu_cores
     sockets = 1
     type    = "host"
+    # WHY hotplugged is declared: it maps to Proxmox's `vcpus`, which the template sets to 2. Left
+    # unset, bpg computes 0, plans a change to clear it, and the clear does not stick — a
+    # permanent diff of exactly the kind finding 3 describes. Matching the core count is also what
+    # a VM without CPU hotplug should report.
+    hotplugged = var.cpu_cores
   }
 
   memory {

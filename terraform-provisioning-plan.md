@@ -621,7 +621,10 @@ explicit operation cap SAFE-030 requires.
 
 One standalone Proxmox host is enough. Before T-14:
 
-- **Endpoint and an API token** with the privileges bpg needs for the VM lifecycle:
+- **Endpoint and an API token** — now created and verified by `pnpm run proxmox:token`; see the
+  T-4 entry in `terraform-provisioning-checkpoints.md`. It also needs `SDN.Use` on the one
+  allowlisted bridge, without which Proxmox filters that bridge out of the interface listing and
+  `validateProfile` reports it absent. The privileges bpg needs for the VM lifecycle:
   `VM.Allocate`, `VM.Clone`, `VM.Config.*`, `VM.PowerMgmt`, `VM.Audit`,
   `Datastore.AllocateSpace`, `Datastore.Audit`, and — for the direct-API half — `VM.Snapshot`
   and `VM.Snapshot.Rollback`. Scoped to one lab pool. No cluster, SDN, HA, or node-configuration
