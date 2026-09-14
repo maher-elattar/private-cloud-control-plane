@@ -16,6 +16,7 @@
 import { FailureCategory } from '@private-cloud/contracts';
 import {
   FakeProvider,
+  ProxmoxDirectClient,
   ProxmoxProvider,
   TerraformProxmoxProvider,
   TerraformRunner,
@@ -133,16 +134,16 @@ export function providerProfileId(): string | undefined {
 /**
  * Builds the Terraform-backed adapter.
  *
- * WHY this returns only `CreateInstanceProviderPort` while the direct adapter returns all six
- * narrowed ports: this adapter implements the create and read surface, and the capabilities it
- * does not yet serve are absent from the type rather than stubbed. A stub would satisfy the
- * compiler and then fail at runtime with a message about the wrong thing; an absent method makes
- * the gap a compile error at the one call site that would depend on it.
+ * The direct Proxmox client is optional and only constructed when API-token settings are present.
+ * WHY optional: nine of the seventeen operations go through Terraform, which holds its own
+ * credentials, so a deployment that does not need snapshots, reboot or hard stop can run without
+ * Proxmox API credentials at all. Reaching one of those six without a client fails with a message
+ * that says so, rather than with a null dereference.
  *
- * @returns The configured Terraform adapter.
- * @throws Error if any setting is missing or malformed.
+ * @returns The configured Terraform adapter, satisfying every narrowed port.
+ * @throws Error if any required setting is missing or malformed.
  */
-function createTerraformProvider(): CreateInstanceProviderPort {
+function createTerraformProvider(): ReturnType<typeof createProvider> {
   const runner = new TerraformRunner({
     binary: requiredEnvironment('TERRAFORM_BINARY'),
     modulePath: requiredEnvironment('TERRAFORM_MODULE_PATH'),
@@ -157,6 +158,27 @@ function createTerraformProvider(): CreateInstanceProviderPort {
   const runs = new PostgresTerraformInventoryStore(
     createPostgresDatabase(requiredEnvironment('DATABASE_URL')),
   );
+
+  // Present only when the six direct operations are wanted. All-or-nothing: a half-configured
+  // client would fail at the first snapshot rather than at startup.
+  const directSettings = ['PROXMOX_ENDPOINT', 'PROXMOX_API_TOKEN_ID', 'PROXMOX_API_TOKEN_SECRET'];
+  const configuredDirect = directSettings.filter((name) => process.env[name]?.trim());
+  if (configuredDirect.length > 0 && configuredDirect.length !== directSettings.length) {
+    throw new Error(
+      `The direct Proxmox client needs all of ${directSettings.join(', ')} or none of them.`,
+    );
+  }
+  const directClient =
+    configuredDirect.length === directSettings.length
+      ? new ProxmoxDirectClient({
+          endpoint: requiredEnvironment('PROXMOX_ENDPOINT'),
+          apiTokenId: requiredEnvironment('PROXMOX_API_TOKEN_ID'),
+          apiTokenSecret: requiredEnvironment('PROXMOX_API_TOKEN_SECRET'),
+          node: requiredEnvironment('PROXMOX_NODE'),
+          resourceIdMinimum: requiredInteger('PROXMOX_VMID_MINIMUM'),
+          resourceIdMaximum: requiredInteger('PROXMOX_VMID_MAXIMUM'),
+        })
+      : undefined;
 
   return new TerraformProxmoxProvider(
     {
@@ -182,7 +204,8 @@ function createTerraformProvider(): CreateInstanceProviderPort {
     },
     runner,
     runs,
-  ) as unknown as CreateInstanceProviderPort;
+    directClient,
+  ) as unknown as ReturnType<typeof createProvider>;
 }
 
 /**
@@ -203,11 +226,7 @@ export function createProvider(): CreateInstanceProviderPort &
     return new FakeProvider(fakeProviderConfiguration());
   }
   if (adapter === 'terraform') {
-    // The Terraform adapter serves the create and read surface today. The cast is confined to
-    // this one line and is the honest shape of a partial migration: the process boots, serves
-    // what it implements, and fails a call it does not — rather than pretending at the type level
-    // that every capability is present.
-    return createTerraformProvider() as ReturnType<typeof createProvider>;
+    return createTerraformProvider();
   }
   if (adapter !== 'proxmox') {
     throw new Error('PROVIDER_ADAPTER must be fake, proxmox, or terraform.');

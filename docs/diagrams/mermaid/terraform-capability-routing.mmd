@@ -1,0 +1,50 @@
+flowchart LR
+    classDef tf fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    classDef direct fill:#fff3e0,stroke:#e65100,color:#bf360c
+    classDef local fill:#eceff1,stroke:#546e7a,color:#263238
+    classDef refuse fill:#ffebee,stroke:#c62828,color:#b71c1c
+
+    PORT["ProviderPort<br/>17 methods"]:::local
+
+    subgraph LOCAL["Local, no I/O"]
+        CAP["getCapabilities"]:::local
+    end
+
+    subgraph TFP["Through Terraform — 9"]
+        VAL["validateProfile<br/>init -backend=false + validate"]:::tf
+        CREATE["submitCreateInstance"]:::tf
+        CONV["applyInstanceConfiguration<br/>convergence assertion"]:::tf
+        TASK["getTask<br/>reads terraform.runs"]:::tf
+        OBS["observeInstance<br/>apply -refresh-only"]:::tf
+        START["startInstance / shutdownInstance<br/>started = true / false"]:::tf
+        RESIZE["resizeInstance<br/>cpu / memory / disk grow"]:::tf
+        RETAIN["markInstanceRetained<br/>on_boot=false + trailer"]:::tf
+        PURGE["purgeInstance<br/>purge module + allowDestroyOf"]:::tf
+    end
+
+    subgraph DIR["Direct API — 6, no Terraform expression"]
+        STOP["stopInstance<br/>hard stop"]:::direct
+        REBOOT["rebootInstance"]:::direct
+        LS["listSnapshots"]:::direct
+        SNAP["createSnapshot"]:::direct
+        ROLL["rollbackSnapshot"]:::direct
+        DEL["deleteSnapshot"]:::direct
+    end
+
+    PORT --> CAP
+    PORT --> TFP
+    PORT --> DIR
+
+    TFP --> GATE{"Plan gate<br/>any 'delete' in actions?"}:::local
+    GATE -->|"no-op / create / read / update"| APPLY["apply saved plan"]:::tf
+    GATE -->|"delete, without allowDestroyOf"| REFUSED["Refuse.<br/>manual_review."]:::refuse
+    PURGE -.->|"allowDestroyOf = this address only"| GATE
+
+    DIR --> OWN{"Live ownership<br/>proven from the VM?"}:::local
+    OWN -->|no| REFUSED
+    OWN -->|yes| ACT["Proxmox API call"]:::direct
+    ACT --> REFRESH["apply -refresh-only<br/>required: Terraform did not make this change"]:::tf
+    ROLL -.->|"reverts disk and config wholesale"| DRIFT["mark drifted<br/>until a refresh proves otherwise"]:::direct
+
+    APPLY --> INV["terraform.workspaces<br/>in_sync only after success"]:::local
+    REFRESH --> INV

@@ -273,6 +273,9 @@ Start here if you are new to the codebase. It is not a conventional `Controller 
 
 These are design documents for work that has not been implemented. They are plans, not descriptions of the system.
 
+- [Terraform Call Map](docs/architecture/terraform-call-map.md): what the Terraform adapter does for each provider-port method, which nine go through Terraform and which six cannot, and the environmental limitations measured on the target
+- [Terraform Manual Walkthrough](docs/architecture/terraform-manual-walkthrough.md): what the `bpg/proxmox` provider actually does on real hardware, measured before any of it was wired into a workflow
+- [Runbook: Terraform Run Recovery](docs/runbooks/terraform-run-recovery.md): stuck runs, refused plans, orphan VMs, state disagreeing with reality, and the one destructive procedure
 - [Terraform-Backed Provisioning](terraform-provisioning-plan.md): replacing the direct Proxmox API adapter with the `bpg/proxmox` Terraform provider, the per-instance state model, the plan gate that refuses any destructive plan, and the state inventory. Verified against a single standalone Proxmox server
 - [Tenant VPC Topology](vpc-topology-plan.md) — **deferred, not scheduled**: multi-tenant SDN — VPCs with overlapping address space, AZ-scoped subnets, public addressing, and the serialized global writer that a cluster-wide SDN apply forces. Needs a multi-node cluster and is not part of the Terraform work
 

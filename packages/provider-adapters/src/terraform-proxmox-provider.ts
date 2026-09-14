@@ -32,8 +32,22 @@ import {
   type ApplyInstanceConfigurationRequest,
   type ApplyInstanceConfigurationResponse,
   type InstanceMutationRequest,
+  type CreateSnapshotRequest,
+  type CreateSnapshotResponse,
+  type DeleteSnapshotRequest,
+  type DeleteSnapshotResponse,
+  type ListSnapshotsRequest,
+  type ListSnapshotsResponse,
+  type MarkInstanceRetainedRequest,
+  type MarkInstanceRetainedResponse,
   type ObserveInstanceRequest,
   type ObserveInstanceResponse,
+  type PurgeInstanceRequest,
+  type PurgeInstanceResponse,
+  type ResizeInstanceRequest,
+  type ResizeInstanceResponse,
+  type RollbackSnapshotRequest,
+  type RollbackSnapshotResponse,
   type StartInstanceResponse,
   type OwnershipMarkers,
   type SubmitCreateInstanceRequest,
@@ -52,7 +66,10 @@ import {
   ownershipDescription,
   parseOwnership,
   required,
+  RETENTION_TRAILER_KEY,
+  describedWithTrailer,
 } from './proxmox-provider.js';
+import type { ProxmoxDirectClient } from './terraform/direct-client.js';
 import { workspaceNameFor, type InstanceTfvars } from './terraform/tfvars.js';
 import type { TerraformRunner } from './terraform/runner.js';
 
@@ -172,6 +189,17 @@ function isTransient(diagnostics: readonly unknown[] | null): boolean {
   return TRANSIENT_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+/**
+ * Prefix marking a task reference that belongs to the direct client rather than to a run record.
+ *
+ * WHY two reference kinds rather than one: six operations do not go through Terraform at all, and
+ * their task is a Proxmox UPID with no run row behind it. `getTask` has to be able to tell them
+ * apart, and a prefix is checkable — the alternative, looking a reference up in the run table and
+ * treating "not found" as "must be a UPID", would report a genuinely lost run as a Proxmox task
+ * and then fail trying to poll it.
+ */
+const DIRECT_TASK_PREFIX = 'upid:';
+
 /** The resource address the module declares, which every plan and state read refers to. */
 export const INSTANCE_ADDRESS = 'proxmox_virtual_environment_vm.instance';
 
@@ -210,6 +238,14 @@ export class TerraformProxmoxProvider {
     private readonly configuration: TerraformProxmoxConfiguration,
     private readonly runner: TerraformRunner,
     private readonly runs: TerraformRunStore,
+    /**
+     * The direct client for the six operations Terraform cannot express.
+     *
+     * Optional, so a deployment that only needs create, power, resize and purge can run without
+     * Proxmox API credentials at all. Reaching a snapshot without one fails with a message that
+     * says so, rather than with a null dereference.
+     */
+    private readonly directClient?: ProxmoxDirectClient,
   ) {
     if (
       !Number.isSafeInteger(configuration.resourceIdMinimum) ||
@@ -278,36 +314,42 @@ export class TerraformProxmoxProvider {
     const checks: { name: string; state: ValidationCheckState; safeSummary: string }[] = [];
 
     const probeWorkspace = `probe-${randomUUID()}`;
+    let probeDirectory;
     try {
       const directory = await this.runner.prepare(probeWorkspace, this.probeTfvars());
-      const init = await this.runner.init(directory, probeWorkspace);
+      probeDirectory = directory;
+      // Backend-free: validation only needs the module and the provider to be usable, and
+      // initialising the real backend left a workspace row behind on every call.
+      const init = await this.runner.initWithoutBackend(directory);
       checks.push({
-        name: 'terraform_init',
+        name: 'terraform_module',
         state:
           init.exitCode === 0
             ? ValidationCheckState.VALIDATION_CHECK_STATE_PASSED
             : ValidationCheckState.VALIDATION_CHECK_STATE_FAILED,
         safeSummary:
           init.exitCode === 0
-            ? 'The state backend and the module initialised.'
+            ? 'The module and the pinned provider initialised.'
             : (init.diagnostics[0]?.summary ?? `Terraform init exited ${init.exitCode}.`),
       });
 
       if (init.exitCode === 0) {
-        const { gate, invocation } = await this.runner.plan(directory);
-        // A plan against an empty workspace should propose exactly one create. Anything else
-        // means the module and the variables disagree, which is a configuration fault worth
-        // catching here rather than inside a workflow.
-        const proposesOneCreate =
-          gate.decision === 'allowed' && (gate.actionCounts.create ?? 0) === 1;
+        // `validate` rather than `plan`: plan refuses to run against a configuration whose
+        // backend has not been initialised, and initialising the real backend is what leaked a
+        // workspace row per validation. Validate checks the module and every variable, which is
+        // the question this check is actually asking.
+        const validated = await this.runner.validate(directory);
         checks.push({
-          name: 'module_plan',
-          state: proposesOneCreate
-            ? ValidationCheckState.VALIDATION_CHECK_STATE_PASSED
-            : ValidationCheckState.VALIDATION_CHECK_STATE_FAILED,
-          safeSummary: proposesOneCreate
-            ? 'The module proposes exactly one create against an empty workspace.'
-            : gate.summary || `Terraform plan exited ${invocation.exitCode}.`,
+          name: 'module_variables',
+          state:
+            validated.exitCode === 0
+              ? ValidationCheckState.VALIDATION_CHECK_STATE_PASSED
+              : ValidationCheckState.VALIDATION_CHECK_STATE_FAILED,
+          safeSummary:
+            validated.exitCode === 0
+              ? 'The module and the configured variables are valid.'
+              : (validated.diagnostics[0]?.summary ??
+                `Terraform validate exited ${validated.exitCode}.`),
         });
       }
     } catch (error) {
@@ -318,7 +360,7 @@ export class TerraformProxmoxProvider {
       });
     } finally {
       // The probe workspace holds a tfvars file with the cloud-init password in it.
-      await this.runner.discard(probeWorkspace).catch(() => undefined);
+      if (probeDirectory) await this.runner.discard(probeDirectory).catch(() => undefined);
     }
 
     return {
@@ -353,8 +395,13 @@ export class TerraformProxmoxProvider {
       });
     }
 
-    const run = await this.runs.readRun(reference);
     const observedAt = new Date().toISOString();
+
+    if (reference.startsWith(DIRECT_TASK_PREFIX)) {
+      return this.directTaskState(reference.slice(DIRECT_TASK_PREFIX.length), observedAt);
+    }
+
+    const run = await this.runs.readRun(reference);
 
     if (!run) {
       // Unknown rather than failed: a reference this adapter cannot find may be a reference it
@@ -482,7 +529,7 @@ export class TerraformProxmoxProvider {
         },
       };
     } finally {
-      await this.runner.discard(workspace).catch(() => undefined);
+      await this.runner.discard(directory).catch(() => undefined);
     }
   }
 
@@ -670,6 +717,8 @@ export class TerraformProxmoxProvider {
       readonly purge?: boolean;
     },
   ): Promise<void> {
+    // The directory is this run's own, so discarding it in the `finally` below cannot disturb
+    // another operation on the same instance.
     try {
       const { gate } = await this.runner.plan(directory, {
         ...(input.purge ? { destroy: true, allowDestroyOf: INSTANCE_ADDRESS } : {}),
@@ -690,8 +739,16 @@ export class TerraformProxmoxProvider {
           workspaceName: input.workspace,
           lastRunId: runId,
           applied: true,
-          driftState: 'in_sync',
+          // A purge leaves nothing to be in sync with. `absent` is the honest classification, and
+          // the reconciler treats it differently from a workspace it simply has not observed.
+          driftState: input.purge ? 'absent' : 'in_sync',
         });
+        if (input.purge) {
+          // The VM is gone, so its workspace is state for something that no longer exists. A
+          // failure here is not fatal — the destroy already happened — but leaving the row means
+          // the inventory keeps reporting an instance nobody can find.
+          await this.runner.deleteWorkspace(directory, input.workspace).catch(() => undefined);
+        }
       } else {
         // A failed apply can leave state holding a value the provider rejected, so nothing may
         // treat this workspace as in sync until a refresh has run.
@@ -785,9 +842,9 @@ export class TerraformProxmoxProvider {
         };
       }
 
-      // Re-prepare with the real variables, so the plan compares the module against what was
-      // actually declared rather than against the probe values.
-      await this.runner.prepare(workspace, declared);
+      // Write the real variables into *this* directory, so the plan compares the module against
+      // what was actually declared rather than against the placeholder values used to read state.
+      await this.runner.writeVariables(directory, declared);
       const { gate, invocation } = await this.runner.plan(directory);
 
       const converged =
@@ -815,7 +872,7 @@ export class TerraformProxmoxProvider {
         },
       };
     } finally {
-      await this.runner.discard(workspace).catch(() => undefined);
+      await this.runner.discard(directory).catch(() => undefined);
     }
   }
 
@@ -858,7 +915,7 @@ export class TerraformProxmoxProvider {
     const directory = await this.runner.prepare(workspace, this.probeTfvars());
     const init = await this.runner.init(directory, workspace);
     if (init.exitCode !== 0) {
-      await this.runner.discard(workspace).catch(() => undefined);
+      await this.runner.discard(directory).catch(() => undefined);
       throw new ProviderTransportError('unavailable', 'The state backend is unreachable.', {
         retryable: true,
       });
@@ -866,7 +923,7 @@ export class TerraformProxmoxProvider {
 
     const declared = await this.tfvarsFromState(directory);
     if (!declared) {
-      await this.runner.discard(workspace).catch(() => undefined);
+      await this.runner.discard(directory).catch(() => undefined);
       return {
         result: failure(
           FailureCategory.FAILURE_CATEGORY_UNKNOWN_OUTCOME,
@@ -879,7 +936,7 @@ export class TerraformProxmoxProvider {
     if (declared.started === started) {
       // Already in the requested state. Reporting success rather than applying a no-op keeps a
       // duplicate delivery from producing a second run row for work nobody did.
-      await this.runner.discard(workspace).catch(() => undefined);
+      await this.runner.discard(directory).catch(() => undefined);
       return {
         result: {
           state: ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
@@ -897,6 +954,456 @@ export class TerraformProxmoxProvider {
       tfvars: { ...declared, started },
       fencingToken: context?.attempt ?? 1,
     });
+  }
+
+  /** Powers an instance off gracefully, which is what `started = false` means to this provider. */
+  public async shutdownInstance(request: InstanceMutationRequest): Promise<StartInstanceResponse> {
+    return this.setPowerState(request, false);
+  }
+
+  /**
+   * Stops an instance without waiting for the guest.
+   *
+   * Direct API, because `started = false` is a *graceful* shutdown and a hard stop is a different
+   * operation with different consequences for the guest. Conflating them would mean a caller
+   * asking for one and silently getting the other.
+   */
+  public async stopInstance(request: InstanceMutationRequest): Promise<StartInstanceResponse> {
+    return this.directMutation(request, (client, vmid) => client.stopHard(vmid));
+  }
+
+  /**
+   * Reboots an instance.
+   *
+   * Direct API, because a reboot leaves the desired state exactly as it was: there is nothing for
+   * Terraform to converge to.
+   */
+  public async rebootInstance(request: InstanceMutationRequest): Promise<StartInstanceResponse> {
+    return this.directMutation(request, (client, vmid) => client.reboot(vmid));
+  }
+
+  /**
+   * Changes CPU, memory, or disk size.
+   *
+   * Disk growth only. The refusal is asserted here rather than left to the provider, and that
+   * ordering matters: bpg does refuse a shrink at apply time, but it was measured writing the
+   * rejected size into state first, leaving state disagreeing with the server until a refresh.
+   * Refusing before the plan is what keeps state honest.
+   */
+  public async resizeInstance(request: ResizeInstanceRequest): Promise<ResizeInstanceResponse> {
+    const mutation = request.request;
+    const context = mutation?.context;
+    this.assertProfile(context?.providerProfileId);
+    const instanceId = context?.instanceId;
+    const operationId = context?.operationId;
+    if (!instanceId || !operationId) {
+      throw new ProviderTransportError(
+        'protocol_error',
+        'context.instanceId and context.operationId are required.',
+        { retryable: false },
+      );
+    }
+
+    const workspace = workspaceNameFor(instanceId);
+    const directory = await this.runner.prepare(workspace, this.probeTfvars());
+    const init = await this.runner.init(directory, workspace);
+    if (init.exitCode !== 0) {
+      await this.runner.discard(directory).catch(() => undefined);
+      throw new ProviderTransportError('unavailable', 'The state backend is unreachable.', {
+        retryable: true,
+      });
+    }
+
+    const declared = await this.tfvarsFromState(directory);
+    if (!declared) {
+      await this.runner.discard(directory).catch(() => undefined);
+      return {
+        result: failure(
+          FailureCategory.FAILURE_CATEGORY_UNKNOWN_OUTCOME,
+          'TERRAFORM_STATE_ABSENT',
+          'The instance has no Terraform state to resize.',
+        ),
+      };
+    }
+
+    const target = request.targetResources;
+    const requestedDisk = target?.diskGib === undefined ? undefined : Number(target.diskGib);
+    if (requestedDisk !== undefined && requestedDisk < declared.disk_gib) {
+      await this.runner.discard(directory).catch(() => undefined);
+      return {
+        result: failure(
+          FailureCategory.FAILURE_CATEGORY_VALIDATION,
+          'DISK_SHRINK_FORBIDDEN',
+          'Disk size can grow but never shrink.',
+        ),
+      };
+    }
+
+    return this.startApply({
+      instanceId,
+      operationId,
+      workspace,
+      vmId: Number(declared.vm_id),
+      tfvars: {
+        ...declared,
+        ...(target?.cpuCount === undefined ? {} : { cpu_cores: target.cpuCount }),
+        ...(target?.memoryMib === undefined ? {} : { memory_mib: Number(target.memoryMib) }),
+        ...(requestedDisk === undefined ? {} : { disk_gib: requestedDisk }),
+      },
+      fencingToken: context?.attempt ?? 1,
+    });
+  }
+
+  /** Lists an instance's snapshots. Direct API: this provider has no snapshot data source. */
+  public async listSnapshots(request: ListSnapshotsRequest): Promise<ListSnapshotsResponse> {
+    const context = request.context;
+    this.assertProfile(context?.providerProfileId);
+    const vmid = this.assertVmid(request.providerResourceId);
+    await this.assertLiveOwnership(vmid, request.expectedOwnershipMarkers);
+
+    const snapshots = await this.direct().listSnapshots(vmid);
+    return {
+      snapshots: snapshots.map(
+        (snapshot: { name: string; description?: string; snaptime?: number }) => ({
+          snapshotId: snapshot.name,
+          name: snapshot.name,
+          ...(snapshot.description ? { description: snapshot.description } : {}),
+          createdAt: new Date((snapshot.snaptime ?? 0) * 1000).toISOString(),
+        }),
+      ),
+      observedAt: new Date().toISOString(),
+    };
+  }
+
+  /** Takes a snapshot. */
+  public async createSnapshot(request: CreateSnapshotRequest): Promise<CreateSnapshotResponse> {
+    return this.snapshotMutation(request.request, (client, vmid) =>
+      client.createSnapshot(vmid, required(request.name, 'name'), request.description),
+    );
+  }
+
+  /**
+   * Rolls an instance back to a snapshot.
+   *
+   * The most state-invalidating operation in the system: it reverts disk and configuration to an
+   * earlier moment and Terraform learns nothing about it. The workspace is therefore marked
+   * `drifted` until a refresh proves otherwise, which is stronger than the refresh every other
+   * direct mutation gets.
+   */
+  public async rollbackSnapshot(
+    request: RollbackSnapshotRequest,
+  ): Promise<RollbackSnapshotResponse> {
+    const mutation = request.request;
+    return this.snapshotMutation(
+      mutation?.request,
+      (client, vmid) =>
+        client.rollbackSnapshot(
+          vmid,
+          required(mutation?.providerSnapshotReference, 'providerSnapshotReference'),
+        ),
+      'drifted',
+    );
+  }
+
+  /** Deletes a snapshot. */
+  public async deleteSnapshot(request: DeleteSnapshotRequest): Promise<DeleteSnapshotResponse> {
+    const mutation = request.request;
+    return this.snapshotMutation(mutation?.request, (client, vmid) =>
+      client.deleteSnapshot(
+        vmid,
+        required(mutation?.providerSnapshotReference, 'providerSnapshotReference'),
+      ),
+    );
+  }
+
+  /**
+   * Marks an instance retained: soft delete.
+   *
+   * SAFE-028 — detach access, retain the resource. `on_boot` is cleared so a host restart does
+   * not bring it back, and the retention deadline is appended to the description as a trailer
+   * beneath the ownership marker. **The marker itself is preserved**, because a later purge has
+   * to prove live ownership and cannot do that against a description it can no longer parse.
+   */
+  public async markInstanceRetained(
+    request: MarkInstanceRetainedRequest,
+  ): Promise<MarkInstanceRetainedResponse> {
+    const mutation = request.request;
+    const context = mutation?.context;
+    this.assertProfile(context?.providerProfileId);
+    const instanceId = context?.instanceId;
+    const operationId = context?.operationId;
+    const markers = mutation?.expectedOwnershipMarkers;
+    if (!instanceId || !operationId || !markers) {
+      throw new ProviderTransportError(
+        'protocol_error',
+        'context and ownership markers are required.',
+        { retryable: false },
+      );
+    }
+
+    const workspace = workspaceNameFor(instanceId);
+    const directory = await this.runner.prepare(workspace, this.probeTfvars());
+    const init = await this.runner.init(directory, workspace);
+    if (init.exitCode !== 0) {
+      await this.runner.discard(directory).catch(() => undefined);
+      throw new ProviderTransportError('unavailable', 'The state backend is unreachable.', {
+        retryable: true,
+      });
+    }
+
+    const declared = await this.tfvarsFromState(directory);
+    if (!declared) {
+      await this.runner.discard(directory).catch(() => undefined);
+      return {
+        result: failure(
+          FailureCategory.FAILURE_CATEGORY_UNKNOWN_OUTCOME,
+          'TERRAFORM_STATE_ABSENT',
+          'The instance has no Terraform state to retain.',
+        ),
+      };
+    }
+
+    return this.startApply({
+      instanceId,
+      operationId,
+      workspace,
+      vmId: Number(declared.vm_id),
+      tfvars: {
+        ...declared,
+        on_boot: false,
+        started: false,
+        ownership_marker: describedWithTrailer(
+          markers,
+          RETENTION_TRAILER_KEY,
+          request.retentionDeadline ?? '',
+        ),
+      },
+      fencingToken: context?.attempt ?? 1,
+    });
+  }
+
+  /**
+   * Destroys an instance. The one authorized destructive operation.
+   *
+   * Three things must line up before anything is destroyed: the caller must be the purge path, so
+   * the purge module is used rather than the protected one; live ownership must be provable from
+   * the VM's own description (SAFE-006); and the plan gate must be given `allowDestroyOf` naming
+   * this exact resource address, so a plan that would also destroy something else is still
+   * refused.
+   */
+  public async purgeInstance(request: PurgeInstanceRequest): Promise<PurgeInstanceResponse> {
+    const mutation = request.request;
+    const context = mutation?.context;
+    this.assertProfile(context?.providerProfileId);
+    const instanceId = context?.instanceId;
+    const operationId = context?.operationId;
+    const markers = mutation?.expectedOwnershipMarkers;
+    if (!instanceId || !operationId || !markers) {
+      throw new ProviderTransportError(
+        'protocol_error',
+        'context and ownership markers are required.',
+        { retryable: false },
+      );
+    }
+    if (!request.purgeAuthorizationId) {
+      // SAFE-006's first half: a purge without an authorization record is not a purge.
+      throw new ProviderTransportError('protocol_error', 'purgeAuthorizationId is required.', {
+        retryable: false,
+      });
+    }
+
+    const vmid = this.assertVmid(mutation?.providerResourceId);
+    // SAFE-006's second half, and it is read from the live VM rather than from state: state is
+    // this system's belief, and a purge must be justified by what is actually there.
+    await this.assertLiveOwnership(vmid, markers);
+
+    const workspace = workspaceNameFor(instanceId);
+    const directory = await this.runner.prepare(workspace, this.probeTfvars(), true);
+    const init = await this.runner.init(directory, workspace);
+    if (init.exitCode !== 0) {
+      await this.runner.discard(directory).catch(() => undefined);
+      throw new ProviderTransportError('unavailable', 'The state backend is unreachable.', {
+        retryable: true,
+      });
+    }
+    const declared = await this.tfvarsFromState(directory);
+
+    if (!declared) {
+      await this.runner.discard(directory).catch(() => undefined);
+      return {
+        result: failure(
+          FailureCategory.FAILURE_CATEGORY_UNKNOWN_OUTCOME,
+          'TERRAFORM_STATE_ABSENT',
+          'The instance has no Terraform state to purge.',
+        ),
+      };
+    }
+
+    return this.startApply({
+      instanceId,
+      operationId,
+      workspace,
+      vmId: Number(declared.vm_id),
+      tfvars: declared,
+      fencingToken: context?.attempt ?? 1,
+      purge: true,
+    });
+  }
+
+  /** Polls a Proxmox task belonging to the direct client. */
+  private async directTaskState(upid: string, observedAt: string): Promise<GetTaskResponse> {
+    const state = await this.direct().taskState(upid);
+    if (state === 'running') {
+      return { state: ProviderTaskState.PROVIDER_TASK_STATE_RUNNING, observedAt };
+    }
+    if (state === 'succeeded') {
+      return { state: ProviderTaskState.PROVIDER_TASK_STATE_SUCCEEDED, observedAt };
+    }
+    return {
+      state: ProviderTaskState.PROVIDER_TASK_STATE_FAILED,
+      failure: {
+        category: FailureCategory.FAILURE_CATEGORY_PERMANENT,
+        code: 'PROXMOX_TASK_FAILED',
+        safeMessage: 'The provider task failed.',
+      },
+      observedAt,
+    };
+  }
+
+  /**
+   * Runs one direct-API mutation and schedules the refresh it makes necessary.
+   *
+   * The refresh is the point. Terraform did not make this change and has no way to know about it,
+   * so state is stale the moment the call returns. Design §6.4 requires a `-refresh-only` after
+   * every direct mutation, and doing it here rather than asking each caller to remember is the
+   * difference between a rule and a hope.
+   */
+  private async directMutation(
+    request: InstanceMutationRequest,
+    act: (client: ProxmoxDirectClient, vmid: number) => Promise<string>,
+    driftState: 'in_sync' | 'drifted' = 'in_sync',
+  ): Promise<StartInstanceResponse> {
+    const context = request.context;
+    this.assertProfile(context?.providerProfileId);
+    const instanceId = context?.instanceId;
+    if (!instanceId) {
+      throw new ProviderTransportError('protocol_error', 'context.instanceId is required.', {
+        retryable: false,
+      });
+    }
+    const vmid = this.assertVmid(request.providerResourceId);
+    await this.assertLiveOwnership(vmid, request.expectedOwnershipMarkers);
+
+    const upid = await act(this.direct(), vmid);
+
+    // Not awaited: the refresh is bookkeeping, and the caller is waiting on the mutation.
+    void this.refreshAfterDirectMutation(instanceId, driftState);
+
+    return {
+      result: {
+        state: ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED,
+        providerResourceId: String(vmid),
+        providerTaskReference: `${DIRECT_TASK_PREFIX}${upid}`,
+        evidenceId: randomUUID(),
+      },
+    };
+  }
+
+  /** A snapshot mutation, which is a direct mutation with the port's nested request shape. */
+  private async snapshotMutation(
+    mutation: InstanceMutationRequest | undefined,
+    act: (client: ProxmoxDirectClient, vmid: number) => Promise<string>,
+    driftState: 'in_sync' | 'drifted' = 'in_sync',
+  ): Promise<CreateSnapshotResponse> {
+    if (!mutation) {
+      throw new ProviderTransportError('protocol_error', 'request is required.', {
+        retryable: false,
+      });
+    }
+    return this.directMutation(mutation, act, driftState);
+  }
+
+  /** Refreshes state after a change Terraform did not make, and records what it found. */
+  private async refreshAfterDirectMutation(
+    instanceId: string,
+    driftState: 'in_sync' | 'drifted',
+  ): Promise<void> {
+    const workspace = workspaceNameFor(instanceId);
+    let directory;
+    try {
+      directory = await this.runner.prepare(workspace, this.probeTfvars());
+      const init = await this.runner.init(directory, workspace);
+      if (init.exitCode !== 0) return;
+      await this.runner.refresh(directory);
+      await this.runs.recordWorkspace({
+        instanceId,
+        workspaceName: workspace,
+        refreshed: true,
+        driftState,
+      });
+    } catch {
+      // A failed refresh must not fail the mutation that already succeeded. It does mean state
+      // cannot be trusted, so the workspace is marked unknown rather than left claiming in sync.
+      await this.runs
+        .recordWorkspace({ instanceId, workspaceName: workspace, driftState: 'unknown' })
+        .catch(() => undefined);
+    } finally {
+      if (directory) await this.runner.discard(directory).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Proves ownership from the live VM, not from state.
+   *
+   * State is this system's belief about a VM. A destructive operation has to be justified by what
+   * is actually there, which is why SAFE-006 asks for both and why this reads the description
+   * directly.
+   */
+  private async assertLiveOwnership(
+    vmid: number,
+    expected: OwnershipMarkers | undefined,
+  ): Promise<void> {
+    if (!expected) {
+      throw new ProviderTransportError('protocol_error', 'Ownership markers are required.', {
+        retryable: false,
+      });
+    }
+    const config = await this.direct().config(vmid);
+    const description = typeof config?.description === 'string' ? config.description : undefined;
+    if (!markersMatch(parseOwnership(description), expected)) {
+      throw new ProviderTransportError(
+        'protocol_error',
+        'Provider ownership could not be proven.',
+        { retryable: false },
+      );
+    }
+  }
+
+  /** The direct client, which is only configured when the six operations are reachable. */
+  private direct(): ProxmoxDirectClient {
+    if (!this.directClient) {
+      throw new ProviderTransportError(
+        'protocol_error',
+        'This deployment has no direct Proxmox client, so snapshots, reboot and hard stop are unavailable.',
+        { retryable: false },
+      );
+    }
+    return this.directClient;
+  }
+
+  /** Refuses a VMID outside the reservation. */
+  private assertVmid(value: string | undefined): number {
+    const vmid = Number(value);
+    if (
+      !Number.isSafeInteger(vmid) ||
+      vmid < this.configuration.resourceIdMinimum ||
+      vmid > this.configuration.resourceIdMaximum
+    ) {
+      throw new ProviderTransportError('protocol_error', 'VMID is outside the reserved range.', {
+        retryable: false,
+      });
+    }
+    return vmid;
   }
 
   /**

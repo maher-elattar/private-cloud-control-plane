@@ -1,12 +1,12 @@
 {
-  "startedAt": "2026-09-14T05:56:08.104Z",
+  "startedAt": "2026-09-14T13:12:36.768Z",
   "status": "passed",
   "checks": {
     "reserved-range-is-clear": {
       "totalVms": 1,
       "reserved": 0,
       "status": "passed",
-      "durationMs": 718
+      "durationMs": 742
     },
     "database-is-migrated": {
       "instanceRow": "seeded",
@@ -15,23 +15,23 @@
     },
     "validate-profile": {
       "checks": [
-        "terraform_init=VALIDATION_CHECK_STATE_PASSED",
-        "module_plan=VALIDATION_CHECK_STATE_PASSED"
+        "terraform_module=VALIDATION_CHECK_STATE_PASSED",
+        "module_variables=VALIDATION_CHECK_STATE_PASSED"
       ],
       "status": "passed",
-      "durationMs": 8997
+      "durationMs": 8064
     },
     "submit-create": {
-      "taskReference": "fb1e0191-ef34-496d-a883-41b01b2a7812",
-      "vmId": 910081,
+      "taskReference": "22f235b8-a10e-410d-a16a-03524f01712a",
+      "vmId": 910044,
       "status": "passed",
-      "durationMs": 8340
+      "durationMs": 8421
     },
     "run-row-exists-before-the-apply-settles": {
       "runStatus": "running",
       "runCommand": "apply",
       "status": "passed",
-      "durationMs": 9
+      "durationMs": 5
     },
     "poll-task-to-completion": {
       "polls": 12,
@@ -45,7 +45,7 @@
         "replace": 0
       },
       "status": "passed",
-      "durationMs": 33046
+      "durationMs": 33104
     },
     "gate-allowed-a-create-and-nothing-else": {
       "planActions": {
@@ -62,11 +62,11 @@
     "proxmox-holds-the-expected-vm": {
       "cores": 2,
       "memory": "4096",
-      "net0": "virtio=BC:24:11:D3:E7:6C,bridge=vmbr1,firewall=1,mtu=1400",
+      "net0": "virtio=BC:24:11:48:02:DE,bridge=vmbr1,firewall=1,mtu=1400",
       "ipconfig0": "gw=192.168.4.1,ip=192.168.4.3/22",
-      "scsi0": "local:910081/vm-910081-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,format=raw,iothread=1,replicate=1,size=32G,ssd=1",
+      "scsi0": "local:910044/vm-910044-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,format=raw,iothread=1,replicate=1,size=32G,ssd=1",
       "status": "passed",
-      "durationMs": 524
+      "durationMs": 528
     },
     "ownership-marker-round-tripped": {
       "markerFields": [
@@ -77,38 +77,83 @@
         "projectId"
       ],
       "status": "passed",
-      "durationMs": 135
+      "durationMs": 134
     },
     "observe-reports-what-exists": {
       "powerState": "OBSERVED_POWER_STATE_RUNNING",
       "ownershipMatch": true,
       "status": "passed",
-      "durationMs": 10698
+      "durationMs": 10369
     },
     "configuration-has-converged": {
       "state": "PROVIDER_RESULT_STATE_SUCCEEDED",
       "status": "passed",
-      "durationMs": 10793
+      "durationMs": 10826
     },
     "workspace-inventory-recorded": {
-      "workspace": "instance-535cc93f-2025-4da7-8274-fa778e0a603b",
+      "workspace": "instance-0207defc-f6d4-4b29-8548-350221cb48d5",
       "driftState": "in_sync",
       "status": "passed",
       "durationMs": 21
     },
-    "diagnostics-carry-no-secret": {
-      "runRows": 1,
+    "power-off-and-on-through-terraform": {
+      "offPolls": 5,
+      "onPolls": 8,
       "status": "passed",
-      "durationMs": 21
+      "durationMs": 71106
     },
-    "teardown": {
-      "destroyed": 910081,
-      "totalVms": 1,
+    "start-again-is-a-no-op": {
+      "state": "PROVIDER_RESULT_STATE_SUCCEEDED",
       "status": "passed",
-      "durationMs": 20281
+      "durationMs": 7887
+    },
+    "reboot-through-the-direct-client": {
+      "polls": 2,
+      "reference": "upid:<redacted>",
+      "status": "passed",
+      "durationMs": 5224
+    },
+    "resize-grows-and-refuses-a-shrink": {
+      "cores": 4,
+      "memory": "8192",
+      "scsi0": "local:910044/vm-910044-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=40G,ssd=1",
+      "status": "passed",
+      "durationMs": 53809
+    },
+    "snapshot-support-matches-the-storage": {
+      "storageSupportsSnapshots": false,
+      "limitation": "directory storage snapshots qcow2 only; template 110 is raw",
+      "status": "passed",
+      "durationMs": 2302
+    },
+    "direct-mutations-triggered-a-refresh": {
+      "driftState": "in_sync",
+      "status": "passed",
+      "durationMs": 23
+    },
+    "retention-detaches-without-destroying": {
+      "onboot": 0,
+      "trailer": "present",
+      "status": "passed",
+      "durationMs": 32954
+    },
+    "purge-refuses-without-an-authorization-id": {
+      "refused": true,
+      "status": "passed",
+      "durationMs": 134
+    },
+    "purge-destroys-when-authorized": {
+      "destroyed": true,
+      "status": "passed",
+      "durationMs": 27600
+    },
+    "diagnostics-carry-no-secret": {
+      "runRows": 6,
+      "status": "passed",
+      "durationMs": 20
     }
   },
-  "finishedAt": "2026-09-14T05:57:41.811Z",
+  "finishedAt": "2026-09-14T13:17:10.164Z",
   "failures": [],
-  "instanceId": "535cc93f-2025-4da7-8274-fa778e0a603b"
+  "instanceId": "0207defc-f6d4-4b29-8548-350221cb48d5"
 }

@@ -16,6 +16,7 @@
  * @see docs/architecture/terraform-manual-walkthrough.md
  */
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { evaluatePlan, type GateResult, type TerraformPlan } from './plan-gate.js';
@@ -74,6 +75,21 @@ const TFVARS_FILE = 'terraform.tfvars.json';
 const TFVARS_MODE = 0o600;
 
 /**
+ * How long a command waits for the state lock before giving up.
+ *
+ * Terraform's default is to fail *immediately* on contention, and that default is wrong here.
+ * Two things legitimately overlap on one instance: a `submit` returns as soon as the run is
+ * durable while its apply continues in the background, and a direct-API mutation schedules a
+ * refresh that outlives the call. Measured — resize, retention and purge all failed with an
+ * unreadable plan because a preceding background operation still held the lock.
+ *
+ * Waiting is the right behaviour because the lock is short-lived and per-instance: the `pg`
+ * backend keys it on the state row, so a wait here blocks only work on the same instance, which
+ * is work the control plane serialises anyway.
+ */
+const LOCK_TIMEOUT = '180s';
+
+/**
  * Environment variables removed from every child process.
  *
  * `TF_LOG` in particular prints resource attribute values, which for this module includes the
@@ -105,19 +121,28 @@ export class TerraformRunner {
   }
 
   /**
-   * Prepares a working directory for a workspace and writes its variables.
+   * Prepares a working directory and writes its variables.
    *
-   * @param workspaceName The workspace, which is also the directory name.
+   * WHY the directory is unique per call rather than named after the workspace: every operation
+   * on one instance targets the same Terraform workspace, and the workspace name is what gives
+   * the `pg` backend's advisory lock its per-instance granularity. But the *local* directory is
+   * scratch space, and naming it after the workspace meant two operations on one instance shared
+   * it — so a background task finishing an earlier apply would `discard` a directory a later
+   * operation was actively using. Measured: resize, retention and purge all failed with "the
+   * state backend is unreachable" or an unreadable plan, because their directory had been deleted
+   * underneath them.
+   *
+   * @param workspaceName The Terraform workspace to select later. Not the directory name.
    * @param tfvars The instance's variables.
    * @param purge Whether to use the purge module, which permits a destroy.
-   * @returns The working directory path.
+   * @returns The working directory path, which the caller passes to {@link discard}.
    */
   public async prepare(
     workspaceName: string,
     tfvars: InstanceTfvars,
     purge = false,
   ): Promise<string> {
-    const directory = join(this.configuration.workingRoot, workspaceName);
+    const directory = join(this.configuration.workingRoot, `${workspaceName}.${randomUUID()}`);
     await mkdir(directory, { recursive: true });
 
     // Copy the module rather than referencing it, so a run cannot be affected by an edit to the
@@ -136,18 +161,97 @@ export class TerraformRunner {
   }
 
   /**
-   * Removes a working directory.
+   * Rewrites the variable file in an existing working directory.
+   *
+   * Needed because `prepare` now returns a fresh directory each call, so re-preparing to change
+   * one variable would plan against a directory the caller is not holding. That is not
+   * hypothetical: it broke the convergence assertion, which prepared with placeholder values to
+   * read state and then needed the real values in the *same* directory to plan against.
+   *
+   * @param directory A directory from {@link prepare}.
+   * @param tfvars The variables to write.
+   */
+  public async writeVariables(directory: string, tfvars: InstanceTfvars): Promise<void> {
+    const variablePath = join(directory, TFVARS_FILE);
+    await writeFile(variablePath, renderTfvars(tfvars));
+    await chmod(variablePath, TFVARS_MODE);
+  }
+
+  /**
+   * Removes one working directory.
    *
    * Called after every run, successful or not: the variable file inside it holds a password, and
    * leaving it on disk for the next operator to find is the avoidable half of that exposure.
    *
-   * @param workspaceName The workspace whose directory should go.
+   * Takes the path {@link prepare} returned rather than a workspace name, so a cleanup can only
+   * ever remove the directory its own operation created.
+   *
+   * @param directory The path {@link prepare} returned.
    */
-  public async discard(workspaceName: string): Promise<void> {
-    await rm(join(this.configuration.workingRoot, workspaceName), {
-      recursive: true,
-      force: true,
-    });
+  public async discard(directory: string): Promise<void> {
+    // Refuse to remove anything outside the configured root. A caller that passed the wrong
+    // string should lose nothing but a confusing error.
+    if (!directory.startsWith(this.configuration.workingRoot)) return;
+    await rm(directory, { recursive: true, force: true });
+  }
+
+  /**
+   * Initialises a working directory **without** a backend, for validation only.
+   *
+   * WHY this exists beside {@link init}: `validateProfile` only needs to know that the module and
+   * the provider are usable, and initialising the real backend to find that out created a
+   * workspace row per call that nothing ever removed. The backend accumulated one `probe-*` row
+   * for every validation the deployment had ever performed.
+   *
+   * A local-state init leaves nothing behind and contends for no lock, which also means several
+   * validations can run at once.
+   *
+   * @param directory A directory from {@link prepare}.
+   * @returns The invocation's outcome.
+   */
+  public async initWithoutBackend(directory: string): Promise<InvocationResult> {
+    return this.run('init', ['init', '-input=false', '-no-color', '-backend=false'], directory);
+  }
+
+  /**
+   * Validates the configuration and its variables, without a backend or state.
+   *
+   * The right tool for "is this module usable": it type-checks the configuration and every
+   * variable without needing state, a lock or a provider connection. `plan` cannot do this job —
+   * it refuses to run at all against a configuration whose backend has not been initialised, so
+   * a backend-free validation that used `plan` would always fail.
+   *
+   * @param directory A directory initialised with {@link initWithoutBackend}.
+   * @returns The invocation's outcome.
+   */
+  public async validate(directory: string): Promise<InvocationResult> {
+    return this.run('validate', ['validate', '-no-color'], directory);
+  }
+
+  /**
+   * Deletes a workspace from the state backend.
+   *
+   * Called after a successful purge. A workspace row that outlives its instance is not harmless:
+   * it is state for something that no longer exists, and the inventory would keep reporting it.
+   *
+   * Selects `default` first, because Terraform refuses to delete the workspace it is standing in.
+   *
+   * @param directory A prepared, initialised directory.
+   * @param workspaceName The workspace to remove.
+   * @returns The invocation's outcome. A failure is not fatal: the VM is already gone.
+   */
+  public async deleteWorkspace(
+    directory: string,
+    workspaceName: string,
+  ): Promise<InvocationResult> {
+    await this.run('workspace', ['workspace', 'select', 'default'], directory).catch(
+      () => undefined,
+    );
+    return this.run(
+      'workspace-delete',
+      ['workspace', 'delete', '-no-color', `-lock-timeout=${LOCK_TIMEOUT}`, workspaceName],
+      directory,
+    );
   }
 
   /**
@@ -162,6 +266,7 @@ export class TerraformRunner {
       'init',
       '-input=false',
       '-no-color',
+      `-lock-timeout=${LOCK_TIMEOUT}`,
       `-backend-config=conn_str=${this.configuration.backendConnectionString}`,
     ];
     if (this.configuration.pluginDirectory) {
@@ -196,6 +301,7 @@ export class TerraformRunner {
       'plan',
       '-input=false',
       '-no-color',
+      `-lock-timeout=${LOCK_TIMEOUT}`,
       `-out=${PLAN_FILE}`,
       `-var-file=${TFVARS_FILE}`,
     ];
@@ -240,7 +346,11 @@ export class TerraformRunner {
     }
     // The saved plan file, never a fresh one. `apply` with no plan computes its own, which would
     // make the gate's verdict advisory rather than binding.
-    return this.run('apply', ['apply', '-input=false', '-no-color', PLAN_FILE], directory);
+    return this.run(
+      'apply',
+      ['apply', '-input=false', '-no-color', `-lock-timeout=${LOCK_TIMEOUT}`, PLAN_FILE],
+      directory,
+    );
   }
 
   /**
@@ -261,6 +371,7 @@ export class TerraformRunner {
         '-auto-approve',
         '-input=false',
         '-no-color',
+        `-lock-timeout=${LOCK_TIMEOUT}`,
         `-var-file=${TFVARS_FILE}`,
       ],
       directory,

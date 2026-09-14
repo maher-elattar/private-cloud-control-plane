@@ -17,26 +17,17 @@ into this work.
 
 ## Current State
 
-- Overall status: In progress
-- Current checkpoint: T-11 — Create, end to end, one request (**in progress**: the adapter's
-  create path is done and committed; the factory wiring and the live run remain)
-- Last completed checkpoint: T-10 — Adapter, read path
-- Completed so far: T-0 through T-10. T-4 was taken ahead of T-3 because the operator
-  authorised the token creation directly and it is a live-server action; T-3 is offline and was
-  unaffected by the order.
-- Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
-- Target server: `https://testsrv.mosalam.com:8006`, node `proxtest`, PVE 9.2.11, standalone.
-- Committed so far: `726bc22` (gitignore and credential boundary), `167871f` (plan scoped to one
-  server, VPC work deferred), `495dab6` (server survey and this ledger), `c218936` (manual
-  Terraform walkthrough), `7bdeec8` (scoped API token), `dbdc069`
-  (readiness probe and capability flags), `0c58ba4` (ownership markers), `9ec2c7f` (live
-  server catalog and configuration cross-check), `08ab358` (inventory schema), `580544d` (module and
-  plan gate), `602156a` (runner, tfvars and inventory store),
-  `f481573` (adapter read path).
-- **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
-  administrator password is retained in the credentials file only so that token can be
-  re-minted; it was read into a session transcript during this work and **should be rotated**.
-  Rotating it does not invalidate the token.
+- The Terraform-backed adapter implements **all seventeen** provider-port methods and is verified
+  against the live server at **22 of 22 checks** (`pnpm run verify:terraform-adapter`).
+- Nine methods route through Terraform, six through a narrowed direct client, two are local. See
+  [Terraform Call Map](docs/architecture/terraform-call-map.md).
+- `PROVIDER_ADAPTER` accepts `fake`, `proxmox` and `terraform`. **The default is still `fake`**
+  and the direct adapter is unchanged apart from the shared marker fix of T-5.
+- Checkpoints T-0 through T-10 and T-12 through T-15 are complete. **T-11's upper layers**
+  (REST accept → outbox → Kafka → orchestrator → projection, against this adapter) and T-16
+  and T-17 remain.
+- The server is left with **0 VMs inside the reserved interval 910000-910099** after every run.
+  This is checked as both a precondition and a teardown assertion.
 
 ## Survey findings that shape everything below
 
@@ -862,18 +853,81 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoints T-12 to T-15 — The remaining capabilities
 
-- Status: Pending
-- One capability per checkpoint, one per commit, each driven through the full stack with the
-  verifier extended, matching Phase 5's one-capability-per-change rule.
-  - **T-12 Power** — `started` through Terraform; hard stop and reboot stay on the direct API,
-    each followed by the mandatory refresh of design §6.4. Compare latency against T-2's
-    measurements and be willing to route power to the direct API if Terraform is materially
-    slower.
-  - **T-13 Resize** — CPU, memory, disk growth. Shrink refused at both layers.
-  - **T-14 Snapshots** — entirely direct API, each mutation followed by a refresh so state never
-    silently diverges; a rollback leaves `drift_state` marked until a refresh clears it.
-  - **T-15 Retention and purge** — soft delete via Terraform; purge as the one authorized destroy
-    with `verifying_purge` proving live ownership first. T-5's fix is what makes this reachable.
+- Status: Complete
+- Completed 2026-09-14. All four capabilities are implemented and verified against the live
+  server in one run: **22 of 22 checks passing**, with the whole seventeen-method port
+  implemented. Evidence: `docs/verification/evidence/terraform-adapter.json`.
+- **T-12 Power — through Terraform, except the two operations it cannot express.**
+  `startInstance` and `shutdownInstance` set `started` and converge, measured at roughly 35
+  seconds each. A hard stop and a reboot go to the direct client, because `started = false` is a
+  _graceful_ shutdown: conflating the two would mean a caller asking for one and silently getting
+  the other. A redundant start reports success without applying, so a duplicate delivery does not
+  produce a run row for work nobody did.
+- **T-13 Resize — grow only, refused at admission.** CPU, memory and disk growth converge in
+  place. A shrink is refused **before** anything is written, which the live run found to matter
+  more than expected: an earlier refusal at apply time left the rejected size in Terraform state
+  while the server kept the real one, so the inventory would have reported a disk the server never
+  had. The mandatory-refresh rule was extended from "after a direct mutation" to "after any failed
+  apply" as a result.
+- **T-14 Snapshots — entirely the direct client, and honestly reported as unavailable here.** bpg
+  publishes no snapshot resource and no data source, so all four operations are direct API calls,
+  each followed by `apply -refresh-only`. A rollback additionally marks the workspace `drifted`
+  until a refresh proves otherwise, because it reverts disk and configuration wholesale with
+  Terraform learning nothing about it. On **this** server snapshots are impossible: template 110's
+  disk is `raw` on directory storage, which snapshots qcow2 only. The verifier therefore asserts
+  the capability flag _matches the storage_ rather than asserting snapshots work — a check that
+  passes today and will keep passing after the template is rebuilt, when it will begin asserting
+  the opposite branch.
+- **T-15 Retention and purge — the one authorized destroy.** Retention sets `on_boot = false`,
+  `started = false` and appends a retention trailer to the description, leaving the VM and its
+  disk intact. Purge uses a sibling module identical to the production one except for its
+  `lifecycle` block, because `prevent_destroy` cannot be parameterised — a check fails the build
+  if the two modules diverge anywhere else. It refuses without an authorization id, proves
+  ownership from the **live VM's description** rather than from state, and passes `allowDestroyOf`
+  naming that single resource address so the gate permits exactly one delete and nothing else.
+
+#### Three defects these capabilities found
+
+1. **All operations on one instance shared a working directory.** The directory was
+   `workingRoot/instance-<uuid>`, so a background apply's cleanup deleted a directory another
+   operation was actively using. Directories are now unique per run and `discard` takes the path
+   it was given and refuses anything outside the working root. The class of bug matters more than
+   the instance: a cleanup that can remove another operation's workspace is a cleanup that can
+   destroy in-flight work.
+2. **No command carried `-lock-timeout`.** Terraform's default is to fail _immediately_ on lock
+   contention, and two things legitimately overlap on one instance — a submit whose apply
+   continues in the background, and the refresh a direct mutation schedules. Every init, plan,
+   apply and refresh now waits 180 seconds.
+3. **`validateProfile` leaked a workspace row per call.** Validation ran a real `init` and `plan`,
+   which created a row in `terraform_remote_state.states` for a throwaway workspace — and
+   validation is called on every profile check. It now runs `init -backend=false` followed by
+   `terraform validate`, which needs no state at all. `terraform plan` refuses without an
+   initialised backend, which is why this was not obvious.
+
+- One further live finding, recorded because it cost an afternoon: **bpg ignores `file_format` on
+  a clone.** Declaring `qcow2` to enable snapshots produced a disk that stayed `raw`, and the
+  permanent mismatch between declared and actual made _every_ subsequent plan a replacement —
+  which the gate correctly refused, blocking all further work on that instance. Reverted to `raw`
+  and recorded as an environmental limitation with a template rebuild as the fix.
+- Verification:
+
+  | Gate                                | Result                                                                                                             |
+  | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+  | `pnpm run verify:terraform-adapter` | **22 of 22** checks                                                                                                |
+  | Server state afterwards             | 212 VMs, **0** inside the reserved interval                                                                        |
+  | Secret scan of the evidence file    | 0 occurrences of the token secret, the cloud-init password, or the key                                             |
+  | `npx nx test provider-adapters`     | 12 files, **165 tests** — was 132                                                                                  |
+  | `pnpm run test:integration`         | 122 tests                                                                                                          |
+  | Full quality gate                   | `contracts:validate`, `docs:validate`, `format:check`, `lint`, `typecheck`, `test`, `build` all clean; 14 projects |
+  | `pnpm run terraform:check-modules`  | modules differ only in header and `lifecycle`                                                                      |
+
+#### Deviation recorded — the precondition retry
+
+A run scored 21 of 22 with its only failure being `fetch failed` on the `reserved-range-is-clear`
+**precondition**. That check is an assertion _about_ the server, not an operation on it, and a
+dropped packet is not a finding — but it invalidated an otherwise complete result. The read-only
+probe now retries transport failures three times with a backoff. HTTP status codes are **not**
+retried: a 403 or a 500 is an answer, and retrying an answer would hide it.
 
 ### Checkpoint T-16 — Drift and reconciliation
 

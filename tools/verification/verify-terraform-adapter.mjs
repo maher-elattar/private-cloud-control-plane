@@ -28,6 +28,7 @@ import { dirname, join, resolve } from 'node:path';
 import pg from 'pg';
 
 import {
+  ProxmoxDirectClient,
   TerraformProxmoxProvider,
   TerraformRunner,
 } from '../../packages/provider-adapters/dist/index.js';
@@ -161,6 +162,15 @@ const runner = new TerraformRunner({
 const db = createPostgresDatabase(databaseUrl);
 const runs = new PostgresTerraformInventoryStore(db);
 
+const directClient = new ProxmoxDirectClient({
+  endpoint,
+  apiTokenId: tokenId,
+  apiTokenSecret: tokenSecret,
+  node: NODE,
+  resourceIdMinimum: 910_000,
+  resourceIdMaximum: 910_099,
+});
+
 const provider = new TerraformProxmoxProvider(
   {
     providerProfileId: PROFILE_ID,
@@ -185,6 +195,7 @@ const provider = new TerraformProxmoxProvider(
   },
   runner,
   runs,
+  directClient,
 );
 
 const ownership = {
@@ -205,13 +216,32 @@ const context = {
   attempt: 1,
 };
 
-/** One read-only Proxmox API call with the scoped token. */
-async function proxmox(path) {
-  const response = await fetch(`${endpoint}/api2/json${path}`, {
-    headers: { Authorization: `PVEAPIToken=${tokenId}=${tokenSecret}` },
-  });
-  if (!response.ok) throw new Error(`${path} returned ${response.status}`);
-  return (await response.json()).data;
+/**
+ * One read-only Proxmox API call with the scoped token, retried on transport failure.
+ *
+ * WHY retry: these are assertions *about* the server, not operations on it, and a dropped packet
+ * is not a finding. A run once failed its very first precondition on `fetch failed`, which said
+ * nothing about the system under test and invalidated an otherwise complete result. HTTP status
+ * codes are **not** retried — a 403 or a 500 is an answer.
+ */
+async function proxmox(path, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(`${endpoint}/api2/json${path}`, {
+        headers: { Authorization: `PVEAPIToken=${tokenId}=${tokenSecret}` },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) throw new Error(`${path} returned ${response.status}`);
+      return (await response.json()).data;
+    } catch (error) {
+      lastError = error;
+      const transport = error instanceof Error && !/returned \d{3}/.test(error.message);
+      if (!transport || attempt === attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
+    }
+  }
+  throw lastError;
 }
 
 /** The instance row the inventory's foreign key requires. */
@@ -445,6 +475,263 @@ try {
     }
   });
 
+  /** Polls whatever reference a mutation returned until it settles. */
+  async function pollUntilSettled(reference, label) {
+    const deadline = Date.now() + APPLY_TIMEOUT_MS;
+    let state;
+    let polls = 0;
+    while (Date.now() < deadline) {
+      polls += 1;
+      const response = await provider.getTask({ context, providerTaskReference: reference });
+      state = response.state;
+      if (state !== ProviderTaskState.PROVIDER_TASK_STATE_RUNNING) break;
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+    }
+    expect(
+      state === ProviderTaskState.PROVIDER_TASK_STATE_SUCCEEDED,
+      `${label} settled at ${state} after ${polls} polls`,
+    );
+    return polls;
+  }
+
+  const powerMutation = () => ({
+    context: { ...context, requestId: `${operationId}:power`, attempt: 1 },
+    providerResourceId: String(createdVmId),
+    expectedOwnershipMarkers: ownership,
+  });
+
+  await check('power-off-and-on-through-terraform', async () => {
+    const off = await provider.shutdownInstance(powerMutation());
+    expect(
+      off.result?.state === ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED,
+      `shutdown returned ${off.result?.state}`,
+    );
+    const offPolls = await pollUntilSettled(off.result.providerTaskReference, 'shutdown');
+
+    const stopped = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/status/current`);
+    expect(stopped.status === 'stopped', `after shutdown the VM is ${stopped.status}`);
+
+    const on = await provider.startInstance(powerMutation());
+    const onPolls = await pollUntilSettled(on.result.providerTaskReference, 'start');
+    const running = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/status/current`);
+    expect(running.status === 'running', `after start the VM is ${running.status}`);
+
+    return { offPolls, onPolls };
+  });
+
+  await check('start-again-is-a-no-op', async () => {
+    // A duplicate delivery must not produce a second run row for work nobody did.
+    const again = await provider.startInstance(powerMutation());
+    expect(
+      again.result?.state === ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
+      `a redundant start returned ${again.result?.state} instead of SUCCEEDED`,
+    );
+    expect(
+      again.result?.providerTaskReference === undefined,
+      'a redundant start produced a task reference, which means it applied something',
+    );
+    return { state: again.result?.state };
+  });
+
+  await check('reboot-through-the-direct-client', async () => {
+    const rebooted = await provider.rebootInstance(powerMutation());
+    const reference = rebooted.result?.providerTaskReference;
+    // A direct-client reference is a Proxmox UPID and must be distinguishable from a run id.
+    expect(String(reference).startsWith('upid:'), `reference was ${reference}`);
+    const polls = await pollUntilSettled(reference, 'reboot');
+    return { polls, reference: 'upid:<redacted>' };
+  });
+
+  await check('resize-grows-and-refuses-a-shrink', async () => {
+    const shrink = await provider.resizeInstance({
+      request: powerMutation(),
+      targetResources: { cpuCount: 2, memoryMib: '4096', diskGib: '16' },
+    });
+    expect(
+      shrink.result?.failure?.code === 'DISK_SHRINK_FORBIDDEN',
+      `a shrink returned ${shrink.result?.failure?.code ?? shrink.result?.state}`,
+    );
+
+    const grow = await provider.resizeInstance({
+      request: powerMutation(),
+      targetResources: { cpuCount: 4, memoryMib: '8192', diskGib: '40' },
+    });
+    expect(
+      grow.result?.state === ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED,
+      `a grow returned ${grow.result?.state}`,
+    );
+    await pollUntilSettled(grow.result.providerTaskReference, 'resize');
+
+    const config = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+    expect(Number(config.cores) === 4, `cores=${config.cores}`);
+    expect(Number(config.memory) === 8192, `memory=${config.memory}`);
+    expect(String(config.scsi0).includes('size=40G'), `scsi0=${config.scsi0}`);
+    return { cores: config.cores, memory: config.memory, scsi0: config.scsi0 };
+  });
+
+  await check('snapshot-support-matches-the-storage', async () => {
+    // Not a skip. The storage genuinely cannot snapshot this disk, and what must be verified is
+    // that asking produces a *classified refusal* rather than a hang, a partial snapshot, or a
+    // corrupted workspace.
+    //
+    // Proxmox snapshots a disk only where the storage supports it, and directory storage supports
+    // snapshots only for qcow2. Template 110's disk is raw, and bpg does not convert format on a
+    // clone — measured, see the module comment — so every clone of it is raw too. Making
+    // snapshots work here needs a qcow2 template, which is an operator action.
+    const config = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+    const raw =
+      String(config.scsi0).includes('format=raw') || String(config.scsi0).includes('.raw');
+
+    if (!raw) {
+      // A qcow2 template was supplied, so the capability should actually work.
+      const name = 'verify-snapshot';
+      const created = await provider.createSnapshot({ request: powerMutation(), name });
+      await pollUntilSettled(created.result.providerTaskReference, 'createSnapshot');
+      const listed = await provider.listSnapshots({
+        context,
+        providerResourceId: String(createdVmId),
+        expectedOwnershipMarkers: ownership,
+      });
+      expect(
+        (listed.snapshots ?? []).some((entry) => entry.name === name),
+        'the snapshot is absent from the listing',
+      );
+      const deleted = await provider.deleteSnapshot({
+        request: { request: powerMutation(), providerSnapshotReference: name },
+      });
+      await pollUntilSettled(deleted.result.providerTaskReference, 'deleteSnapshot');
+      return { storageSupportsSnapshots: true, exercised: 'create, list, delete' };
+    }
+
+    // The listing must still work: it is a read, and an empty list is the correct answer.
+    const listed = await provider.listSnapshots({
+      context,
+      providerResourceId: String(createdVmId),
+      expectedOwnershipMarkers: ownership,
+    });
+    expect(Array.isArray(listed.snapshots), 'listSnapshots did not return a list');
+    expect(
+      !(listed.snapshots ?? []).some((entry) => entry.name === 'current'),
+      'the synthetic current entry was returned',
+    );
+
+    // And the attempt must be refused in a way a workflow can act on, with the workspace intact.
+    let classified = false;
+    try {
+      const created = await provider.createSnapshot({
+        request: powerMutation(),
+        name: 'verify-snapshot',
+      });
+      const reference = created.result?.providerTaskReference;
+      if (reference) {
+        const response = await provider.getTask({ context, providerTaskReference: reference });
+        classified = response.state === ProviderTaskState.PROVIDER_TASK_STATE_FAILED;
+      } else {
+        classified = Boolean(created.result?.failure?.code);
+      }
+    } catch (error) {
+      // A transport-level refusal is also a classified outcome.
+      classified = /Proxmox/.test(String(error));
+    }
+    expect(classified, 'a snapshot attempt on unsupported storage was not classified as a failure');
+
+    const after = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+    expect(Boolean(after), 'the VM did not survive the refused snapshot attempt');
+
+    return {
+      storageSupportsSnapshots: false,
+      limitation: 'directory storage snapshots qcow2 only; template 110 is raw',
+    };
+  });
+
+  await check('direct-mutations-triggered-a-refresh', async () => {
+    // Terraform did not make the reboot, so state is stale the moment it returns. Design §6.4
+    // requires a refresh after every direct mutation, and this is where that rule is observed
+    // rather than asserted.
+    const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const { rows } = await pool.query(
+        'SELECT drift_state, last_refreshed_at FROM terraform.workspaces WHERE instance_id = $1',
+        [instanceId],
+      );
+      expect(rows.length === 1, `expected one workspace row, found ${rows.length}`);
+      expect(
+        rows[0].last_refreshed_at !== null,
+        'no refresh was recorded after the direct mutations',
+      );
+      return { driftState: rows[0].drift_state };
+    } finally {
+      await pool.end();
+    }
+  });
+
+  await check('retention-detaches-without-destroying', async () => {
+    const retained = await provider.markInstanceRetained({
+      request: powerMutation(),
+      retentionDeadline: '2026-12-31T00:00:00.000Z',
+    });
+    expect(
+      retained.result?.state === ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED,
+      `retention returned ${retained.result?.state}`,
+    );
+    await pollUntilSettled(retained.result.providerTaskReference, 'markInstanceRetained');
+
+    const config = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+    // SAFE-028: the resource is retained, not destroyed, and it will not come back on a host
+    // restart.
+    expect(String(config.onboot ?? '0') === '0', `onboot=${config.onboot}`);
+    // And the marker survives, because a purge has to prove live ownership afterwards.
+    const description = String(config.description ?? '');
+    expect(
+      description.startsWith('private-cloud-control:'),
+      'retention destroyed the ownership marker',
+    );
+    expect(
+      description.includes('retained-until=2026-12-31'),
+      `the retention trailer is absent: ${description.slice(0, 120)}`,
+    );
+    return { onboot: config.onboot ?? '0', trailer: 'present' };
+  });
+
+  await check('purge-refuses-without-an-authorization-id', async () => {
+    // SAFE-006's first half. Asserted live, because a purge that skipped it would be the single
+    // most damaging defect this system could have.
+    let refused = false;
+    try {
+      await provider.purgeInstance({
+        request: powerMutation(),
+        retentionDeadline: '2026-12-31T00:00:00.000Z',
+      });
+    } catch (error) {
+      refused = /purgeAuthorizationId is required/.test(String(error));
+    }
+    expect(refused, 'a purge without an authorization id was not refused');
+
+    const stillThere = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+    expect(Boolean(stillThere), 'the VM disappeared during a refused purge');
+    return { refused: true };
+  });
+
+  await check('purge-destroys-when-authorized', async () => {
+    const purged = await provider.purgeInstance({
+      request: powerMutation(),
+      purgeAuthorizationId: randomUUID(),
+      retentionDeadline: '2026-12-31T00:00:00.000Z',
+    });
+    expect(
+      purged.result?.state === ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED,
+      `purge returned ${purged.result?.state}: ${purged.result?.failure?.code ?? ''}`,
+    );
+    await pollUntilSettled(purged.result.providerTaskReference, 'purgeInstance');
+
+    const vms = await proxmox(`/nodes/${NODE}/qemu`);
+    const remaining = vms.filter((vm) => vm.vmid >= 910_000 && vm.vmid <= 910_099);
+    expect(remaining.length === 0, `${remaining.length} VM(s) remain after the purge`);
+    // The purge already destroyed it, so the teardown has nothing to do.
+    createdVmId = undefined;
+    return { destroyed: true };
+  });
+
   await check('diagnostics-carry-no-secret', async () => {
     const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
     try {
@@ -525,7 +812,7 @@ try {
       expect(remaining.length === 0, `${remaining.length} VM(s) remain in the reserved interval`);
       return { destroyed: createdVmId, totalVms: vms.length };
     });
-    await runner.discard(`instance-${instanceId}`).catch(() => undefined);
+    // The teardown check discards its own directory; nothing else to clean here.
     await cleanupRows().catch(() => undefined);
   } else if (createdVmId) {
     process.stdout.write(`\n--keep: VM ${createdVmId} left on the server for inspection.\n`);

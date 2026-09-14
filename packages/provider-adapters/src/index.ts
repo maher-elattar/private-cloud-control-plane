@@ -33,9 +33,12 @@ export type {
   TerraformRunReader,
 } from './terraform-proxmox-provider.js';
 export {
+  RETENTION_TRAILER_KEY,
   describedWithTrailer,
   diskGiB,
   markersMatch,
   ownershipDescription,
   parseOwnership,
 } from './proxmox-provider.js';
+export { ProxmoxDirectClient } from './terraform/direct-client.js';
+export type { DirectClientConfiguration, ProxmoxSnapshot } from './terraform/direct-client.js';

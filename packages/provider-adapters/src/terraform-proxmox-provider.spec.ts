@@ -70,6 +70,19 @@ function runnerDouble(overrides: Partial<TerraformRunner> = {}): TerraformRunner
     prepare: async () => '/tmp/workspace',
     discard: async () => undefined,
     init: async () => ({ command: 'init', exitCode: 0, diagnostics: [], durationMs: 1 }),
+    initWithoutBackend: async () => ({
+      command: 'init',
+      exitCode: 0,
+      diagnostics: [],
+      durationMs: 1,
+    }),
+    validate: async () => ({ command: 'validate', exitCode: 0, diagnostics: [], durationMs: 1 }),
+    deleteWorkspace: async () => ({
+      command: 'workspace-delete',
+      exitCode: 0,
+      diagnostics: [],
+      durationMs: 1,
+    }),
     refresh: async () => ({ command: 'refresh', exitCode: 0, diagnostics: [], durationMs: 1 }),
     showState: async () => ({
       command: 'show-state',
@@ -414,16 +427,19 @@ describe('validateProfile', () => {
       profile: { providerProfileId: configuration.providerProfileId },
     });
     expect(response.valid).toBe(true);
-    expect(response.checks?.map((check) => check.name)).toEqual(['terraform_init', 'module_plan']);
+    expect(response.checks?.map((check) => check.name)).toEqual([
+      'terraform_module',
+      'module_variables',
+    ]);
   });
 
   it('fails, without throwing, when init fails', async () => {
     const response = await provider(
       runnerDouble({
-        init: async () => ({
+        initWithoutBackend: async () => ({
           command: 'init',
           exitCode: 1,
-          diagnostics: [{ severity: 'error', summary: 'backend unreachable' }],
+          diagnostics: [{ severity: 'error', summary: 'provider unavailable' }],
           durationMs: 1,
         }),
       } as Partial<TerraformRunner>),
@@ -436,24 +452,23 @@ describe('validateProfile', () => {
     expect(response.checks).toHaveLength(1);
   });
 
-  it('fails when the module proposes anything other than one create', async () => {
+  it('fails when the module or a variable is invalid', async () => {
     const response = await provider(
       runnerDouble({
-        plan: async () => ({
-          gate: {
-            decision: 'allowed' as const,
-            actionCounts: { create: 0, update: 1 },
-            objections: [],
-            summary: 'update=1',
-          },
-          invocation: { command: 'plan', exitCode: 0, diagnostics: [], durationMs: 1 },
+        validate: async () => ({
+          command: 'validate',
+          exitCode: 1,
+          diagnostics: [
+            { severity: 'error', summary: 'vm_id must be inside the reserved interval' },
+          ],
+          durationMs: 1,
         }),
       } as Partial<TerraformRunner>),
     ).validateProfile({ profile: { providerProfileId: configuration.providerProfileId } });
 
-    // An empty workspace that plans an update means the module and the variables disagree, which
-    // is a configuration fault worth catching before a workflow depends on it.
+    // A configuration fault worth catching here rather than minutes into a workflow.
     expect(response.valid).toBe(false);
+    expect(response.checks?.[1]?.safeSummary).toContain('reserved interval');
   });
 });
 
@@ -619,5 +634,373 @@ describe('submitCreateInstance', () => {
         } as Partial<TerraformRunner>),
       ).submitCreateInstance(request),
     ).rejects.toThrow(/state backend is unreachable/);
+  });
+});
+
+/** A direct-client double that records calls and answers with a UPID. */
+function directDouble(overrides: Record<string, unknown> = {}) {
+  const calls: string[] = [];
+  const marker = `private-cloud-control:${JSON.stringify(ownership)}`;
+  return {
+    calls,
+    client: {
+      config: async () => ({ description: marker }),
+      listSnapshots: async () => [{ name: 'before-upgrade', snaptime: 1_700_000_000 }],
+      createSnapshot: async (vmid: number, name: string) => {
+        calls.push(`createSnapshot ${vmid} ${name}`);
+        return 'UPID:proxtest:1:snapshot:';
+      },
+      rollbackSnapshot: async (vmid: number, name: string) => {
+        calls.push(`rollbackSnapshot ${vmid} ${name}`);
+        return 'UPID:proxtest:2:rollback:';
+      },
+      deleteSnapshot: async (vmid: number, name: string) => {
+        calls.push(`deleteSnapshot ${vmid} ${name}`);
+        return 'UPID:proxtest:3:delsnapshot:';
+      },
+      reboot: async (vmid: number) => {
+        calls.push(`reboot ${vmid}`);
+        return 'UPID:proxtest:4:reboot:';
+      },
+      stopHard: async (vmid: number) => {
+        calls.push(`stopHard ${vmid}`);
+        return 'UPID:proxtest:5:qmstop:';
+      },
+      taskState: async () => 'succeeded',
+      ...overrides,
+    },
+  };
+}
+
+/** A runner whose state read answers with a declared instance, so mutations have a base. */
+function stateRunner(values: Record<string, unknown> = {}): TerraformRunner {
+  const marker = `private-cloud-control:${JSON.stringify(ownership)}`;
+  return runnerDouble({
+    showState: async () => ({
+      command: 'show-state',
+      exitCode: 0,
+      diagnostics: [],
+      durationMs: 1,
+      stdout: JSON.stringify({
+        values: {
+          root_module: {
+            resources: [
+              {
+                address: INSTANCE_ADDRESS,
+                values: {
+                  vm_id: 910_000,
+                  name: 'tf-example-01',
+                  description: marker,
+                  started: true,
+                  on_boot: false,
+                  cpu: [{ cores: 2 }],
+                  memory: [{ dedicated: 4096 }],
+                  disk: [{ size: 32 }],
+                  initialization: [
+                    {
+                      ip_config: [
+                        { ipv4: [{ address: '192.168.4.2/22', gateway: '192.168.4.1' }] },
+                      ],
+                      dns: [{ servers: ['1.1.1.1'] }],
+                      user_account: [{ keys: [] }],
+                    },
+                  ],
+                  ...values,
+                },
+              },
+            ],
+          },
+        },
+      }),
+    }),
+  } as Partial<TerraformRunner>);
+}
+
+const mutation = {
+  context,
+  providerResourceId: '910000',
+  expectedOwnershipMarkers: ownership,
+};
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+describe('power', () => {
+  it('reports success without applying when already in the requested state', async () => {
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    const response = await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null, recorded),
+    ).startInstance(mutation);
+
+    // A duplicate delivery must not produce a second run row for work nobody did.
+    expect(response.result?.state).toBe(ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED);
+    expect(recorded.begun).toHaveLength(0);
+  });
+
+  it('applies when the requested state differs', async () => {
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    const response = await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null, recorded),
+    ).shutdownInstance(mutation);
+
+    expect(response.result?.state).toBe(ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED);
+    expect(recorded.begun).toHaveLength(1);
+    await settle();
+  });
+
+  it('routes a hard stop to the direct client, not to Terraform', async () => {
+    // `started = false` is a graceful shutdown. A hard stop is a different operation, and
+    // conflating them would mean a caller asking for one and silently getting the other.
+    const direct = directDouble();
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    const response = await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null, recorded),
+      direct.client as never,
+    ).stopInstance(mutation);
+
+    expect(direct.calls).toEqual(['stopHard 910000']);
+    expect(recorded.begun).toHaveLength(0);
+    expect(response.result?.providerTaskReference).toMatch(/^upid:/);
+    await settle();
+  });
+
+  it('routes a reboot to the direct client', async () => {
+    const direct = directDouble();
+    await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null),
+      direct.client as never,
+    ).rebootInstance(mutation);
+    expect(direct.calls).toEqual(['reboot 910000']);
+    await settle();
+  });
+
+  it('refreshes state after a direct mutation, because Terraform did not make the change', async () => {
+    const direct = directDouble();
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null, recorded),
+      direct.client as never,
+    ).rebootInstance(mutation);
+    await settle();
+
+    // Design §6.4's rule, applied here rather than asked of each caller: the difference between
+    // a rule and a hope.
+    expect(recorded.workspaces).toHaveLength(1);
+    expect((recorded.workspaces[0] as { refreshed: boolean }).refreshed).toBe(true);
+  });
+
+  it('fails clearly when no direct client is configured', async () => {
+    await expect(
+      new TerraformProxmoxProvider(configuration, stateRunner(), runsDouble(null)).rebootInstance(
+        mutation,
+      ),
+    ).rejects.toThrow(/no direct Proxmox client/);
+  });
+});
+
+describe('resize', () => {
+  it('refuses a disk shrink before planning anything', async () => {
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    const response = await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null, recorded),
+    ).resizeInstance({
+      request: mutation,
+      targetResources: { cpuCount: 2, memoryMib: '4096', diskGib: '16' },
+    });
+
+    // Refusing before the plan is what keeps state honest: bpg does refuse a shrink at apply
+    // time, but it was measured writing the rejected size into state first.
+    expect(response.result?.failure?.code).toBe('DISK_SHRINK_FORBIDDEN');
+    expect(recorded.begun).toHaveLength(0);
+  });
+
+  it('applies a growth', async () => {
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    const response = await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null, recorded),
+    ).resizeInstance({
+      request: mutation,
+      targetResources: { cpuCount: 4, memoryMib: '8192', diskGib: '64' },
+    });
+
+    expect(response.result?.state).toBe(ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED);
+    expect(recorded.begun).toHaveLength(1);
+    await settle();
+  });
+});
+
+describe('snapshots', () => {
+  it('lists snapshots through the direct client', async () => {
+    const direct = directDouble();
+    const response = await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null),
+      direct.client as never,
+    ).listSnapshots({ ...mutation });
+
+    expect(response.snapshots?.map((entry) => entry.name)).toEqual(['before-upgrade']);
+  });
+
+  it('marks the workspace drifted after a rollback, not merely refreshed', async () => {
+    // A rollback reverts disk and configuration wholesale and Terraform learns nothing about it.
+    // `drifted` until a refresh proves otherwise is stronger than what other direct mutations get,
+    // and deliberately so.
+    const direct = directDouble();
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null, recorded),
+      direct.client as never,
+    ).rollbackSnapshot({
+      request: { request: mutation, providerSnapshotReference: 'before-upgrade' },
+    });
+    await settle();
+
+    expect(direct.calls).toEqual(['rollbackSnapshot 910000 before-upgrade']);
+    expect((recorded.workspaces[0] as { driftState: string }).driftState).toBe('drifted');
+  });
+
+  it('refuses a snapshot operation when live ownership cannot be proven', async () => {
+    const direct = directDouble({ config: async () => ({ description: 'someone else' }) });
+    await expect(
+      new TerraformProxmoxProvider(
+        configuration,
+        stateRunner(),
+        runsDouble(null),
+        direct.client as never,
+      ).createSnapshot({ request: mutation, name: 'before-upgrade' }),
+    ).rejects.toThrow(/ownership could not be proven/);
+    expect(direct.calls).toEqual([]);
+  });
+});
+
+describe('retention', () => {
+  it('clears on_boot and appends the deadline while preserving the marker', async () => {
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runsDouble(null, recorded),
+    ).markInstanceRetained({
+      request: mutation,
+      retentionDeadline: '2026-10-01T00:00:00.000Z',
+    });
+
+    // The marker must survive: a later purge has to prove live ownership and cannot do that
+    // against a description it can no longer parse.
+    expect(recorded.begun).toHaveLength(1);
+    await settle();
+  });
+});
+
+describe('purge', () => {
+  it('refuses without an authorization id', async () => {
+    await expect(
+      new TerraformProxmoxProvider(
+        configuration,
+        stateRunner(),
+        runsDouble(null),
+        directDouble().client as never,
+      ).purgeInstance({ request: mutation, retentionDeadline: '2026-10-01T00:00:00.000Z' }),
+    ).rejects.toThrow(/purgeAuthorizationId is required/);
+  });
+
+  it('refuses when live ownership cannot be proven, even with an authorization id', async () => {
+    // SAFE-006 wants both halves. State is this system's belief; a destroy has to be justified by
+    // what is actually on the server.
+    const direct = directDouble({ config: async () => null });
+    await expect(
+      new TerraformProxmoxProvider(
+        configuration,
+        stateRunner(),
+        runsDouble(null),
+        direct.client as never,
+      ).purgeInstance({
+        request: mutation,
+        purgeAuthorizationId: '00000000-0000-4000-8000-0000000000ff',
+        retentionDeadline: '2026-10-01T00:00:00.000Z',
+      }),
+    ).rejects.toThrow(/ownership could not be proven/);
+  });
+
+  it('uses the purge module and names the one address it may destroy', async () => {
+    const planned: unknown[] = [];
+    const runner = runnerDouble({
+      showState: (stateRunner() as unknown as { showState: unknown }).showState,
+      prepare: async (_workspace: string, _tfvars: unknown, purge?: boolean) => {
+        planned.push({ purge: purge === true });
+        return '/tmp/workspace';
+      },
+      plan: async (_directory: string, options?: { allowDestroyOf?: string }) => {
+        planned.push({ allowDestroyOf: options?.allowDestroyOf });
+        return {
+          gate: {
+            decision: 'allowed' as const,
+            actionCounts: { delete: 1 },
+            objections: [],
+            summary: 'destroy',
+          },
+          invocation: { command: 'plan', exitCode: 0, diagnostics: [], durationMs: 1 },
+        };
+      },
+    } as Partial<TerraformRunner>);
+
+    await new TerraformProxmoxProvider(
+      configuration,
+      runner,
+      runsDouble(null),
+      directDouble().client as never,
+    ).purgeInstance({
+      request: mutation,
+      purgeAuthorizationId: '00000000-0000-4000-8000-0000000000ff',
+      retentionDeadline: '2026-10-01T00:00:00.000Z',
+    });
+    await settle();
+
+    expect(planned.some((entry) => (entry as { purge?: boolean }).purge === true)).toBe(true);
+    expect(
+      planned.some(
+        (entry) => (entry as { allowDestroyOf?: string }).allowDestroyOf === INSTANCE_ADDRESS,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('the two task-reference kinds', () => {
+  it('polls a direct-client reference through Proxmox, not the run table', async () => {
+    let readRunCalled = false;
+    const runs: TerraformRunStore = {
+      ...runsDouble(null),
+      readRun: async () => {
+        readRunCalled = true;
+        return null;
+      },
+    };
+    const response = await new TerraformProxmoxProvider(
+      configuration,
+      stateRunner(),
+      runs,
+      directDouble().client as never,
+    ).getTask({ context, providerTaskReference: 'upid:UPID:proxtest:1:snapshot:' });
+
+    expect(response.state).toBe(ProviderTaskState.PROVIDER_TASK_STATE_SUCCEEDED);
+    // Looking it up in the run table and treating "not found" as "must be a UPID" would report a
+    // genuinely lost run as a Proxmox task and then fail trying to poll it.
+    expect(readRunCalled).toBe(false);
   });
 });
