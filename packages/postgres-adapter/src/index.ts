@@ -7,5 +7,6 @@ export * from './page-cursor.js';
 export * from './audit-event.js';
 export * from './projection-store.js';
 export * from './reconciliation-store.js';
+export * from './terraform-inventory-store.js';
 export * from './trace-carrier.js';
 export * from './workflow-store.js';

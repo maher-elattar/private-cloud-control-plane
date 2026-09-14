@@ -18,9 +18,9 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-9 — Runner
-- Last completed checkpoint: T-8 — Module and plan gate
-- Completed so far: T-0 through T-8. T-4 was taken ahead of T-3 because the operator
+- Current checkpoint: T-10 — Adapter, read path
+- Last completed checkpoint: T-9 — Runner
+- Completed so far: T-0 through T-9. T-4 was taken ahead of T-3 because the operator
   authorised the token creation directly and it is a live-server action; T-3 is offline and was
   unaffected by the order.
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
@@ -29,7 +29,8 @@ into this work.
   server, VPC work deferred), `495dab6` (server survey and this ledger), `c218936` (manual
   Terraform walkthrough), `7bdeec8` (scoped API token), `dbdc069`
   (readiness probe and capability flags), `0c58ba4` (ownership markers), `9ec2c7f` (live
-  server catalog and configuration cross-check), `08ab358` (inventory schema).
+  server catalog and configuration cross-check), `08ab358` (inventory schema), `580544d` (module and
+  plan gate).
 - **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
   administrator password is retained in the credentials file only so that token can be
   re-minted; it was read into a session transcript during this work and **should be rotated**.
@@ -581,8 +582,60 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-9 — Runner
 
-- Status: Pending
-- Required work: Terraform execution as a tracked run — the `terraform.runs` row written **before**
+- Status: Complete
+- Evidence recorded 2026-09-14:
+  - Four pieces, split so that the dangerous ones are pure: `tfvars.ts` renders variables,
+    `diagnostics.ts` parses and redacts output, `runner.ts` drives the subprocess, and
+    `PostgresTerraformInventoryStore` records runs.
+  - **Two renderings of the variables exist deliberately.** `renderTfvars` produces what goes on
+    disk, password included; `describeTfvars` produces what may be logged, spanned or stored. One
+    function with a `redact` flag would mean one wrong argument leaks a password into a log line;
+    two functions mean the logging paths can only reach the redacted one.
+  - The variable file is written `0600` and the working directory is discarded after every run,
+    successful or not. Leaving a password on disk for the next operator to find is the avoidable
+    half of that exposure.
+  - **`apply` is always given the saved plan file.** That is what makes the gate binding rather
+    than advisory: `terraform apply` with no plan computes a fresh one, so a gate that inspected a
+    previous plan would be inspecting a document that is not what executes. A test asserts the
+    argument is present, and another asserts `apply` throws rather than running when handed a
+    refused verdict — a caller reaching that point has bypassed the gate, which is a programming
+    error and deserves to fail loudly.
+  - `TF_LOG`, `TF_LOG_PATH` and `TF_LOG_PROVIDER` are **deleted** from every child environment
+    rather than merely not set. `TF_LOG` prints resource attribute values, so inheriting it from
+    an operator's shell would defeat every redaction in the package. A test sets it and asserts
+    the child never sees it.
+  - Diagnostics are redacted before the write, not on read: a value that reaches a log, a span or
+    a column has already escaped. Redaction also covers a truncated prefix, because Terraform
+    elides long values in messages and an exact-match-only redactor would leave the head of a
+    password in place.
+  - A run that produced no machine-readable output still reports something: a bounded, redacted
+    head of the raw text. "No diagnostics" for a run that plainly failed is the wrong answer.
+  - **Fencing is enforced in the store**, which is where the guarantee the schema could not
+    express actually lives. A worker whose lease has been taken cannot record a run or complete
+    one; the check and the insert share a transaction, so a refusal leaves no partial row for
+    `getTask` to find. The absence of a lease is deliberately _not_ an error — a workflow that
+    completed has handed the instance back, and a refresh recorded afterwards is legitimate.
+  - A second completion is refused, so the first outcome stands. A retry that overwrote it would
+    lose the failure a later investigation depends on.
+- Tested against a **scripted fake Terraform binary** rather than a mocked module. The properties
+  that matter are about the process — which arguments were passed, what the child's environment
+  held, whether the saved plan was used — and mocking `spawn` would let all three be wrong while
+  the tests passed. The fake records every invocation to a file, so the assertions read what the
+  runner actually executed.
+- Verification:
+
+  | Gate                                                  | Result                                                       |
+  | ----------------------------------------------------- | ------------------------------------------------------------ |
+  | `npx nx test provider-adapters`                       | 9 files, **100 tests** — was 81; nineteen runner cases added |
+  | `pnpm run test:integration`                           | 7 files, **122 tests** — was 108; fourteen store cases added |
+  | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                      |
+
+- Deferred with a reason: the Kubernetes Job executor. The runner records an
+  `executor_reference` and `getTask` polls the run row rather than a process, so the Job variant
+  is a change of executor behind an interface that already exists. Building it before the adapter
+  works end to end would be building a deployment concern against an untested contract.
+
+- Superseded required work: Terraform execution as a tracked run — the `terraform.runs` row written **before**
   the process starts (SAFE-014) and `getTask` reading it (SAFE-015); fencing token honoured;
   diagnostics redacted; `TF_LOG` explicitly removed from the child environment because it prints
   resource attributes.

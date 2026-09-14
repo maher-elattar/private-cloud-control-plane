@@ -17,3 +17,13 @@ export type {
   PlanResourceChange,
   TerraformPlan,
 } from './terraform/plan-gate.js';
+export { describeTfvars, renderTfvars, workspaceNameFor } from './terraform/tfvars.js';
+export type { InstanceTfvars } from './terraform/tfvars.js';
+export { hasError, parseDiagnostics, redactSecrets } from './terraform/diagnostics.js';
+export type { TerraformDiagnostic } from './terraform/diagnostics.js';
+export { TerraformRunner } from './terraform/runner.js';
+export type {
+  ApplyOutcome,
+  InvocationResult,
+  TerraformRunnerConfiguration,
+} from './terraform/runner.js';
