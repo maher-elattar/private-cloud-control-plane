@@ -18,13 +18,16 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-3 — Readiness probe defect
-- Last completed checkpoint: T-4 — Scoped API token (taken ahead of T-3; see its entry)
+- Current checkpoint: T-5 — Ownership-marker defect
+- Last completed checkpoint: T-3 — Readiness probe defect
+- Completed so far: T-0, T-1, T-2, T-3, T-4. T-4 was taken ahead of T-3 because the operator
+  authorised the token creation directly and it is a live-server action; T-3 is offline and was
+  unaffected by the order.
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
 - Target server: `https://testsrv.mosalam.com:8006`, node `proxtest`, PVE 9.2.11, standalone.
 - Committed so far: `726bc22` (gitignore and credential boundary), `167871f` (plan scoped to one
   server, VPC work deferred), `495dab6` (server survey and this ledger), `c218936` (manual
-  Terraform walkthrough).
+  Terraform walkthrough), `7bdeec8` (scoped API token).
 - **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
   administrator password is retained in the credentials file only so that token can be
   re-minted; it was read into a session transcript during this work and **should be rotated**.
@@ -245,17 +248,54 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-3 — Readiness probe defect
 
-- Status: Pending
-- Rationale: blocks every live checkpoint from T-9 onward. Under any adapter whose
-  `getCapabilities` throws synchronously the provider container never becomes healthy, and
-  `provisioning-orchestrator` declares `depends_on: service_healthy`, so the orchestrator never
-  starts and no request can reach the provider.
-- Required work: make the readiness probe resilient to a synchronously-throwing adapter, and give
-  `getCapabilities` a readiness path that does not fail the profile assertion. Also correct the
-  stale `resizeCompute` / `growDisk` / `snapshots` / `retentionMarker` / `purge` capability flags,
-  which report `false` for five capabilities Phase 5 implemented.
-- Verification required: a unit test asserting the probe answers 503, not 500, under a
-  synchronously-throwing provider double; `PROVIDER_ADAPTER=proxmox` reaching healthy in Compose.
+- Status: Complete
+- Rationale: blocked every live checkpoint. Under any adapter whose `getCapabilities` throws
+  synchronously the provider container never becomes healthy, and `provisioning-orchestrator`
+  declares `depends_on: service_healthy`, so the orchestrator never starts and no request can
+  reach the provider at all.
+- Evidence recorded 2026-09-14:
+  - **The defect had two halves and both are fixed.** The probe chained `.catch()` onto
+    `getCapabilities(...)`, and `ProxmoxProvider.getCapabilities` was not `async`, so its profile
+    assertion threw _before any promise existed_ and escaped the handler. The endpoint raised
+    instead of answering 503.
+  - The controller now wraps the call in `try`/`catch` rather than chaining `.catch()`, and
+    `getCapabilities` is `async` so the rejection path would be taken anyway. The `try` stays
+    regardless: a health endpoint must not be able to return 500 because a dependency
+    misbehaved, and the next adapter should not have to be polite for that to hold.
+  - **Fixing only the throw would have left the endpoint permanently 503.** The probe passes no
+    profile, and the assertion is a legitimate contract check, so a caught throw is still a
+    failed probe. The configured profile id is now provided through a `PROVIDER_PROFILE_ID` DI
+    token from the same factory that builds the adapter, so the probe can name it without the
+    health endpoint reading the environment. Under the fake adapter the key is _absent_ rather
+    than `undefined`, so a strict adapter cannot read it as a caller asking about a profile
+    literally named `undefined`.
+  - Corrected the capability flags. `resizeCompute`, `growDisk`, `snapshots`, `retentionMarker`
+    and `purge` all reported `false` while being implemented — Phase 5 built them and did not
+    update the report — so `getCapabilities` was advertising a narrower adapter than the one that
+    exists, and any caller gating on those flags would have refused work this adapter can do.
+    `maximumSnapshots` was `0` for the same reason.
+  - The compute bounds are now named constants shared between `assertResources` and the
+    capability report, so the enforced limits and the advertised limits cannot drift apart.
+- Verification:
+
+  | Gate                                                              | Result                                                                |
+  | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+  | New `app.controller.spec.ts` against the **defective** controller | 2 of 12 fail — the synchronous-throw case and the profile-naming case |
+  | Same spec against the fix                                         | 12 of 12 pass                                                         |
+  | `pnpm run format:check`                                           | clean                                                                 |
+  | `pnpm run lint`                                                   | 14 projects                                                           |
+  | `pnpm run typecheck`                                              | 14 projects                                                           |
+  | `pnpm run test`                                                   | 11 projects, 0 failures                                               |
+  | `pnpm run test:integration`                                       | 5 files, 88 tests                                                     |
+  | `pnpm run contracts:validate`                                     | 39 REST, 54 gRPC, 20 events                                           |
+  | `pnpm run build`                                                  | 14 projects                                                           |
+
+  The first row is the one that matters: the spec was run against the original code to prove it
+  can fail. A regression test that passes either way documents nothing.
+
+- Deferred deliberately: the Compose check that `PROVIDER_ADAPTER=proxmox` reaches healthy needs
+  the extended simulator, because the current stub implements none of the five endpoints
+  `validateProfile` reads. That is its own work and is tracked where the simulator is.
 
 ### Checkpoint T-4 — Scoped API token
 

@@ -108,6 +108,21 @@ export function fakeProviderConfiguration(
 }
 
 /**
+ * The provider profile this process is configured to serve, or `undefined` under the fake.
+ *
+ * WHY this is exported separately rather than read off the adapter: `getCapabilities` asserts the
+ * caller named the allowlisted profile, so the readiness probe has to pass it — and the probe
+ * must not read the environment itself, or the health endpoint acquires configuration knowledge
+ * that belongs in the composition root.
+ *
+ * @returns The allowlisted profile id, or `undefined` when the fake adapter is selected.
+ */
+export function providerProfileId(): string | undefined {
+  const adapter = process.env.PROVIDER_ADAPTER?.trim() || 'fake';
+  return adapter === 'proxmox' ? requiredEnvironment('PROXMOX_PROVIDER_PROFILE_ID') : undefined;
+}
+
+/**
  * Builds the configured provider adapter.
  *
  * @throws Error if `PROVIDER_ADAPTER` is unrecognised, or if Proxmox mode is selected with

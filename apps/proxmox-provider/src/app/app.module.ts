@@ -13,9 +13,9 @@
 import { Injectable, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { shutdownTelemetry } from '@private-cloud/observability';
 import { AppController } from './app.controller';
-import { createProvider } from './provider.factory';
+import { createProvider, providerProfileId } from './provider.factory';
 import { ProviderGrpcController } from './provider-grpc.controller';
-import { CREATE_INSTANCE_PROVIDER } from './tokens';
+import { CREATE_INSTANCE_PROVIDER, PROVIDER_PROFILE_ID } from './tokens';
 
 /** Flushes provider spans and metrics before process exit. */
 @Injectable()
@@ -32,6 +32,7 @@ class TelemetryLifecycle implements OnApplicationShutdown {
   // failing partway through provisioning a VM.
   providers: [
     { provide: CREATE_INSTANCE_PROVIDER, useFactory: createProvider },
+    { provide: PROVIDER_PROFILE_ID, useFactory: providerProfileId },
     TelemetryLifecycle,
   ],
 })

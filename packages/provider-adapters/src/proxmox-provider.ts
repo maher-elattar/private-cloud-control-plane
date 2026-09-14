@@ -168,6 +168,22 @@ interface ProxmoxCurrentStatus {
 /** Prefix marking a description line as a control-plane ownership marker. */
 const markerPrefix = 'private-cloud-control:';
 
+/**
+ * The compute bounds this adapter accepts, and reports through `getCapabilities`.
+ *
+ * These are policy, not hardware limits: the lab interval is small and a request outside these
+ * bounds is far more likely to be a mistake than an intention. `assertResources` enforces them
+ * and `getCapabilities` advertises them, so the two cannot drift.
+ */
+const MAXIMUM_CPU_COUNT = 8;
+const MINIMUM_MEMORY_MIB = 512;
+const MAXIMUM_MEMORY_MIB = 16_384;
+const MINIMUM_DISK_GIB = 1;
+const MAXIMUM_DISK_GIB = 128;
+
+/** Snapshots allowed per instance. */
+const MAXIMUM_SNAPSHOTS = 8;
+
 /** Asserts a configured or request value is present. */
 function required(value: string | undefined, name: string): string {
   if (!value) {
@@ -386,26 +402,47 @@ export class ProxmoxProvider
     };
   }
 
-  /** Reports the bounded create capabilities this adapter supports. */
-  public getCapabilities(request: GetCapabilitiesRequest): Promise<GetCapabilitiesResponse> {
+  /**
+   * Reports the bounded capabilities this adapter supports.
+   *
+   * Local and static: it makes no request to the hypervisor, which is what allows the readiness
+   * probe to call it every few seconds.
+   *
+   * WHY `async` rather than returning a resolved promise: `assertDirectProfile` throws, and from
+   * a non-async method that throw escapes *synchronously* — before any promise exists — so a
+   * caller written as `getCapabilities(...).catch(...)` does not catch it. That is exactly the
+   * shape the readiness probe had, which turned a 503 into an unhandled 500 and left the
+   * container permanently unhealthy under this adapter. Marking the method `async` converts the
+   * throw into a rejection, so both call shapes behave the same way.
+   *
+   * @param request Capability request. `providerProfileId` must name the allowlisted profile.
+   * @returns The capability set and the time it was reported.
+   * @throws ProviderTransportError if the profile is not the allowlisted one.
+   */
+  public async getCapabilities(request: GetCapabilitiesRequest): Promise<GetCapabilitiesResponse> {
     this.assertDirectProfile(request.providerProfileId);
-    return Promise.resolve({
+    return {
       capabilities: {
         createInstance: true,
         configureInstance: true,
         power: true,
-        resizeCompute: false,
-        growDisk: false,
-        snapshots: false,
-        retentionMarker: false,
-        purge: false,
-        maximumCpuCount: 8,
-        maximumMemoryMib: '16384',
-        maximumDiskGib: '128',
-        maximumSnapshots: 0,
+        // Phase 5 implemented all five of these. They reported `false` until then, and the flags
+        // were not updated with the implementations — so `getCapabilities` was advertising a
+        // narrower adapter than the one that exists, and any caller gating on these flags would
+        // have refused work this adapter can do.
+        resizeCompute: true,
+        growDisk: true,
+        snapshots: true,
+        retentionMarker: true,
+        purge: true,
+        // The bounds `assertResources` enforces, reported rather than restated.
+        maximumCpuCount: MAXIMUM_CPU_COUNT,
+        maximumMemoryMib: String(MAXIMUM_MEMORY_MIB),
+        maximumDiskGib: String(MAXIMUM_DISK_GIB),
+        maximumSnapshots: MAXIMUM_SNAPSHOTS,
       },
       observedAt: new Date().toISOString(),
-    });
+    };
   }
 
   /**
@@ -1205,13 +1242,13 @@ export class ProxmoxProvider
     if (
       !Number.isInteger(cpu) ||
       cpu < 1 ||
-      cpu > 8 ||
+      cpu > MAXIMUM_CPU_COUNT ||
       !Number.isInteger(memory) ||
-      memory < 512 ||
-      memory > 16_384 ||
+      memory < MINIMUM_MEMORY_MIB ||
+      memory > MAXIMUM_MEMORY_MIB ||
       !Number.isInteger(disk) ||
-      disk < 1 ||
-      disk > 128 ||
+      disk < MINIMUM_DISK_GIB ||
+      disk > MAXIMUM_DISK_GIB ||
       diskGiB(current) !== String(disk)
     ) {
       throw new ProviderTransportError(
