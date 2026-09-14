@@ -425,6 +425,54 @@ interface ProjectionDeadLetterTable {
 }
 
 /**
+ * One Terraform invocation.
+ *
+ * The row exists *before* the process starts (SAFE-014), so a worker restart resumes the run
+ * rather than submitting a second one. `diagnostics` holds redacted `-json` output only, and
+ * `plan_actions` holds action counts rather than the plan, because a plan document carries
+ * resource attribute values — the same secret material as state.
+ */
+interface TerraformRunTable {
+  run_id: string;
+  instance_id: string;
+  operation_id: string;
+  workspace_name: string;
+  command: string;
+  fencing_token: string;
+  executor_reference: Nullable<string>;
+  status: string;
+  gate_decision: Nullable<string>;
+  gate_rule: Nullable<string>;
+  plan_actions: Nullable<Readonly<Record<string, number>> | string>;
+  exit_code: Nullable<number>;
+  diagnostics: Nullable<readonly unknown[] | string>;
+  started_at: Generated<Timestamp>;
+  finished_at: NullableTimestamp;
+}
+
+/**
+ * What the control plane believes about one instance's Terraform workspace.
+ *
+ * One row per instance, one workspace per instance. `drift_summary` records resource addresses
+ * and changed attribute *names*, never values.
+ */
+interface TerraformWorkspaceTable {
+  instance_id: string;
+  workspace_name: string;
+  module_version: Nullable<string>;
+  provider_version: Nullable<string>;
+  state_serial: Nullable<string>;
+  state_lineage: Nullable<string>;
+  last_run_id: Nullable<string>;
+  last_applied_at: NullableTimestamp;
+  last_refreshed_at: NullableTimestamp;
+  drift_state: Generated<string>;
+  drift_summary: Nullable<Readonly<Record<string, unknown>> | string>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/**
  * Every table Kysely may query, keyed by its qualified name.
  *
  * Adding a table to a migration without adding it here means it simply cannot be queried —
@@ -460,6 +508,8 @@ export interface PostgresDatabase {
   'projection.event_receipts': ProjectionReceiptTable;
   'projection.dead_letters': ProjectionDeadLetterTable;
   'projection.poison_records': PoisonRecordTable;
+  'terraform.runs': TerraformRunTable;
+  'terraform.workspaces': TerraformWorkspaceTable;
 }
 
 /**

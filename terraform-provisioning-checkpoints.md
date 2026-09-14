@@ -18,9 +18,9 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-7 — Inventory schema
-- Last completed checkpoint: T-6 — Catalog rows, configuration, and the config cross-check
-- Completed so far: T-0 through T-6. T-4 was taken ahead of T-3 because the operator
+- Current checkpoint: T-8 — Module and plan gate
+- Last completed checkpoint: T-7 — Inventory schema
+- Completed so far: T-0 through T-7. T-4 was taken ahead of T-3 because the operator
   authorised the token creation directly and it is a live-server action; T-3 is offline and was
   unaffected by the order.
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
@@ -28,7 +28,8 @@ into this work.
 - Committed so far: `726bc22` (gitignore and credential boundary), `167871f` (plan scoped to one
   server, VPC work deferred), `495dab6` (server survey and this ledger), `c218936` (manual
   Terraform walkthrough), `7bdeec8` (scoped API token), `dbdc069`
-  (readiness probe and capability flags), `0c58ba4` (ownership markers).
+  (readiness probe and capability flags), `0c58ba4` (ownership markers), `9ec2c7f` (live
+  server catalog and configuration cross-check).
 - **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
   administrator password is retained in the credentials file only so that token can be
   re-minted; it was read into a session transcript during this work and **should be rotated**.
@@ -467,17 +468,57 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-7 — Inventory schema
 
-- Status: Pending
-- Required work: migration `0008_terraform_inventory.sql` for `terraform.workspaces` and
-  `terraform.runs` per design §5.3, plus the `terraform_remote_state` schema and the grants of
-  §5.2 — the runner role writes, the application role reads `states` only. Because the `pg`
-  backend creates its own table, the migration creates the schema and default privileges so the
-  later table inherits them.
-- Safety note: migrations are forward-only and `tools/db/migrate.mjs` refuses a changed checksum.
-  An aborted attempt is recovered with a new migration, never by editing `0008`.
-- Verification required: integration specs for stale-fencing-token rejection, one workspace per
-  instance, `drift_summary` holding attribute names and never values, the two-sessions-one-
-  workspace advisory-lock race, and the application role being unable to write state.
+- Status: Complete
+- Evidence recorded 2026-09-14:
+  - Migration `0008_terraform_inventory.sql` creates `terraform.runs`, `terraform.workspaces`,
+    and the `terraform_remote_state` schema the Terraform `pg` backend manages itself.
+  - **The state schema is created here but never written by this system.** Creating it rather than
+    letting the backend create it is what allows the grants to exist before the first apply:
+    `terraform_runner` gets `USAGE, CREATE`, and `ALTER DEFAULT PRIVILEGES` gives
+    `control_plane_application` `SELECT` on whatever the runner creates later. Terraform state
+    holds the cloud-init password and any SSH key material — it is a secret store that happens to
+    be JSON — and a grant is a boundary where an intention is not.
+  - Role creation is wrapped in a `DO` block testing `pg_roles`, because `CREATE ROLE` has no
+    `IF NOT EXISTS` and a migration that fails on re-application cannot be recovered after a
+    partial failure. Verified by applying twice.
+  - **No `DELETE` is granted anywhere in the schema.** A run record is evidence, and a workspace
+    row outliving its instance is a finding rather than garbage: it means state exists for
+    something the control plane believes is gone.
+  - `terraform.workspaces.instance_id` is the primary key and `workspace_name` is unique, so one
+    instance has one workspace and one workspace name belongs to one instance. The second half
+    matters as much as the first: the `pg` backend's advisory lock is keyed on the state row, so
+    two instances sharing a name would share a lock and serialise against each other.
+  - `drift_state` defaults to `unknown`, never `in_sync`. A workspace nothing has observed is
+    unknown, not healthy.
+  - Kysely table types added, with defaulted columns marked `Generated` and nullable ones
+    `Nullable`, so the insert shapes the tests use are the shapes the schema actually accepts.
+- **A fragility the tests exposed, and fixed in the schema's contract.**
+  `runs_finished_after_started` compared a `finished_at` the application computed against a
+  `started_at` the column default supplied — two different clocks. Under any skew between the
+  application and the database, a legitimately finished run would be rejected. The constraint is
+  worth keeping, because the row it refuses is genuinely impossible; the requirement it implies is
+  now stated in the migration and honoured by the tests: **both timestamps come from the database
+  clock.**
+- Scope recorded honestly: **stale-fencing-token rejection is not covered here.** No constraint
+  can express "refuse a write whose token is older than the current lease" — it is a store
+  behaviour, and it belongs where that store is written. The column exists and is `NOT NULL`;
+  asserting enforcement at this layer would be claiming a guarantee the schema does not make.
+- Verification:
+
+  | Gate                                                  | Result                                                                            |
+  | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+  | `pnpm run test:integration`                           | 6 files, **108 tests** — was 93; fifteen added                                    |
+  | `pnpm run db:migrate` applied twice                   | second run is a no-op; role creation is idempotent                                |
+  | Default privileges on `terraform_remote_state`        | `control_plane_application=r/` only — no `w`, `a` or `d`                          |
+  | `DELETE` grants in schema `terraform`                 | none, for either role                                                             |
+  | Advisory-lock contention on one workspace             | second session refused while the first transaction is open, and free once it ends |
+  | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                                           |
+  | `pnpm run docs:validate`                              | 61 Markdown files, 46 Mermaid artifacts                                           |
+
+- Safety note, unchanged: migrations are forward-only and `tools/db/migrate.mjs` refuses a changed
+  checksum. An aborted attempt is recovered with a new migration, never by editing `0008`. The
+  clock correction above was made before the migration was committed, so no such recovery was
+  needed.
 
 ### Checkpoint T-8 — Module and plan gate
 
