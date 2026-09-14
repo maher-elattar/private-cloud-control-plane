@@ -540,6 +540,40 @@ the first layer cannot silently destroy data.
 
 ---
 
+## 7.2 Reconciliation: what this design got wrong
+
+Written after the design was built and verified against real hardware, because a plan that is
+never checked against what happened is a plan nobody can trust next time. Each entry is a claim
+this document made and the measurement that contradicted it.
+
+| This document said                                                 | What was actually true                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The provider port carries what an adapter needs                    | It carried no **fencing token**. The adapter used `context.attempt`, which the workflow pins to `1` so replays stay recognisable — so the inventory's fencing check compared a constant against a real lease token. `ProviderCallContext` gained a `fencing_token` field.                                                                                  |
+| Nine methods map cleanly onto Terraform                            | Four of them (the power RPCs) nest their payload under a `request` field, and the adapter read the outer object. TypeScript allowed it because method parameters are bivariant, so it compiled and passed tests written against the same wrong shape.                                                                                                      |
+| The runner inherits its environment                                | bpg authenticates with `PROXMOX_VE_*` — different names from this system's `PROXMOX_*` settings. Inheriting worked only where a shell had exported them. The runner now takes them explicitly and strips inherited values.                                                                                                                                 |
+| The endpoint's public certificate needs no special handling        | True for Node, which bundles its own CA list. The provider plugin is a **separate Go binary** reading `/etc/ssl/certs`, which the base image did not have. Two TLS clients, two trust sources.                                                                                                                                                             |
+| §5.3's inventory records the state serial and lineage              | The columns existed and nothing ever wrote to them. They are how a replaced state document is detected, so the inventory could not have noticed one.                                                                                                                                                                                                       |
+| `observeInstance` feeds the reconciler                             | It reported existence, power and ownership but **not resources**, so drift in CPU, memory or disk was invisible — the one thing SAFE-029 is about.                                                                                                                                                                                                         |
+| The gate refuses a replace plan by seeing a `delete`               | `prevent_destroy` fires **first**: Terraform refuses to produce the plan at all, so the gate refuses an _unparseable_ plan rather than a destructive one. Two barriers, and the design named the second.                                                                                                                                                   |
+| Provider calls fit the existing transport deadline                 | The base stack allows ten seconds. Two calls here run Terraform synchronously and take about ten seconds on an idle server, or three minutes more waiting on the state lock. A mutation whose deadline expires has an _unknown_ outcome and goes to `manual_review` — so a deadline set too low converts "slow but fine" into "a human must look at this". |
+| Redacting the connection string and the token protects diagnostics | The redactor also replaces each secret's leading prefix, so passing a whole token redacted `control-` everywhere and mangled the ownership marker. The set must hold secret _material_, not the strings that carry it.                                                                                                                                     |
+| Admission validates SSH keys                                       | It checked length and control characters, not structure. Proxmox answers a malformed key with HTTP **500**, which classifies as retryable — so a tenant's typo burned the retry budget and ended in review.                                                                                                                                                |
+
+Two further measurements that changed the design rather than correcting it:
+
+- **bpg ignores `file_format` on a clone.** Declaring `qcow2` to enable snapshots produced a disk
+  that stayed `raw`, and the permanent mismatch made every later plan a replacement — which the
+  gate correctly refused, blocking all work on that instance. Snapshots are therefore impossible
+  on this server until template 110 is rebuilt, and the capability flag reports that honestly
+  rather than claiming support it does not have.
+- **`terraform import` reconstructs an empty `clone` block**, and every clone sub-attribute is
+  ForceNew, so an import without `ignore_changes = [clone]` plans a replacement. Proxmox does not
+  record what a VM was cloned from, so there is nothing for Terraform to read back.
+
+The one prediction that held exactly as written: **a refused plan is terminal, not pending.** The
+gate refuses the same plan for the same reason every time, so reporting it as running would leave
+a workflow polling forever.
+
 ## 8. Execution checkpoints
 
 Same ledger discipline as Phases 4–6: one checkpoint per commit, verification recorded before the

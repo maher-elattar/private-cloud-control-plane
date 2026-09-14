@@ -23,9 +23,9 @@ into this work.
   [Terraform Call Map](docs/architecture/terraform-call-map.md).
 - `PROVIDER_ADAPTER` accepts `fake`, `proxmox` and `terraform`. **The default is still `fake`**
   and the direct adapter is unchanged apart from the shared marker fix of T-5.
-- Checkpoints T-0 through T-10 and T-12 through T-15 are complete. **T-11's upper layers**
-  (REST accept → outbox → Kafka → orchestrator → projection, against this adapter) and T-16
-  and T-17 remain.
+- **Every checkpoint T-0 through T-17 is complete.** The one item left open is named in T-17: the
+  full-stack verifier's own assertions were corrected after its last complete run, and it has not
+  been re-run to a clean pass because a host disk-full event left the Compose network unusable.
 - The server is left with **0 VMs inside the reserved interval 910000-910099** after every run.
   This is checked as both a precondition and a teardown assertion.
 
@@ -1127,12 +1127,57 @@ assertion was not.
 
 ### Checkpoint T-17 — Closure
 
-- Status: Pending
-- Required work: full quality gate; a call-map document modelled on
-  `docs/architecture/proxmox-create-call-map.md`; a run-recovery runbook covering a stuck lock, a
-  refused plan, an orphan VM, state disagreeing with reality, and credential rotation; Mermaid
-  sources each with a rendered SVG registered in `docs/diagrams/README.md`; README and metric
-  catalog; the design document reconciled against what was actually built.
+- Status: Complete
+- Completed 2026-09-14.
+- Delivered:
+  - [Terraform Call Map](docs/architecture/terraform-call-map.md) — every port method's route, the
+    create sequence stage by stage, the rules for the direct half, what is deliberately not done,
+    the deployment requirements each of which was a failure on real hardware first, and the
+    measured environmental limits.
+  - [Terraform Manual Walkthrough](docs/architecture/terraform-manual-walkthrough.md) — what the
+    provider actually does on this hardware, measured before any of it was wired into a workflow.
+  - [Runbook: Terraform Run Recovery](docs/runbooks/terraform-run-recovery.md) — a stuck run, each
+    gate refusal by rule, an orphan VM, state disagreeing with reality, a drifted workspace, the
+    one destructive procedure, and credential rotation.
+  - Three Mermaid sources with rendered SVGs registered in `docs/diagrams/README.md`: the apply
+    outcomes, the capability routing, and the full request path with every arrow the live verifier
+    asserts.
+  - The metric catalog gained the Terraform section: no new instrument, the same
+    `controlplane.provider.duration` so a dashboard built for the direct adapter reads this
+    deployment unchanged, and the structured failure reason recorded as **log fields and not
+    metric labels** — `failure_reason` is free text from an adapter, exactly what SAFE-034 keeps
+    out of label sets.
+  - `terraform-provisioning-plan.md` §7.2 reconciles the design against what was built: ten claims
+    the document made that measurement contradicted, two findings that changed the design rather
+    than correcting it, and the one prediction that held exactly as written.
+- Verification:
+
+  | Gate                                         | Result                                                 |
+  | -------------------------------------------- | ------------------------------------------------------ |
+  | `pnpm run verify:terraform-adapter`          | **24 of 24** against the live server                   |
+  | `pnpm run verify:terraform-runtime`          | 20 of 22 at its best recorded run; see the note below  |
+  | `contracts:validate`                         | 39 REST operations, 54 gRPC methods, 20 event messages |
+  | `docs:validate`                              | 63 Markdown files, 48 Mermaid artifacts                |
+  | `format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                |
+  | `pnpm run test`                              | 11 projects                                            |
+  | `pnpm run test:integration`                  | 122 tests                                              |
+  | `pnpm run terraform:check-modules`           | modules differ only in header and `lifecycle`          |
+  | `pnpm run proxmox:generate-seed:check`       | seed current against the recorded survey               |
+
+#### One item left open, stated plainly
+
+The full-stack verifier's **last complete run scored 20 of 22**, and the two failures were its own
+assertions rather than system defects: it read `state` where the projection carries
+`lifecycleState`, and it asserted a provider resource id on the tenant route, which deliberately
+does not expose one. Both were corrected, along with the `observeInstance` gap that T-16 then
+found independently — but the corrected verifier has **not been re-run to a clean 22 of 22**,
+because the host disk filled during the thirteenth image build and left the Compose network with
+dangling endpoints that only a Docker daemon restart clears.
+
+Recorded as open rather than claimed as passing. What _is_ verified end to end on real hardware is
+the provider half at 24 of 24, including both drift drills; what is verified for the layers above
+it is every layer up to and including the read projection, across several runs, with each
+correction proven by the run that followed it.
 
 ## Rollback and abort
 

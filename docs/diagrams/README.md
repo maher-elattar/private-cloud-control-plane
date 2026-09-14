@@ -71,6 +71,7 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | VPC instance dual NIC           | `mermaid/vpc-instance-dual-nic.mmd`    | `rendered/vpc-instance-dual-nic.mermaid.svg`  |
 | Terraform apply outcomes        | `mermaid/terraform-apply-outcomes.mmd` | `rendered/terraform-apply-outcomes.mermaid.svg` |
 | Terraform capability routing    | `mermaid/terraform-capability-routing.mmd` | `rendered/terraform-capability-routing.mermaid.svg` |
+| Terraform request path          | `mermaid/terraform-request-path.mmd` | `rendered/terraform-request-path.mermaid.svg` |
 
 ## Mermaid Editing And Validation
 

@@ -1,0 +1,52 @@
+sequenceDiagram
+    autonumber
+    actor Tenant
+    participant API as control-api
+    participant DB as PostgreSQL
+    participant K as Kafka
+    participant O as orchestrator
+    participant P as proxmox-provider
+    participant TF as Terraform
+    participant PX as Proxmox
+
+    Note over Tenant,PX: Every arrow below is asserted by pnpm run verify:terraform-runtime
+
+    Tenant->>API: POST /instances + Idempotency-Key
+    API->>API: validate — including SSH key structure
+    Note right of API: A malformed key is refused here.<br/>Proxmox answers one with HTTP 500,<br/>which classifies as retryable.
+    API->>DB: one transaction: instance, operation,<br/>IPv4 lease, audit entry, outbox row
+    API-->>Tenant: 202 + operationId, statusUrl
+
+    DB->>K: Debezium publishes the outbox row
+    K->>O: provisioning.commands.v1, key = instance id
+    O->>DB: claim with lease + fencing token
+    O->>P: SubmitCreateInstance (context carries the fencing token)
+
+    P->>DB: INSERT terraform.runs — before the apply starts
+    Note right of P: SAFE-014. A worker that dies now<br/>leaves a reference a new worker polls,<br/>not a gap that invites a second apply.
+    P->>TF: init + plan
+    TF-->>P: plan JSON
+    P->>P: gate: no-op / create / read / update only
+    P-->>O: ACCEPTED + run id
+    P->>TF: apply (the saved plan, never a fresh one)
+    TF->>PX: clone 110, configure cloud-init, start
+    PX-->>TF: VM 910xxx
+    P->>DB: complete run, record workspace<br/>state serial + lineage
+
+    loop until terminal
+        O->>P: GetTask(run id)
+        P->>DB: SELECT terraform.runs
+    end
+
+    O->>P: ApplyInstanceConfiguration
+    P->>TF: plan — must be empty
+    Note right of P: Convergence assertion, not a second write.
+    O->>P: StartInstance
+    O->>P: ObserveInstance
+    P->>TF: apply -refresh-only
+    P-->>O: exists, power, resources, ownership proven
+    O->>DB: projection.instances — active
+
+    Tenant->>API: GET /instances/{id}
+    API-->>Tenant: active, observed state, leased address
+    Note over Tenant,API: No provider resource id here.<br/>The VMID is restricted-operational.

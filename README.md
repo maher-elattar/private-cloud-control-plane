@@ -273,6 +273,7 @@ Start here if you are new to the codebase. It is not a conventional `Controller 
 
 These are design documents for work that has not been implemented. They are plans, not descriptions of the system.
 
+- [Terraform Request Path](docs/diagrams/mermaid/terraform-request-path.mmd): one create request from the REST boundary to the VM and back through the read projection, with every arrow asserted by the live verifier
 - [Terraform Call Map](docs/architecture/terraform-call-map.md): what the Terraform adapter does for each provider-port method, which nine go through Terraform and which six cannot, and the environmental limitations measured on the target
 - [Terraform Manual Walkthrough](docs/architecture/terraform-manual-walkthrough.md): what the `bpg/proxmox` provider actually does on real hardware, measured before any of it was wired into a workflow
 - [Runbook: Terraform Run Recovery](docs/runbooks/terraform-run-recovery.md): stuck runs, refused plans, orphan VMs, state disagreeing with reality, and the one destructive procedure

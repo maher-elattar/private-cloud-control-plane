@@ -97,6 +97,29 @@ during incident triage and a wrong value is indistinguishable from a wrong concl
 attributes stay within the 128-series cap because every value is drawn from a closed union in
 `packages/application/src/ports.ts` and `packages/messaging/src/message-codec.ts`.
 
+## The Terraform-Backed Provider
+
+`PROVIDER_ADAPTER=terraform` adds no instrument. It reuses `controlplane.provider.duration` with
+the same `provider.operation` and `outcome` attributes, so a dashboard built for the direct
+adapter reads a Terraform deployment unchanged — and so the two can be compared directly, which is
+how the power-path latency in the design's §12 was measured.
+
+What it does add is the **structured failure reason** on `provider_operation_completed`:
+
+| Field | Values | Why it exists |
+| --- | --- | --- |
+| `failure_code` | `aborted`, `deadline_exceeded`, `protocol_error`, `unavailable`, `internal` | The transport classification, which is what decides whether a workflow retries, fails, or goes to review |
+| `failure_reason` | The adapter's own message, or an unrecognised error's constructor name | A failed provider operation logged `outcome: "failed"` and nothing else; the reason crossed gRPC and was replaced with a generic workflow message before being persisted, so the first failure on real hardware was undiagnosable from any record in the system |
+
+Both are log fields and **neither is a metric label.** `failure_reason` is free text from an
+adapter, so it is exactly the kind of unbounded value SAFE-034 keeps out of label sets. The
+bounded half is already available as `outcome` on `controlplane.provider.duration`.
+
+Durable Terraform state lives in tables, not telemetry: `terraform.runs` records every invocation
+with its gate decision, plan actions, exit code and redacted diagnostics, and `terraform.workspaces`
+records the drift state, state serial and lineage. Queries for incident triage are in
+[Runbook: Terraform Run Recovery](../runbooks/terraform-run-recovery.md).
+
 ## Cardinality Rules
 
 Never use project, tenant, instance, operation, event, aggregate, provider-resource, provider-task,
