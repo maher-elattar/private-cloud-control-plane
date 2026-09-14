@@ -18,7 +18,8 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-11 — Create, end to end, one request
+- Current checkpoint: T-11 — Create, end to end, one request (**in progress**: the adapter's
+  create path is done and committed; the factory wiring and the live run remain)
 - Last completed checkpoint: T-10 — Adapter, read path
 - Completed so far: T-0 through T-10. T-4 was taken ahead of T-3 because the operator
   authorised the token creation directly and it is a live-server action; T-3 is offline and was
@@ -30,7 +31,8 @@ into this work.
   Terraform walkthrough), `7bdeec8` (scoped API token), `dbdc069`
   (readiness probe and capability flags), `0c58ba4` (ownership markers), `9ec2c7f` (live
   server catalog and configuration cross-check), `08ab358` (inventory schema), `580544d` (module and
-  plan gate), `602156a` (runner, tfvars and inventory store).
+  plan gate), `602156a` (runner, tfvars and inventory store),
+  `f481573` (adapter read path).
 - **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
   administrator password is retained in the credentials file only so that token can be
   re-minted; it was read into a session transcript during this work and **should be rotated**.
@@ -701,9 +703,39 @@ with `git check-ignore`. Nothing was committed in the interim.
 - Verification required: factory tests proving the `fake` default is preserved, `terraform` is
   accepted, an unknown value is rejected, and each missing setting refuses to start.
 
-### Checkpoint T-11 — Create, end to end, one request
+### Checkpoint T-11 — Create, end to end, one request — **In progress**
 
-- Status: Pending
+- Status: In progress
+- Progress recorded 2026-09-14 — the adapter's create path:
+  - `submitCreateInstance` renders the variables, gates the plan, records the run, and **returns
+    before the apply finishes**. The port's contract is submit-then-poll, and that is not a
+    formality: a clone plus cloud-init takes tens of seconds, and holding a gRPC call open for it
+    would tie the workflow's liveness to a network connection. A test asserts the apply is still
+    running when the caller is answered.
+  - **The ordering is the safety property.** The run row is durable before the process starts
+    (SAFE-014), so a worker that dies mid-apply leaves a reference a new worker can poll
+    (SAFE-015) rather than a gap that invites a second apply against the same instance. A test
+    asserts the recorded run id is the reference handed back.
+  - The VMID is derived deterministically from the instance id rather than allocated, so a replay
+    computes the same id and recognises its own earlier work instead of building a second VM.
+    Never `/cluster/nextid`, which could hand back an id outside the reservation.
+  - A refused plan is **recorded** and not merely returned. A run row that never appeared would
+    look like nothing was attempted, and the refusal is exactly what an operator needs to see.
+  - Every path in the background task ends in `completeRun`, including the `catch`. A background
+    task that threw without recording anything would leave the workflow polling forever. The
+    failure is recorded as `unknown` rather than `failed`, because the apply may have acted
+    before it failed and SAFE-018 forbids guessing.
+  - A workspace is marked `in_sync` only after a _successful_ apply. A failed one can leave state
+    holding a value the provider rejected, so nothing may treat it as in sync until a refresh has
+    run.
+- Verification so far:
+
+  | Gate                                                  | Result                                                         |
+  | ----------------------------------------------------- | -------------------------------------------------------------- |
+  | `npx nx test provider-adapters`                       | 10 files, **130 tests** — was 120; ten create-path cases added |
+  | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                        |
+
+- Remaining: `provider.factory.ts` wiring, the layer-by-layer verifier, and the live run.
 - Rationale: the first full-stack run, and the checkpoint the operator described as observing and
   fixing at every level from the request to the server state.
 - Required work: `submitCreateInstance` renders tfvars, gates the plan, applies, records the run;

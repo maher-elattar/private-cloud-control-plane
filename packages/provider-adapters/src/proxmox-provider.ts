@@ -209,7 +209,7 @@ export const MAXIMUM_SNAPSHOTS = 8;
 export const RETENTION_TRAILER_KEY = 'retained-until';
 
 /** Asserts a configured or request value is present. */
-function required(value: string | undefined, name: string): string {
+export function required(value: string | undefined, name: string): string {
   if (!value) {
     throw new ProviderTransportError('protocol_error', `${name} is required.`, {
       retryable: false,
@@ -226,7 +226,7 @@ function form(values: Readonly<Record<string, string | number>>): URLSearchParam
 }
 
 /** Builds a sanitised provider failure. No Proxmox detail crosses this boundary. */
-function failure(
+export function failure(
   category: FailureCategory,
   code: string,
   safeMessage: string,
