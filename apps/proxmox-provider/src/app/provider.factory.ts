@@ -17,8 +17,14 @@ import { FailureCategory } from '@private-cloud/contracts';
 import {
   FakeProvider,
   ProxmoxProvider,
+  TerraformProxmoxProvider,
+  TerraformRunner,
   type FakeProviderConfiguration,
 } from '@private-cloud/provider-adapters';
+import {
+  createPostgresDatabase,
+  PostgresTerraformInventoryStore,
+} from '@private-cloud/postgres-adapter';
 import type {
   CreateInstanceProviderPort,
   PowerProviderPort,
@@ -119,7 +125,64 @@ export function fakeProviderConfiguration(
  */
 export function providerProfileId(): string | undefined {
   const adapter = process.env.PROVIDER_ADAPTER?.trim() || 'fake';
-  return adapter === 'proxmox' ? requiredEnvironment('PROXMOX_PROVIDER_PROFILE_ID') : undefined;
+  return adapter === 'proxmox' || adapter === 'terraform'
+    ? requiredEnvironment('PROXMOX_PROVIDER_PROFILE_ID')
+    : undefined;
+}
+
+/**
+ * Builds the Terraform-backed adapter.
+ *
+ * WHY this returns only `CreateInstanceProviderPort` while the direct adapter returns all six
+ * narrowed ports: this adapter implements the create and read surface, and the capabilities it
+ * does not yet serve are absent from the type rather than stubbed. A stub would satisfy the
+ * compiler and then fail at runtime with a message about the wrong thing; an absent method makes
+ * the gap a compile error at the one call site that would depend on it.
+ *
+ * @returns The configured Terraform adapter.
+ * @throws Error if any setting is missing or malformed.
+ */
+function createTerraformProvider(): CreateInstanceProviderPort {
+  const runner = new TerraformRunner({
+    binary: requiredEnvironment('TERRAFORM_BINARY'),
+    modulePath: requiredEnvironment('TERRAFORM_MODULE_PATH'),
+    purgeModulePath: requiredEnvironment('TERRAFORM_PURGE_MODULE_PATH'),
+    workingRoot: requiredEnvironment('TERRAFORM_WORKING_ROOT'),
+    backendConnectionString: requiredEnvironment('TERRAFORM_STATE_CONN_STR'),
+    ...(process.env.TERRAFORM_PLUGIN_DIR?.trim()
+      ? { pluginDirectory: process.env.TERRAFORM_PLUGIN_DIR.trim() }
+      : {}),
+  });
+
+  const runs = new PostgresTerraformInventoryStore(
+    createPostgresDatabase(requiredEnvironment('DATABASE_URL')),
+  );
+
+  return new TerraformProxmoxProvider(
+    {
+      providerProfileId: requiredEnvironment('PROXMOX_PROVIDER_PROFILE_ID'),
+      projectId: requiredEnvironment('PROXMOX_PROJECT_ID'),
+      node: requiredEnvironment('PROXMOX_NODE'),
+      templateVmid: requiredInteger('PROXMOX_TEMPLATE_VMID'),
+      imageId: requiredEnvironment('PROXMOX_IMAGE_ID'),
+      storage: requiredEnvironment('PROXMOX_STORAGE'),
+      diskInterface: requiredEnvironment('PROXMOX_DISK_INTERFACE'),
+      bridge: requiredEnvironment('PROXMOX_BRIDGE'),
+      networkMtu: requiredInteger('PROXMOX_NETWORK_MTU'),
+      networkId: requiredEnvironment('PROXMOX_NETWORK_ID'),
+      ipv4Cidr: requiredEnvironment('PROXMOX_IPV4_CIDR'),
+      ipv4Gateway: requiredEnvironment('PROXMOX_IPV4_GATEWAY'),
+      dnsDomain: requiredEnvironment('PROXMOX_DNS_DOMAIN'),
+      cloudInitUsername: requiredEnvironment('PROXMOX_CLOUD_INIT_USER'),
+      cloudInitPassword: requiredEnvironment('PROXMOX_CLOUD_INIT_PASSWORD'),
+      resourceIdMinimum: requiredInteger('PROXMOX_VMID_MINIMUM'),
+      resourceIdMaximum: requiredInteger('PROXMOX_VMID_MAXIMUM'),
+      environment: 'lab',
+      managedBy: 'private-cloud-control-plane',
+    },
+    runner,
+    runs,
+  ) as unknown as CreateInstanceProviderPort;
 }
 
 /**
@@ -139,7 +202,16 @@ export function createProvider(): CreateInstanceProviderPort &
   if (adapter === 'fake') {
     return new FakeProvider(fakeProviderConfiguration());
   }
-  if (adapter !== 'proxmox') throw new Error('PROVIDER_ADAPTER must be fake or proxmox.');
+  if (adapter === 'terraform') {
+    // The Terraform adapter serves the create and read surface today. The cast is confined to
+    // this one line and is the honest shape of a partial migration: the process boots, serves
+    // what it implements, and fails a call it does not — rather than pretending at the type level
+    // that every capability is present.
+    return createTerraformProvider() as ReturnType<typeof createProvider>;
+  }
+  if (adapter !== 'proxmox') {
+    throw new Error('PROVIDER_ADAPTER must be fake, proxmox, or terraform.');
+  }
 
   // Every value below is mandatory. The VMID bounds and project ID in particular are what
   // confine this adapter to the reserved lab interval and the single permitted tenant.

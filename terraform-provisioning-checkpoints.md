@@ -735,7 +735,42 @@ with `git check-ignore`. Nothing was committed in the interim.
   | `npx nx test provider-adapters`                       | 10 files, **130 tests** — was 120; ten create-path cases added |
   | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                        |
 
-- Remaining: `provider.factory.ts` wiring, the layer-by-layer verifier, and the live run.
+- Progress recorded 2026-09-14 — convergence, power, and the factory:
+  - `applyInstanceConfiguration` became the **convergence assertion** the design called for.
+    Terraform does clone and configure in one apply, so nothing is left to write by the time that
+    stage runs — and the stage vocabulary is persisted state shared across capabilities, so
+    collapsing it was not an option. A stage that previously performed a blind second write now
+    proves the instance matches its declared configuration, and a non-empty plan fails it
+    honestly.
+  - **A declarative provider needs the whole desired state for every mutation, and the port does
+    not carry it.** A power request hands the adapter an instance id and its ownership markers,
+    which is all an imperative provider needs; omit an attribute from a Terraform apply and it
+    plans to _clear_ it. Terraform's own state is where the rest comes from, which is the deeper
+    reason `observeInstance` reads it too. `tfvarsFromState` reconstructs the variables, and
+    every allowlisted value — node, storage, bridge, MTU, the cloud-init password — is taken from
+    configuration rather than from state, so a state document someone edited cannot widen the
+    boundary or move the instance to another node.
+  - `startInstance` reports success without applying when the instance is already in the
+    requested state, so a duplicate delivery does not produce a second run row for work nobody
+    did.
+  - `provider.factory.ts` now accepts `PROVIDER_ADAPTER=terraform`. The default is still `fake`
+    and the unknown-value message names all three. Five new settings are mandatory with no
+    defaults, and a case omitting each in turn proves each refuses to start: a default binary
+    path, module path or state connection string would let a partially-configured process act on
+    the wrong machine or write to the wrong state.
+  - `apps/proxmox-provider` now depends on `postgres-adapter`, which the layer rule permits
+    (`visibility:production`) and `pnpm lint` confirms. Project references synced.
+- Verification so far:
+
+  | Gate                                                  | Result                                                   |
+  | ----------------------------------------------------- | -------------------------------------------------------- |
+  | `npx nx test provider-adapters`                       | 130 tests                                                |
+  | `npx nx test proxmox-provider`                        | 2 files, **17 tests** — was 12; five factory cases added |
+  | `pnpm run test:integration`                           | 122 tests                                                |
+  | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                  |
+
+- Remaining for this checkpoint: the layer-by-layer verifier, a provider image carrying the
+  Terraform binary and a vendored plugin directory, and the live run.
 - Rationale: the first full-stack run, and the checkpoint the operator described as observing and
   fixing at every level from the request to the server state.
 - Required work: `submitCreateInstance` renders tfvars, gates the plan, applies, records the run;

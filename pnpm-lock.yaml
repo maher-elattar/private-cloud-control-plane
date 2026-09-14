@@ -305,6 +305,9 @@ importers:
       '@private-cloud/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@private-cloud/postgres-adapter':
+        specifier: workspace:*
+        version: link:../../packages/postgres-adapter
       '@private-cloud/provider-adapters':
         specifier: workspace:*
         version: link:../../packages/provider-adapters

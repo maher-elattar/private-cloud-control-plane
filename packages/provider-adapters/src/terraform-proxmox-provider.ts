@@ -29,8 +29,12 @@ import {
   type GetTaskRequest,
   type GetTaskResponse,
   type InstanceObservation,
+  type ApplyInstanceConfigurationRequest,
+  type ApplyInstanceConfigurationResponse,
+  type InstanceMutationRequest,
   type ObserveInstanceRequest,
   type ObserveInstanceResponse,
+  type StartInstanceResponse,
   type OwnershipMarkers,
   type SubmitCreateInstanceRequest,
   type SubmitCreateInstanceResponse,
@@ -136,6 +140,23 @@ const RESERVED_VMID_MAXIMUM = 910_099;
 
 /** The resource address the module declares, which every plan and state read refers to. */
 export const INSTANCE_ADDRESS = 'proxmox_virtual_environment_vm.instance';
+
+/**
+ * Reads the DNS server list out of a state `initialization` block.
+ *
+ * Terraform renders every HCL block as an array of one, so reading state means unwrapping at
+ * each level. Extracted because doing it inline was both unreadable and, as the compiler
+ * observed, not actually null-safe.
+ *
+ * @param initialization The `initialization` block from state, if present.
+ * @returns The configured resolvers, or `undefined` when the block did not carry any.
+ */
+function dnsServers(initialization: Record<string, unknown> | undefined): string[] | undefined {
+  const blocks = initialization?.dns;
+  if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
+  const servers = (blocks[0] as { servers?: unknown }).servers;
+  return Array.isArray(servers) ? servers.map(String) : undefined;
+}
 
 /** The subset of `terraform show -json` (state form) this adapter reads. */
 interface TerraformState {
@@ -672,6 +693,243 @@ export class TerraformProxmoxProvider {
     const digest = createHash('sha256').update(instanceId).digest('hex').slice(0, 8);
     const size = this.configuration.resourceIdMaximum - this.configuration.resourceIdMinimum + 1;
     return this.configuration.resourceIdMinimum + (Number.parseInt(digest, 16) % size);
+  }
+
+  /**
+   * Asserts the workspace has converged, rather than writing anything.
+   *
+   * The direct adapter's `applyInstanceConfiguration` is a second write: clone first, configure
+   * second. Terraform does both in one apply, so there is nothing left to write by the time this
+   * stage runs — and the workflow's stage vocabulary is persisted state shared across
+   * capabilities, so collapsing the stage was not an option.
+   *
+   * Turning it into an assertion is the better outcome anyway. A stage that previously performed
+   * a blind second write now *proves* the instance matches its declared configuration, and a
+   * non-empty plan fails the stage honestly instead of reporting success.
+   *
+   * @param request The configuration request.
+   * @returns `SUCCEEDED` when the plan is empty, a rejection when it is not.
+   */
+  public async applyInstanceConfiguration(
+    request: ApplyInstanceConfigurationRequest,
+  ): Promise<ApplyInstanceConfigurationResponse> {
+    const context = request.context;
+    this.assertProfile(context?.providerProfileId);
+    const instanceId = context?.instanceId;
+    if (!instanceId) {
+      throw new ProviderTransportError('protocol_error', 'context.instanceId is required.', {
+        retryable: false,
+      });
+    }
+
+    const workspace = workspaceNameFor(instanceId);
+    const directory = await this.runner.prepare(workspace, this.probeTfvars());
+    try {
+      const init = await this.runner.init(directory, workspace);
+      if (init.exitCode !== 0) {
+        throw new ProviderTransportError('unavailable', 'The state backend is unreachable.', {
+          retryable: true,
+        });
+      }
+
+      const declared = await this.tfvarsFromState(directory);
+      if (!declared) {
+        return {
+          result: failure(
+            FailureCategory.FAILURE_CATEGORY_UNKNOWN_OUTCOME,
+            'TERRAFORM_STATE_ABSENT',
+            'The instance has no Terraform state to verify against.',
+          ),
+        };
+      }
+
+      // Re-prepare with the real variables, so the plan compares the module against what was
+      // actually declared rather than against the probe values.
+      await this.runner.prepare(workspace, declared);
+      const { gate, invocation } = await this.runner.plan(directory);
+
+      const converged =
+        gate.decision === 'allowed' &&
+        (gate.actionCounts.create ?? 0) === 0 &&
+        (gate.actionCounts.update ?? 0) === 0 &&
+        (gate.actionCounts.delete ?? 0) === 0;
+
+      if (!converged) {
+        return {
+          result: failure(
+            FailureCategory.FAILURE_CATEGORY_PERMANENT,
+            'TERRAFORM_NOT_CONVERGED',
+            'The instance does not match its declared configuration.',
+          ),
+        };
+      }
+
+      void invocation;
+      return {
+        result: {
+          state: ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
+          providerResourceId: String(declared.vm_id),
+          evidenceId: randomUUID(),
+        },
+      };
+    } finally {
+      await this.runner.discard(workspace).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Powers an instance on.
+   *
+   * @param request The power request.
+   * @returns `ACCEPTED` with a run reference, or `SUCCEEDED` when already in that state.
+   */
+  public async startInstance(request: InstanceMutationRequest): Promise<StartInstanceResponse> {
+    return this.setPowerState(request, true);
+  }
+
+  /**
+   * Changes the declared power state.
+   *
+   * WHY this reads Terraform state first: the port hands a power request only an instance id and
+   * its ownership markers, because an imperative provider needs nothing else. A declarative one
+   * needs the *whole* desired state — omit an attribute and Terraform plans to clear it. Terraform
+   * 's own state is where that comes from, which is the deeper reason `observeInstance` reads it
+   * too.
+   */
+  private async setPowerState(
+    request: InstanceMutationRequest,
+    started: boolean,
+  ): Promise<StartInstanceResponse> {
+    const context = request.context;
+    this.assertProfile(context?.providerProfileId);
+    const instanceId = context?.instanceId;
+    const operationId = context?.operationId;
+    if (!instanceId || !operationId) {
+      throw new ProviderTransportError(
+        'protocol_error',
+        'context.instanceId and context.operationId are required.',
+        { retryable: false },
+      );
+    }
+
+    const workspace = workspaceNameFor(instanceId);
+    const directory = await this.runner.prepare(workspace, this.probeTfvars());
+    const init = await this.runner.init(directory, workspace);
+    if (init.exitCode !== 0) {
+      await this.runner.discard(workspace).catch(() => undefined);
+      throw new ProviderTransportError('unavailable', 'The state backend is unreachable.', {
+        retryable: true,
+      });
+    }
+
+    const declared = await this.tfvarsFromState(directory);
+    if (!declared) {
+      await this.runner.discard(workspace).catch(() => undefined);
+      return {
+        result: failure(
+          FailureCategory.FAILURE_CATEGORY_UNKNOWN_OUTCOME,
+          'TERRAFORM_STATE_ABSENT',
+          'The instance has no Terraform state to change.',
+        ),
+      };
+    }
+
+    if (declared.started === started) {
+      // Already in the requested state. Reporting success rather than applying a no-op keeps a
+      // duplicate delivery from producing a second run row for work nobody did.
+      await this.runner.discard(workspace).catch(() => undefined);
+      return {
+        result: {
+          state: ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
+          providerResourceId: String(declared.vm_id),
+          evidenceId: randomUUID(),
+        },
+      };
+    }
+
+    return this.startApply({
+      instanceId,
+      operationId,
+      workspace,
+      vmId: Number(declared.vm_id),
+      tfvars: { ...declared, started },
+      fencingToken: context?.attempt ?? 1,
+    });
+  }
+
+  /**
+   * Reconstructs the declared variables from Terraform state.
+   *
+   * State holds every attribute of the resource, which is exactly what a declarative mutation
+   * needs and what the imperative port does not carry. The allowlisted values are taken from
+   * configuration rather than from state, so a state document someone edited cannot widen the
+   * boundary.
+   *
+   * @param directory A prepared, initialised directory.
+   * @returns The variables, or `undefined` when the workspace holds no instance.
+   */
+  private async tfvarsFromState(directory: string): Promise<InstanceTfvars | undefined> {
+    const state = await this.readState(directory);
+    const values = state?.values?.root_module?.resources?.find(
+      (entry) => entry.address === INSTANCE_ADDRESS,
+    )?.values;
+    if (!values) return undefined;
+
+    const initialization = Array.isArray(values.initialization)
+      ? (values.initialization[0] as Record<string, unknown> | undefined)
+      : undefined;
+    const ipConfig = Array.isArray(initialization?.ip_config)
+      ? (initialization?.ip_config[0] as Record<string, unknown> | undefined)
+      : undefined;
+    const ipv4 = Array.isArray(ipConfig?.ipv4)
+      ? (ipConfig?.ipv4[0] as Record<string, unknown> | undefined)
+      : undefined;
+    const account = Array.isArray(initialization?.user_account)
+      ? (initialization?.user_account[0] as Record<string, unknown> | undefined)
+      : undefined;
+    const cpu = Array.isArray(values.cpu)
+      ? (values.cpu[0] as Record<string, unknown> | undefined)
+      : undefined;
+    const memory = Array.isArray(values.memory)
+      ? (values.memory[0] as Record<string, unknown> | undefined)
+      : undefined;
+    const disk = Array.isArray(values.disk)
+      ? (values.disk[0] as Record<string, unknown> | undefined)
+      : undefined;
+
+    const address = String(ipv4?.address ?? '');
+    const [ipv4Address, prefix] = address.split('/');
+
+    return {
+      // Allowlisted values come from configuration, never from state. A state document an
+      // operator edited must not be able to move this instance to another node or storage.
+      node_name: this.configuration.node,
+      template_vm_id: this.configuration.templateVmid,
+      datastore_id: this.configuration.storage,
+      disk_interface: this.configuration.diskInterface,
+      bridge: this.configuration.bridge,
+      network_mtu: this.configuration.networkMtu,
+      dns_domain: this.configuration.dnsDomain,
+      cloud_init_username: this.configuration.cloudInitUsername,
+      // Never read back from state either: Proxmox does not return it, so state's copy is the
+      // only one and configuration is the authority.
+      cloud_init_password: this.configuration.cloudInitPassword,
+
+      vm_id: Number(values.vm_id ?? this.configuration.resourceIdMinimum),
+      hostname: String(values.name ?? 'instance'),
+      ownership_marker: String(values.description ?? ''),
+      tags: Array.isArray(values.tags) ? values.tags.map(String) : [],
+      disk_gib: Number(disk?.size ?? 0),
+      cpu_cores: Number(cpu?.cores ?? 1),
+      memory_mib: Number(memory?.dedicated ?? 512),
+      ipv4_address: ipv4Address ?? '',
+      ipv4_prefix_length: Number(prefix ?? 0),
+      ipv4_gateway: String(ipv4?.gateway ?? this.configuration.ipv4Gateway),
+      dns_servers: dnsServers(initialization) ?? ['1.1.1.1'],
+      ssh_public_keys: Array.isArray(account?.keys) ? account.keys.map(String) : [],
+      started: values.started === true,
+      on_boot: values.on_boot === true,
+    };
   }
 
   /** Reads the workspace's state document. */
