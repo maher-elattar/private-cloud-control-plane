@@ -1,0 +1,20 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.15.9",
+  "errored": false,
+  "resource_changes": [
+    {
+      "address": "proxmox_virtual_environment_vm.instance",
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "name": "instance",
+      "provider_name": "registry.terraform.io/bpg/proxmox",
+      "action_reason": "replace_because_tainted",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": "<object>",
+        "after": "<object>"
+      }
+    }
+  ]
+}

@@ -12,6 +12,11 @@ addressing — is **out of scope here** and parked in
 alongside this work. This plan changes only _how_ the existing lifecycle workflow reaches Proxmox.
 See §1.1.
 
+**Measured against the real server.** The claims in §3, §6.3, §6.4 and §6.5 were verified by hand
+before any code was written; see
+[Terraform Manual Walkthrough](docs/architecture/terraform-manual-walkthrough.md). Where a
+measurement contradicted this document, the correction is inline and attributed.
+
 ---
 
 ## 1. What is being asked, restated precisely
@@ -415,7 +420,11 @@ knows nothing about it, so state is stale the moment it succeeds — and a subse
 read that as drift and try to "correct" it, potentially reversing the rollback the user asked for.
 
 **Rule: every direct-API mutation is followed by a mandatory `terraform apply -refresh-only`**
-before the workspace is considered usable again, recorded as a refresh run. Rollback additionally
+before the workspace is considered usable again, recorded as a refresh run. **The same rule
+applies after any failed apply**, which is a correction the manual walkthrough forced: a refused
+disk shrink was measured writing the rejected size into state while the server kept the real one.
+`plan` refreshes in memory and so reports correctly, but the _persisted_ state stays wrong — and
+§5.3's inventory reads persisted state directly. Rollback additionally
 sets `drift_state = 'drifted'` until a refresh proves otherwise. The existing
 `observing_snapshot` stage is the natural place to hang this.
 
@@ -428,7 +437,21 @@ markers.
 The resolution is the same one already in the codebase, and it is why ownership markers must
 survive this migration: on resume, the adapter searches the reserved VMID range for a VM whose
 description carries this instance's markers. If one exists, it is `terraform import`ed into the
-workspace rather than recreated. If a VM exists at the expected VMID _without_ matching markers,
+workspace rather than recreated.
+
+**That import only works with `ignore_changes = [clone]`**, which the manual walkthrough
+established by measurement. Proxmox does not record what a VM was cloned from, so an import
+reconstructs an empty `clone` block; every `clone` sub-attribute is ForceNew, so without the
+ignore rule the post-import plan is a replacement and the gate refuses it. One converging apply
+is needed afterwards, because Proxmox never returns the cloud-init password and the first
+post-import plan therefore shows it changing.
+
+**A third case exists that this section originally missed.** A create that fails partway leaves
+the resource in state marked _tainted_, and a tainted resource is replaced — destroyed — on the
+next plan, with `action_reason: replace_because_tainted`. The gate refuses that plan, which is
+correct but means a transient failure wedges the instance. The resolution is `terraform untaint`,
+which clears the marking without touching the VM, followed by a converging apply. That is a
+different recovery from the orphan case above and the runner needs both. If a VM exists at the expected VMID _without_ matching markers,
 that is SAFE-005 territory — never adopt on VMID alone — and the workflow goes to
 `manual_review`.
 
@@ -478,11 +501,24 @@ resource "proxmox_virtual_environment_vm" "instance" {
   }
 
   lifecycle {
-    prevent_destroy = true             # overridden only in the purge path
-    ignore_changes  = [network_device[0].mac_address]
+    prevent_destroy = true             # see the note below: this cannot be parameterised
+    ignore_changes = [
+      network_device[0].mac_address,
+      clone,                           # without this, an orphan cannot be imported — §6.5
+    ]
   }
 }
 ```
+
+**`prevent_destroy` cannot be parameterised.** A `lifecycle` block takes only literals, so
+"overridden in the purge path" is not expressible as one module with a variable. The purge path
+gets a sibling module directory differing only in that block, with a check that fails if anything
+else diverges between the two.
+
+Three attributes on this template diverge from bpg's defaults and must be declared or they diff
+forever: `machine = "q35"`, `scsi_hardware = "virtio-scsi-single"`, and
+`operating_system { type = "l26" }`. So must `initialization.datastore_id`, which defaults to
+`local-lvm` independently of `clone.datastore_id`.
 
 Note the module does **not** set `initialization.user_account.password`. There is no password
 path today and adding one would put a credential into `states.data`.
@@ -608,8 +644,10 @@ any SDN configuration.
 
 ## 12. Open questions for you
 
-1. **Power through Terraform or direct API?** Terraform is more consistent; direct is faster. The
-   plan assumes Terraform with a latency check at T-9. Say if you would rather fix it now.
+1. **Power through Terraform or direct API?** Now measured rather than guessed: a power
+   operation costs 7 s to power off and 19 s to power on through Terraform, against a sub-second
+   direct API call. Creates absorb that overhead; power does not. The plan still routes power
+   through Terraform for consistency, but this is the number to decide against.
 2. **OpenTofu or Terraform?** The recommendation is OpenTofu — MPL-2.0 and built-in state
    encryption for a state file that will hold SSH keys. Terraform works too; state encryption
    would then need to be solved another way.

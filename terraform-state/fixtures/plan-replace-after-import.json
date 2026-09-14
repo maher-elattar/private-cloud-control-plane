@@ -1,0 +1,26 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.15.9",
+  "errored": false,
+  "resource_changes": [
+    {
+      "address": "proxmox_virtual_environment_vm.instance",
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "name": "instance",
+      "provider_name": "registry.terraform.io/bpg/proxmox",
+      "action_reason": "replace_because_cannot_update",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": "<object>",
+        "after": "<object>",
+        "replace_paths": [
+          ["clone", 0, "vm_id"],
+          ["clone", 0, "full"],
+          ["clone", 0, "datastore_id"],
+          ["clone", 0, "retries"]
+        ]
+      }
+    }
+  ]
+}

@@ -19,3 +19,9 @@ pnpm-lock.yaml
 .agents/
 .claude/
 .cursor/
+
+# Raw Terraform run transcripts and provider caches from the by-hand exploration. Gitignored, and
+# machine output rather than source. The redacted captures in terraform-state/fixtures/ ARE
+# formatted, because those are committed and read as test inputs.
+terraform-state/runs/
+terraform-state/manual/.terraform/

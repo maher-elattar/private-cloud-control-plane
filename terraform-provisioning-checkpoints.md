@@ -18,12 +18,12 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-2 — Manual Terraform walkthrough against the live server
-- Last completed checkpoint: T-1 — Server survey
+- Current checkpoint: T-3 — Readiness probe defect
+- Last completed checkpoint: T-2 — Manual Terraform walkthrough
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
 - Target server: `https://testsrv.mosalam.com:8006`, node `proxtest`, PVE 9.2.11, standalone.
 - Committed so far: `726bc22` (gitignore and credential boundary), `167871f` (plan scoped to one
-  server, VPC work deferred).
+  server, VPC work deferred), `495dab6` (server survey and this ledger).
 - **Credential note.** The supplied credentials are `root@pam` plus a password. They were read
   into a session transcript in the course of this work, so that password should be rotated once a
   scoped API token exists. A token is required regardless — see the T-1 findings.
@@ -113,9 +113,9 @@ Evidence: [`docs/verification/evidence/testsrv-survey.json`](docs/verification/e
 
 - Planned commit: `feat: survey the Proxmox test server before Terraform work`
 
-### Checkpoint T-2 — Manual Terraform walkthrough — **In progress**
+### Checkpoint T-2 — Manual Terraform walkthrough
 
-- Status: In progress
+- Status: Complete
 - Rationale: the operator asked for the flow to be driven by hand against the server first, to
   understand it, before any of it is wired into the control plane. This is also where the design
   document's claims stop being research and become measurements.
@@ -147,8 +147,90 @@ Evidence: [`docs/verification/evidence/testsrv-survey.json`](docs/verification/e
 - Safety note: this VM is not a control-plane instance and is not in any control-plane table, so
   a hand-typed `terraform destroy` is the correct way to clean it up. That permission does not
   extend to anything else on this server, and nothing automated may destroy anything.
-- Verification required: the server left with no VM inside 910000–910099; every design claim
-  either confirmed or corrected in the design document; plan fixtures captured.
+- Evidence recorded 2026-09-14, written up in
+  `docs/architecture/terraform-manual-walkthrough.md`:
+  - VM 910000 cloned from template 110 and booted **Ubuntu 24.04.5 LTS**, with `eth0` holding
+    `192.168.4.2/22`, `default via 192.168.4.1`, the `ubuntu` user at uid 1000 in `sudo`, and
+    `search lab.invalid` applied. Verified from inside the guest through the QEMU agent, not only
+    from the Proxmox configuration.
+  - **The ownership marker round-trips byte-for-byte.** This was the largest open risk in the
+    design: had bpg normalised the description, the whole ownership model would have needed
+    rethinking. It does not.
+  - `plan -detailed-exitcode` reaches 0, so design §5.4's convergence assertion is viable — but
+    only once every attribute the template sets is declared explicitly.
+  - Change classification measured across thirteen attributes. Everything the control plane needs
+    to change during an instance's life is an in-place `update`; three destructive shapes exist
+    and all are avoidable.
+  - Latency measured: plan no-op 2 s, refresh-only 1 s, disk grow 5 s, power off 7 s, create 11 s,
+    power on 19 s, converge 21 s, destroy 10 s. That answers design §12's first open question with
+    numbers rather than intuition — a power operation costs 7 to 19 seconds against a sub-second
+    direct API call.
+  - Seven plan fixtures captured under `terraform-state/fixtures/`, redacted to structure only:
+    create, update, no-op, delete, and three distinct replacements each carrying a different
+    `action_reason`. These are the plan gate's inputs at T-8 — real plans this provider emitted,
+    rather than invented JSON that would only prove the fixtures match the parser.
+- Findings that change the design:
+  - **A failed create taints the resource, and a tainted resource is destroyed on the next plan**
+    (`replace_because_tainted`). The gate refuses that plan, correctly — which means a transient
+    create failure wedges the instance until something clears the taint. `terraform untaint`
+    clears it without touching the VM and the next apply converges in place. The runner needs that
+    recovery path. Design §6.5 covers the VM-exists-but-state-does-not case and does not cover
+    this one.
+  - **`terraform import` cannot adopt a cloned VM.** Proxmox does not record what a VM was cloned
+    from, so an import reconstructs an empty `clone` block, and every `clone` sub-attribute is
+    ForceNew — so the post-import plan is a replacement. `ignore_changes = [clone]` fixes it, and
+    is therefore not an optimisation but the thing that makes orphan adoption possible at all.
+  - **A refused disk shrink writes the rejected size into state** while the server keeps the real
+    one. `plan` refreshes in memory so it reports correctly, but the persisted state stays wrong
+    until `apply -refresh-only` repairs it — and the state inventory reads persisted state
+    directly. Design §6.4's refresh rule must extend from direct-API mutations to any failed
+    apply. The wider point is that the control plane's admission-time shrink refusal is the
+    load-bearing one: relying on the provider's refusal does not merely cost time, it corrupts
+    state.
+  - **`initialization.datastore_id` defaults to `local-lvm`**, which does not exist on this host,
+    and is independent of `clone.datastore_id`. This caused the first failure.
+  - Template-inherited values can be overwritten but not cleared: bpg omits the key rather than
+    issuing Proxmox's `delete=`, so anything the template sets and the configuration leaves empty
+    diffs forever.
+  - Proxmox validates SSH public keys server-side, returning HTTP 500 for an invalid one. The
+    domain validator checks length and control characters but not validity.
+- Safety finding, recorded separately because it is not a defect in this work:
+  **the template's baked-in SSH key reaches every guest and cloud-init cannot remove it.** At the
+  Proxmox layer an explicit key list replaces cleanly, but `/home/ubuntu/.ssh/authorized_keys`
+  inside the running guest held two keys — the supplied one and `maher@AsusOLED-Linux`, which the
+  golden image already carries. Every VM cloned from template 110 therefore grants a third party
+  SSH access, including every VM the existing direct adapter creates today. The existing adapter
+  makes it worse: it sets `sshkeys` only when the request carries at least one key, and
+  `sshPublicKeys` is optional in the contract, so an instance created without keys never has its
+  key list touched at all. The fix is to rebuild the template with no `authorized_keys` content;
+  until then this is a known exposure of the lab environment and belongs in the runbook.
+- Verification:
+
+  | Gate                                                   | Result                                                        |
+  | ------------------------------------------------------ | ------------------------------------------------------------- |
+  | `terraform validate`, `terraform fmt -check`           | clean                                                         |
+  | `plan -detailed-exitcode` on the settled configuration | 0 — clean no-op, twice                                        |
+  | Guest verification through the QEMU agent              | Ubuntu 24.04.5, correct address, gateway, user, search domain |
+  | `prevent_destroy`                                      | blocks a destroy: `Error: Instance cannot be destroyed`       |
+  | Disk shrink                                            | refused at apply: `Cannot shrink ... it is not supported!`    |
+  | Teardown                                               | 211 VMs on the server, none inside the reserved interval      |
+  | Secret scan of every committable file                  | 0 occurrences of the password                                 |
+  | `pnpm run docs:validate`                               | 61 Markdown files, 46 Mermaid artifacts                       |
+
+  Evidence: `docs/architecture/terraform-manual-walkthrough.md` and `terraform-state/fixtures/`.
+
+#### Deviation recorded
+
+`prevent_destroy` was removed from the manual configuration to tear the lab VM down. That was
+deliberate, and it is the reason the production module needs two sibling directories rather than
+one parameterised module: a `lifecycle` block cannot take a variable, so "destroy is permitted
+only in the purge path" is not expressible as a single module. Recorded as a design correction to
+be resolved at T-8.
+
+One ignore-rule gap was found and closed by the work itself: an experiment left a
+`terraform.tfvars.backup` holding the cloud-init password, and `*.tfvars` does not match it
+because it does not end in `.tfvars`. Both ignore files now cover the suffixed forms, verified
+with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-3 — Readiness probe defect
 

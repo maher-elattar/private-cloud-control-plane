@@ -1,0 +1,28 @@
+# Belt-and-braces beside the repository-root rules, so this folder is safe even if it is
+# ever copied elsewhere. Terraform state records every resource attribute including the
+# cloud-init password, so it is credential material rather than build output.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+
+# Real variable values. The tracked `.example` file carries placeholders only.
+#
+# WHY the `*` suffix forms are here: an experiment in this folder left a
+# `terraform.tfvars.backup` behind, which `*.tfvars` does not match because it does not end in
+# `.tfvars`. That file held the cloud-init password and was committable. Editor and tool
+# leftovers get the same treatment.
+terraform.tfvars
+terraform.tfvars.*
+!terraform.tfvars.example
+*.auto.tfvars
+*.auto.tfvars.json
+*.tfvars.backup
+*.tfvars.bak
+*.tfvars.orig
+
+# Raw run transcripts. Redacted captures belong in fixtures/ instead.
+runs/

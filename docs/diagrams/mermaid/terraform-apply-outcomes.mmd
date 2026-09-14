@@ -1,0 +1,38 @@
+flowchart TD
+    classDef safe fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    classDef refuse fill:#ffebee,stroke:#c62828,color:#b71c1c
+    classDef recover fill:#fff8e1,stroke:#f9a825,color:#e65100
+    classDef neutral fill:#eceff1,stroke:#546e7a,color:#263238
+
+    START["Workflow stage needs a mutation"]:::neutral
+    PLAN["terraform plan -out"]:::neutral
+    GATE{"Plan gate:<br/>any 'delete' in<br/>resource_changes[].change.actions?"}:::neutral
+
+    START --> PLAN --> GATE
+
+    GATE -->|"no-op / create / read / update"| APPLY["terraform apply"]:::safe
+    GATE -->|"delete present"| REFUSE["Refuse. Record gate_decision,<br/>workflow to manual_review.<br/>Nothing applied."]:::refuse
+
+    REFUSE --> WHY{"action_reason"}:::neutral
+    WHY -->|replace_because_tainted| UNTAINT["terraform untaint<br/>then converge.<br/>VM untouched."]:::recover
+    WHY -->|"replace_because_cannot_update<br/>on clone.*"| IGNORE["Module bug:<br/>ignore_changes = [clone]<br/>is missing"]:::recover
+    WHY -->|"replace_because_cannot_update<br/>on vm_id"| OPERATOR["Genuine config conflict.<br/>Operator decision only."]:::refuse
+
+    APPLY --> RESULT{"apply outcome"}:::neutral
+    RESULT -->|success| DONE["Record run,<br/>read back state serial"]:::safe
+    RESULT -->|"failed during create"| TAINTED["Resource TAINTED.<br/>Next plan is delete+create."]:::recover
+    RESULT -->|"failed during update"| STALE["Not tainted, but state may<br/>hold the rejected value"]:::recover
+
+    TAINTED --> UNTAINT
+    STALE --> REFRESH["apply -refresh-only<br/>before trusting state"]:::recover
+    UNTAINT --> PLAN
+    REFRESH --> PLAN
+
+    ORPHAN["VM exists, state does not"]:::recover
+    ORPHAN --> IMPORT["terraform import<br/>requires ignore_changes = [clone]"]:::recover
+    IMPORT --> CONVERGE["One converging apply<br/>re-sets the cloud-init password"]:::recover
+    CONVERGE --> PLAN
+
+    MARKERS{"Ownership markers match?"}:::neutral
+    ORPHAN --> MARKERS
+    MARKERS -->|no| NEVER["Never adopt. SAFE-005.<br/>manual_review."]:::refuse

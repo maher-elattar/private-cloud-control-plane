@@ -1,0 +1,25 @@
+# Placeholders only. Copy to terraform.tfvars, which is gitignored, and fill in real values.
+# The cloud-init password comes from the credentials file and must never be written here.
+
+node_name      = "proxtest"
+template_vm_id = 110
+vm_id          = 910000
+hostname       = "tf-manual-01"
+datastore_id   = "local"
+
+bridge      = "vmbr1"
+network_mtu = 1400
+
+cpu_cores  = 2
+memory_mib = 4096
+
+ipv4_address       = "192.168.4.2"
+ipv4_prefix_length = 22
+ipv4_gateway       = "192.168.4.1"
+dns_servers        = ["1.1.1.1"]
+
+cloud_init_username = "ubuntu"
+cloud_init_password = "REPLACE_ME"
+ssh_public_keys     = []
+
+ownership_marker = "private-cloud-control:{\"managedBy\":\"private-cloud-control-plane\",\"environment\":\"lab\",\"projectId\":\"00000000-0000-4000-8000-000000000001\",\"instanceId\":\"00000000-0000-4000-8000-0000000000aa\",\"createOperationId\":\"00000000-0000-4000-8000-0000000000bb\"}"

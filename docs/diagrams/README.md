@@ -69,6 +69,7 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | VPC control-plane model         | `mermaid/vpc-control-plane-model.mmd`  | `rendered/vpc-control-plane-model.mermaid.svg` |
 | VPC SDN apply serialization     | `mermaid/vpc-sdn-apply-serialization.mmd` | `rendered/vpc-sdn-apply-serialization.mermaid.svg` |
 | VPC instance dual NIC           | `mermaid/vpc-instance-dual-nic.mmd`    | `rendered/vpc-instance-dual-nic.mermaid.svg`  |
+| Terraform apply outcomes        | `mermaid/terraform-apply-outcomes.mmd` | `rendered/terraform-apply-outcomes.mermaid.svg` |
 
 ## Mermaid Editing And Validation
 
