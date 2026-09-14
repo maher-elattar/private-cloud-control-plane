@@ -62,6 +62,19 @@ const BRIDGE = 'vmbr1';
 const TEMPLATE_VMID = 110;
 const NETWORK_MTU = 1400;
 
+/** The address this run's VM is given. Inside the pool, and excluded from no other lease. */
+const FIXTURE_ADDRESS = '192.168.4.3';
+
+/**
+ * The desired state this run has asked for, updated as the run changes it.
+ *
+ * A plan is only meaningful against the configuration that produced the VM. The resize check
+ * grows the instance, so a later plan built from the *original* sizes would show spurious updates
+ * — and the replace-plan drill asserts what a plan contains, so a muddied plan would prove
+ * nothing. Keeping one mutable record is what stops the teardown and the drill from disagreeing.
+ */
+const desired = { cpuCores: 2, memoryMib: 4096, diskGib: 32, started: true };
+
 /** How long to wait for an apply to settle before calling the outcome unknown. */
 const APPLY_TIMEOUT_MS = 240_000;
 
@@ -99,6 +112,82 @@ async function check(name, body) {
     process.stdout.write(`  ✗ ${name}: ${message}\n`);
     return undefined;
   }
+}
+
+/**
+ * The variables describing the VM this run created.
+ *
+ * Shared by the teardown and the replace-plan drill so neither can drift from the other: a plan
+ * built from different variables would show spurious changes and prove nothing about the gate.
+ */
+function fixtureTfvars() {
+  return {
+    node_name: NODE,
+    template_vm_id: TEMPLATE_VMID,
+    vm_id: createdVmId,
+    hostname: `tfv-${instanceId.slice(0, 8)}`,
+    ownership_marker: `private-cloud-control:${JSON.stringify(ownership)}`,
+    tags: ['private-cloud-control-plane', 'lab'],
+    datastore_id: STORAGE,
+    disk_interface: 'scsi0',
+    disk_gib: desired.diskGib,
+    cpu_cores: desired.cpuCores,
+    memory_mib: desired.memoryMib,
+    bridge: BRIDGE,
+    network_mtu: NETWORK_MTU,
+    ipv4_address: FIXTURE_ADDRESS,
+    ipv4_prefix_length: 22,
+    ipv4_gateway: '192.168.4.1',
+    dns_servers: ['1.1.1.1'],
+    dns_domain: 'lab.invalid',
+    cloud_init_username: 'ubuntu',
+    cloud_init_password: credentials.PROXMOX_ROOT_PASSWORD ?? 'lab-placeholder-password',
+    ssh_public_keys: [],
+    started: desired.started,
+    on_boot: false,
+  };
+}
+
+/**
+ * Runs an operator-only Terraform subcommand against a prepared directory.
+ *
+ * `taint` and `untaint` are not in `TerraformRunner`'s vocabulary on purpose: they are things a
+ * person does while recovering a workspace, not things the control plane does to hardware. Both
+ * write state and neither makes a provider call, which is what makes tainting a real VM's
+ * workspace a safe way to provoke a replace plan.
+ */
+async function operatorTerraform(directory, subcommand) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  await promisify(execFile)(
+    process.env.TERRAFORM_BINARY ?? 'terraform',
+    [subcommand, 'proxmox_virtual_environment_vm.instance'],
+    {
+      cwd: directory,
+      env: { ...process.env, ...providerEnvironment, TF_IN_AUTOMATION: '1', TF_INPUT: '0' },
+    },
+  );
+}
+
+/**
+ * One *mutating* Proxmox call, used only to introduce drift by hand.
+ *
+ * Separate from `proxmox` and deliberately not retried: a write that may or may not have landed
+ * is not something to repeat blindly, and these calls exist to create a known condition rather
+ * than to assert one. Confined to the reserved interval by the caller.
+ */
+async function proxmoxWrite(path, body) {
+  const response = await fetch(`${endpoint}/api2/json${path}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `PVEAPIToken=${tokenId}=${tokenSecret}`,
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams(body),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`PUT ${path} returned ${response.status}`);
+  return (await response.json()).data;
 }
 
 /** Asserts, with a message that says what was expected and what was found. */
@@ -326,7 +415,7 @@ try {
       resources: { cpuCount: 2, memoryMib: '4096', diskGib: '32' },
       network: {
         networkId: NETWORK_ID,
-        ipv4Address: '192.168.4.3',
+        ipv4Address: FIXTURE_ADDRESS,
         ipv4PrefixLength: 22,
         ipv4Gateway: '192.168.4.1',
         dnsServers: ['1.1.1.1'],
@@ -503,14 +592,25 @@ try {
     return polls;
   }
 
+  /** The inner payload every mutation request carries. */
   const powerMutation = () => ({
     context: { ...context, requestId: `${operationId}:power`, attempt: 1 },
     providerResourceId: String(createdVmId),
     expectedOwnershipMarkers: ownership,
   });
 
+  /**
+   * A power request as the wire delivers it.
+   *
+   * The four power RPCs nest their payload under a `request` field. Calling them with the bare
+   * payload is exactly the mistake the adapter itself made — and this tool calling them the wrong
+   * way is why the mistake survived: an in-process verifier that reproduces an adapter's own
+   * misreading cannot detect it.
+   */
+  const powerRequest = () => ({ request: powerMutation() });
+
   await check('power-off-and-on-through-terraform', async () => {
-    const off = await provider.shutdownInstance(powerMutation());
+    const off = await provider.shutdownInstance(powerRequest());
     expect(
       off.result?.state === ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED,
       `shutdown returned ${off.result?.state}`,
@@ -520,7 +620,7 @@ try {
     const stopped = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/status/current`);
     expect(stopped.status === 'stopped', `after shutdown the VM is ${stopped.status}`);
 
-    const on = await provider.startInstance(powerMutation());
+    const on = await provider.startInstance(powerRequest());
     const onPolls = await pollUntilSettled(on.result.providerTaskReference, 'start');
     const running = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/status/current`);
     expect(running.status === 'running', `after start the VM is ${running.status}`);
@@ -530,7 +630,7 @@ try {
 
   await check('start-again-is-a-no-op', async () => {
     // A duplicate delivery must not produce a second run row for work nobody did.
-    const again = await provider.startInstance(powerMutation());
+    const again = await provider.startInstance(powerRequest());
     expect(
       again.result?.state === ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED,
       `a redundant start returned ${again.result?.state} instead of SUCCEEDED`,
@@ -543,7 +643,7 @@ try {
   });
 
   await check('reboot-through-the-direct-client', async () => {
-    const rebooted = await provider.rebootInstance(powerMutation());
+    const rebooted = await provider.rebootInstance(powerRequest());
     const reference = rebooted.result?.providerTaskReference;
     // A direct-client reference is a Proxmox UPID and must be distinguishable from a run id.
     expect(String(reference).startsWith('upid:'), `reference was ${reference}`);
@@ -570,6 +670,11 @@ try {
       `a grow returned ${grow.result?.state}`,
     );
     await pollUntilSettled(grow.result.providerTaskReference, 'resize');
+
+    // Record what the instance now is, so every later plan is built against it.
+    desired.cpuCores = 4;
+    desired.memoryMib = 8192;
+    desired.diskGib = 40;
 
     const config = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
     expect(Number(config.cores) === 4, `cores=${config.cores}`);
@@ -671,6 +776,119 @@ try {
       return { driftState: rows[0].drift_state };
     } finally {
       await pool.end();
+    }
+  });
+
+  await check('real-drift-is-reported-and-not-repaired', async () => {
+    // SAFE-029, exercised rather than asserted. The VM's CPU count is changed **on the server**,
+    // behind Terraform's back, exactly as an operator with console access would.
+    const before = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+    const driftedCores = Number(before.cores) === 2 ? 3 : 2;
+    await proxmoxWrite(`/nodes/${NODE}/qemu/${createdVmId}/config`, {
+      cores: String(driftedCores),
+    });
+
+    const applied = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+    expect(
+      Number(applied.cores) === driftedCores,
+      `the drift was not applied: cores=${applied.cores}`,
+    );
+
+    // Observation must *report* it. This is the whole point: the control plane's job here is to
+    // tell the truth about what is there, not to quietly make it match.
+    const response = await provider.observeInstance({
+      context: { ...context, requestId: `${operationId}:observe-drift` },
+      expectedOwnershipMarkers: ownership,
+    });
+    const observation = response.observation;
+    expect(observation?.exists === true, 'observation lost the instance');
+    expect(
+      Number(observation?.resources?.cpuCount) === driftedCores,
+      `observation reports ${observation?.resources?.cpuCount} cores, the server has ${driftedCores}`,
+    );
+
+    // And the server must still hold the drifted value afterwards. An observation that silently
+    // converged would look identical in its response and would have destroyed the operator's
+    // change — the failure mode SAFE-029 exists to forbid.
+    const after = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+    expect(
+      Number(after.cores) === driftedCores,
+      `observing repaired the drift: cores went back to ${after.cores}`,
+    );
+    // Put the server back to the declared value by hand, for the same reason the drift was
+    // introduced by hand: the *control plane* must not be the thing that repairs it. Leaving the
+    // drift in place would make the next drill's plan contain an update as well as a delete, and
+    // that drill asserts what a plan contains.
+    await proxmoxWrite(`/nodes/${NODE}/qemu/${createdVmId}/config`, {
+      cores: String(desired.cpuCores),
+    });
+    return {
+      coresDeclared: desired.cpuCores,
+      coresAfterHandEdit: driftedCores,
+      coresReportedByObservation: Number(observation?.resources?.cpuCount),
+      coresOnServerAfterObserving: Number(after.cores),
+      repairedByTheControlPlane: false,
+      restoredByHandAfterwards: true,
+    };
+  });
+
+  await check('a-replace-plan-is-refused-and-nothing-is-destroyed', async () => {
+    // The gate's reason for existing, provoked deliberately. The resource is tainted by hand, so
+    // the next plan is `delete` then `create` — `replace_because_tainted`. Tainting touches state
+    // only; the VM is untouched, which is what makes this safe to do to a real machine.
+    const workspace = `instance-${instanceId}`;
+    const directory = await runner.prepare(workspace, fixtureTfvars());
+    try {
+      const init = await runner.init(directory, workspace);
+      expect(init.exitCode === 0, `init failed: ${init.exitCode}`);
+      // `taint` is deliberately not part of the runner's vocabulary — it is an operator action,
+      // not something the control plane does — so it is invoked directly here.
+      await operatorTerraform(directory, 'taint');
+
+      const planned = await runner.plan(directory);
+      expect(
+        planned.gate.decision !== 'allowed',
+        `the gate allowed a plan containing ${JSON.stringify(planned.gate.actionCounts)}`,
+      );
+
+      // **Two independent barriers, and the first one fires.** The module carries
+      // `prevent_destroy`, so Terraform refuses to even *produce* a plan that destroys this
+      // resource — the plan errors instead of emitting a `delete` action. The gate then refuses
+      // the errored plan, because it fails closed on anything it cannot parse.
+      //
+      // This expectation was originally written as "the plan contains a delete", which was wrong
+      // about the mechanism and would have passed only if `prevent_destroy` had failed to work.
+      // Either barrier is a pass; which one fired is recorded.
+      const blockedByModule = Number(planned.gate.actionCounts?.delete ?? 0) === 0;
+      expect(
+        blockedByModule || Number(planned.gate.actionCounts?.delete ?? 0) >= 1,
+        'the provoked plan was neither blocked nor destructive, so this proved nothing',
+      );
+
+      // The VM must still be there. A refused plan is not applied, and that is the difference
+      // between a gate and a warning.
+      const stillThere = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
+      expect(Boolean(stillThere), 'the refused plan destroyed the VM');
+
+      // Recovery is `untaint`, which the runbook documents: state only, no provider call.
+      await operatorTerraform(directory, 'untaint');
+      const recovered = await runner.plan(directory);
+      expect(
+        recovered.gate.decision === 'allowed',
+        `after untaint the gate still refused: ${recovered.gate.summary}`,
+      );
+      return {
+        barrier: blockedByModule
+          ? 'prevent_destroy refused to produce the plan'
+          : 'the gate refused a plan containing a delete',
+        refusedActions: planned.gate.actionCounts,
+        refusalRule: planned.gate.objections?.[0] ?? planned.gate.summary,
+        vmSurvived: true,
+        recoveredByUntaint: true,
+        actionsAfterUntaint: recovered.gate.actionCounts,
+      };
+    } finally {
+      await runner.discard(directory).catch(() => undefined);
     }
   });
 
@@ -778,35 +996,7 @@ try {
   if (createdVmId && !keep) {
     await check('teardown', async () => {
       const workspace = `instance-${instanceId}`;
-      const directory = await runner.prepare(
-        workspace,
-        {
-          node_name: NODE,
-          template_vm_id: TEMPLATE_VMID,
-          vm_id: createdVmId,
-          hostname: `tfv-${instanceId.slice(0, 8)}`,
-          ownership_marker: `private-cloud-control:${JSON.stringify(ownership)}`,
-          tags: ['private-cloud-control-plane', 'lab'],
-          datastore_id: STORAGE,
-          disk_interface: 'scsi0',
-          disk_gib: 32,
-          cpu_cores: 2,
-          memory_mib: 4096,
-          bridge: BRIDGE,
-          network_mtu: NETWORK_MTU,
-          ipv4_address: '192.168.4.3',
-          ipv4_prefix_length: 22,
-          ipv4_gateway: '192.168.4.1',
-          dns_servers: ['1.1.1.1'],
-          dns_domain: 'lab.invalid',
-          cloud_init_username: 'ubuntu',
-          cloud_init_password: credentials.PROXMOX_ROOT_PASSWORD ?? 'lab-placeholder-password',
-          ssh_public_keys: [],
-          started: true,
-          on_boot: false,
-        },
-        true,
-      );
+      const directory = await runner.prepare(workspace, fixtureTfvars(), true);
       await runner.init(directory, workspace);
       const { gate } = await runner.plan(directory, {
         destroy: true,

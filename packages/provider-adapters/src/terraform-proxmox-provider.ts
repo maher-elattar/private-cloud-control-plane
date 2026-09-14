@@ -180,6 +180,44 @@ export interface TerraformRunStore extends TerraformRunReader {
   }): Promise<void>;
 }
 
+/**
+ * Reads one of bpg's single-element nested blocks out of a state document.
+ *
+ * Every `cpu {}`, `memory {}`, `disk {}` and `initialization {}` block arrives as a one-element
+ * array because HCL blocks are repeatable in the schema even where the provider allows only one.
+ * Naming that once is better than repeating the array dance at every use.
+ */
+function block(value: unknown): Record<string, unknown> | undefined {
+  return Array.isArray(value) ? (value[0] as Record<string, unknown> | undefined) : undefined;
+}
+
+/**
+ * Extracts the observable resource shape from a VM's state values.
+ *
+ * WHY `observeInstance` needs this and not just the ownership marker: an observation that reports
+ * only existence and power state cannot report *drift*, and reporting drift is the whole job
+ * (SAFE-029). The projection has `cpuCount`, `memoryMiB` and `diskGiB` fields that stayed null for
+ * this adapter, so a CPU count changed by hand on the server was invisible to the reconciler — it
+ * would have been read as "no drift" rather than as a finding.
+ */
+function observedResources(values: Record<string, unknown>):
+  | {
+      readonly cpuCount: number;
+      readonly memoryMib: string;
+      readonly diskGib: string;
+    }
+  | undefined {
+  const cpu = block(values.cpu);
+  const memory = block(values.memory);
+  const disk = block(values.disk);
+  if (!cpu && !memory && !disk) return undefined;
+  return {
+    cpuCount: Number(cpu?.cores ?? 0),
+    memoryMib: String(memory?.dedicated ?? 0),
+    diskGib: String(disk?.size ?? 0),
+  };
+}
+
 /** The reserved VMID interval, clamped regardless of configuration. */
 const RESERVED_VMID_MINIMUM = 910_000;
 const RESERVED_VMID_MAXIMUM = 910_099;
@@ -545,6 +583,13 @@ export class TerraformProxmoxProvider {
       const actual = parseOwnership(description);
       const expected = request.expectedOwnershipMarkers;
 
+      // The refresh above has already pulled the server's real values into state, so these are
+      // observations and not intentions — which is what makes reporting them meaningful.
+      const resources = observedResources(values);
+      const initialization = block(values.initialization);
+      const ipv4 = block(block(initialization?.ip_config)?.ipv4);
+      const [observedAddress, observedPrefix] = String(ipv4?.address ?? '').split('/');
+
       return {
         observation: {
           exists: true,
@@ -555,6 +600,18 @@ export class TerraformProxmoxProvider {
               : values.started === false
                 ? ObservedPowerState.OBSERVED_POWER_STATE_STOPPED
                 : ObservedPowerState.OBSERVED_POWER_STATE_UNKNOWN,
+          ...(resources ? { resources } : {}),
+          ...(observedAddress
+            ? {
+                network: {
+                  networkId: this.configuration.networkId,
+                  ipv4Address: observedAddress,
+                  ipv4PrefixLength: Number(observedPrefix ?? 0),
+                  ipv4Gateway: String(ipv4?.gateway ?? ''),
+                  dnsServers: [],
+                },
+              }
+            : {}),
           ownership: {
             complete: actual !== null,
             match: expected ? markersMatch(actual, expected as OwnershipMarkers) : false,
@@ -1483,27 +1540,12 @@ export class TerraformProxmoxProvider {
     )?.values;
     if (!values) return undefined;
 
-    const initialization = Array.isArray(values.initialization)
-      ? (values.initialization[0] as Record<string, unknown> | undefined)
-      : undefined;
-    const ipConfig = Array.isArray(initialization?.ip_config)
-      ? (initialization?.ip_config[0] as Record<string, unknown> | undefined)
-      : undefined;
-    const ipv4 = Array.isArray(ipConfig?.ipv4)
-      ? (ipConfig?.ipv4[0] as Record<string, unknown> | undefined)
-      : undefined;
-    const account = Array.isArray(initialization?.user_account)
-      ? (initialization?.user_account[0] as Record<string, unknown> | undefined)
-      : undefined;
-    const cpu = Array.isArray(values.cpu)
-      ? (values.cpu[0] as Record<string, unknown> | undefined)
-      : undefined;
-    const memory = Array.isArray(values.memory)
-      ? (values.memory[0] as Record<string, unknown> | undefined)
-      : undefined;
-    const disk = Array.isArray(values.disk)
-      ? (values.disk[0] as Record<string, unknown> | undefined)
-      : undefined;
+    const initialization = block(values.initialization);
+    const ipv4 = block(block(initialization?.ip_config)?.ipv4);
+    const account = block(initialization?.user_account);
+    const cpu = block(values.cpu);
+    const memory = block(values.memory);
+    const disk = block(values.disk);
 
     const address = String(ipv4?.address ?? '');
     const [ipv4Address, prefix] = address.split('/');

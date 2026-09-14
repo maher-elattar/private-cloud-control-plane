@@ -1,17 +1,17 @@
 {
-  "startedAt": "2026-09-14T13:12:36.768Z",
+  "startedAt": "2026-09-14T23:00:13.456Z",
   "status": "passed",
   "checks": {
     "reserved-range-is-clear": {
       "totalVms": 1,
       "reserved": 0,
       "status": "passed",
-      "durationMs": 742
+      "durationMs": 763
     },
     "database-is-migrated": {
       "instanceRow": "seeded",
       "status": "passed",
-      "durationMs": 50
+      "durationMs": 47
     },
     "validate-profile": {
       "checks": [
@@ -19,13 +19,13 @@
         "module_variables=VALIDATION_CHECK_STATE_PASSED"
       ],
       "status": "passed",
-      "durationMs": 8064
+      "durationMs": 8050
     },
     "submit-create": {
-      "taskReference": "22f235b8-a10e-410d-a16a-03524f01712a",
-      "vmId": 910044,
+      "taskReference": "f4022fbd-3a05-471f-9829-64480f4ab046",
+      "vmId": 910049,
       "status": "passed",
-      "durationMs": 8421
+      "durationMs": 8422
     },
     "run-row-exists-before-the-apply-settles": {
       "runStatus": "running",
@@ -34,7 +34,7 @@
       "durationMs": 5
     },
     "poll-task-to-completion": {
-      "polls": 12,
+      "polls": 13,
       "runStatus": "succeeded",
       "planActions": {
         "read": 0,
@@ -45,7 +45,7 @@
         "replace": 0
       },
       "status": "passed",
-      "durationMs": 33104
+      "durationMs": 36109
     },
     "gate-allowed-a-create-and-nothing-else": {
       "planActions": {
@@ -62,11 +62,11 @@
     "proxmox-holds-the-expected-vm": {
       "cores": 2,
       "memory": "4096",
-      "net0": "virtio=BC:24:11:48:02:DE,bridge=vmbr1,firewall=1,mtu=1400",
+      "net0": "virtio=BC:24:11:1D:7D:4D,bridge=vmbr1,firewall=1,mtu=1400",
       "ipconfig0": "gw=192.168.4.1,ip=192.168.4.3/22",
-      "scsi0": "local:910044/vm-910044-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,format=raw,iothread=1,replicate=1,size=32G,ssd=1",
+      "scsi0": "local:910049/vm-910049-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,format=raw,iothread=1,replicate=1,size=32G,ssd=1",
       "status": "passed",
-      "durationMs": 528
+      "durationMs": 468
     },
     "ownership-marker-round-tripped": {
       "markerFields": [
@@ -77,75 +77,102 @@
         "projectId"
       ],
       "status": "passed",
-      "durationMs": 134
+      "durationMs": 127
     },
     "observe-reports-what-exists": {
       "powerState": "OBSERVED_POWER_STATE_RUNNING",
       "ownershipMatch": true,
       "status": "passed",
-      "durationMs": 10369
+      "durationMs": 9974
     },
     "configuration-has-converged": {
       "state": "PROVIDER_RESULT_STATE_SUCCEEDED",
       "status": "passed",
-      "durationMs": 10826
+      "durationMs": 11746
     },
     "workspace-inventory-recorded": {
-      "workspace": "instance-0207defc-f6d4-4b29-8548-350221cb48d5",
+      "workspace": "instance-c5b7428b-1dd9-42c6-a623-c99dd2990f09",
       "driftState": "in_sync",
       "status": "passed",
       "durationMs": 21
     },
     "power-off-and-on-through-terraform": {
       "offPolls": 5,
-      "onPolls": 8,
+      "onPolls": 9,
       "status": "passed",
-      "durationMs": 71106
+      "durationMs": 72217
     },
     "start-again-is-a-no-op": {
       "state": "PROVIDER_RESULT_STATE_SUCCEEDED",
       "status": "passed",
-      "durationMs": 7887
+      "durationMs": 7916
     },
     "reboot-through-the-direct-client": {
       "polls": 2,
       "reference": "upid:<redacted>",
       "status": "passed",
-      "durationMs": 5224
+      "durationMs": 5076
     },
     "resize-grows-and-refuses-a-shrink": {
       "cores": 4,
       "memory": "8192",
-      "scsi0": "local:910044/vm-910044-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=40G,ssd=1",
+      "scsi0": "local:910049/vm-910049-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=40G,ssd=1",
       "status": "passed",
-      "durationMs": 53809
+      "durationMs": 56537
     },
     "snapshot-support-matches-the-storage": {
       "storageSupportsSnapshots": false,
       "limitation": "directory storage snapshots qcow2 only; template 110 is raw",
       "status": "passed",
-      "durationMs": 2302
+      "durationMs": 2301
     },
     "direct-mutations-triggered-a-refresh": {
       "driftState": "in_sync",
       "status": "passed",
-      "durationMs": 23
+      "durationMs": 22
+    },
+    "real-drift-is-reported-and-not-repaired": {
+      "coresDeclared": 4,
+      "coresAfterHandEdit": 2,
+      "coresReportedByObservation": 2,
+      "coresOnServerAfterObserving": 2,
+      "repairedByTheControlPlane": false,
+      "restoredByHandAfterwards": true,
+      "status": "passed",
+      "durationMs": 12711
+    },
+    "a-replace-plan-is-refused-and-nothing-is-destroyed": {
+      "barrier": "prevent_destroy refused to produce the plan",
+      "refusedActions": {},
+      "refusalRule": "The plan could not be read. Refusing, because a gate that guesses is not a gate.",
+      "vmSurvived": true,
+      "recoveredByUntaint": true,
+      "actionsAfterUntaint": {
+        "no-op": 0,
+        "create": 0,
+        "read": 0,
+        "update": 1,
+        "delete": 0,
+        "replace": 0
+      },
+      "status": "passed",
+      "durationMs": 13135
     },
     "retention-detaches-without-destroying": {
       "onboot": 0,
       "trailer": "present",
       "status": "passed",
-      "durationMs": 32954
+      "durationMs": 30418
     },
     "purge-refuses-without-an-authorization-id": {
       "refused": true,
       "status": "passed",
-      "durationMs": 134
+      "durationMs": 124
     },
     "purge-destroys-when-authorized": {
       "destroyed": true,
       "status": "passed",
-      "durationMs": 27600
+      "durationMs": 24450
     },
     "diagnostics-carry-no-secret": {
       "runRows": 6,
@@ -153,7 +180,7 @@
       "durationMs": 20
     }
   },
-  "finishedAt": "2026-09-14T13:17:10.164Z",
+  "finishedAt": "2026-09-14T23:05:14.181Z",
   "failures": [],
-  "instanceId": "0207defc-f6d4-4b29-8548-350221cb48d5"
+  "instanceId": "c5b7428b-1dd9-42c6-a623-c99dd2990f09"
 }

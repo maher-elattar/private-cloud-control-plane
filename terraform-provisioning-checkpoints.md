@@ -1067,11 +1067,63 @@ retried: a 403 or a 500 is an answer, and retrying an answer would hide it.
 
 ### Checkpoint T-16 — Drift and reconciliation
 
-- Status: Pending
-- Required work: `observeInstance` via `-refresh-only` feeding the reconciler.
-- Verification required: introduce real drift on the server by hand and prove the control plane
-  reports it and does not repair it (SAFE-029). Also provoke a replace plan deliberately and prove
-  the gate refuses it, the workflow lands in `manual_review`, and the VM is untouched.
+- Status: Complete
+- Completed 2026-09-14. Both drills run against the live server as part of
+  `pnpm run verify:terraform-adapter`, which now reports **24 of 24**.
+
+#### The defect the drift drill found
+
+**`observeInstance` reported only existence, power state and ownership.** It never populated
+`resources` or `network`, so the `cpuCount`, `memoryMiB` and `diskGiB` fields on the projection
+stayed null for this adapter — and a CPU count changed by hand on the server read as _no drift_.
+An observation that cannot report drift is not doing the job SAFE-029 describes; it is only
+confirming that a VM exists.
+
+The refresh had already pulled the server's real values into state, so the values were there and
+simply unread. The block decoding already existed inside `tfvarsFromState` and is now a named
+helper both paths share. Absent blocks yield **no** `resources` rather than zeroes, because "not
+observed" and "observed as zero" are different findings and a reconciler comparing against zero
+would report drift on every instance.
+
+#### Drift is reported, never repaired
+
+A VM's CPU count was changed on the server behind Terraform's back, exactly as an operator with
+console access would. Recorded:
+
+|                               |             |
+| ----------------------------- | ----------- |
+| Declared                      | 4 cores     |
+| Changed by hand to            | 2 cores     |
+| **Observation reported**      | **2 cores** |
+| Server after observing        | 2 cores     |
+| Repaired by the control plane | **no**      |
+
+The last row is the assertion that matters. An observation that silently converged would look
+identical in its response and would have destroyed the operator's change. The drill restores the
+declared value by hand afterwards — by hand for the same reason the drift was introduced by hand:
+the control plane must not be the thing that repairs it.
+
+#### A replace plan is refused, and two barriers stand in its way
+
+The resource was tainted deliberately, which makes the next plan a destroy-then-create. Tainting
+writes state and makes no provider call, which is what makes it safe to do to a real machine.
+
+What actually happens is better than the design assumed: **`prevent_destroy` refuses to produce
+the plan at all**, so Terraform errors instead of emitting a `delete` action, and the gate then
+refuses the errored plan because it fails closed on anything it cannot parse — _"The plan could
+not be read. Refusing, because a gate that guesses is not a gate."_ The VM survived, and
+`terraform untaint` recovered the workspace with the next plan allowed.
+
+This checkpoint's expectation was originally written as "the plan contains a delete". That was
+wrong about the mechanism and would have passed only if `prevent_destroy` had failed to work, so
+the drill now accepts either barrier and records which one fired. Worth stating plainly: the
+assertion was corrected to match the system, after checking that the system was right and the
+assertion was not.
+
+- The workflow reaching `manual_review` on a refused plan was observed separately, during the
+  full-stack runs of T-11: a retain whose plan was refused ended `manual_review` with
+  `TERRAFORM_PLAN_REFUSED`, and a create whose transport deadline expired ended `manual_review`
+  with an unknown outcome — both without touching the VM.
 
 ### Checkpoint T-17 — Closure
 

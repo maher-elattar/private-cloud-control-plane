@@ -367,6 +367,60 @@ describe('observeInstance', () => {
     expect(observation?.ownership?.match).toBe(true);
   });
 
+  it('reports the resources and address it observed, not just that the VM exists', async () => {
+    // The observation is what the reconciler reads, and an observation carrying only existence and
+    // power state cannot report *drift* — which is the whole job (SAFE-029). These fields stayed
+    // null for this adapter, so a CPU count changed by hand on the server read as "no drift".
+    const { observation } = await provider(
+      runnerDouble({
+        showState: async () => ({
+          command: 'show-state',
+          exitCode: 0,
+          diagnostics: [],
+          durationMs: 1,
+          stdout: state({
+            vm_id: 910_000,
+            started: true,
+            description: marker,
+            cpu: [{ cores: 6 }],
+            memory: [{ dedicated: 12_288 }],
+            disk: [{ size: 64 }],
+            initialization: [
+              { ip_config: [{ ipv4: [{ address: '192.168.4.9/22', gateway: '192.168.4.1' }] }] },
+            ],
+          }),
+        }),
+      } as Partial<TerraformRunner>),
+    ).observeInstance({ context, expectedOwnershipMarkers: ownership });
+
+    expect(observation?.resources?.cpuCount).toBe(6);
+    expect(observation?.resources?.memoryMib).toBe('12288');
+    expect(observation?.resources?.diskGib).toBe('64');
+    expect(observation?.network?.ipv4Address).toBe('192.168.4.9');
+    expect(observation?.network?.ipv4PrefixLength).toBe(22);
+  });
+
+  it('omits resources rather than reporting zeroes when state carries none', async () => {
+    // A missing block and a block full of zeroes mean different things: "not observed" is not the
+    // same finding as "observed as zero", and a reconciler comparing against zero would report
+    // drift on every instance.
+    const { observation } = await provider(
+      runnerDouble({
+        showState: async () => ({
+          command: 'show-state',
+          exitCode: 0,
+          diagnostics: [],
+          durationMs: 1,
+          stdout: state({ vm_id: 910_000, started: true, description: marker }),
+        }),
+      } as Partial<TerraformRunner>),
+    ).observeInstance({ context, expectedOwnershipMarkers: ownership });
+
+    expect(observation?.exists).toBe(true);
+    expect(observation?.resources).toBeUndefined();
+    expect(observation?.network).toBeUndefined();
+  });
+
   it('reports a stopped instance', async () => {
     const { observation } = await provider(
       runnerDouble({
