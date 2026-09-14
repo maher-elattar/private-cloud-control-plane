@@ -245,6 +245,22 @@ export class TerraformRunner {
   }
 
   /**
+   * Reads the workspace's state document.
+   *
+   * `show -json` with no plan file prints *state* rather than a plan, which is how observation
+   * learns what exists. Read-only: it makes no provider call of its own, so the caller is
+   * responsible for having refreshed first if it wants state to reflect reality.
+   *
+   * @param directory A prepared, initialised directory.
+   * @returns The invocation's outcome, with `stdout` carrying the state JSON.
+   */
+  public async showState(
+    directory: string,
+  ): Promise<InvocationResult & { readonly stdout: string }> {
+    return this.run('show-state', ['show', '-json', '-no-color'], directory);
+  }
+
+  /**
    * Clears a taint without touching the provider resource.
    *
    * A create that fails partway leaves the resource tainted, and a tainted resource is *replaced*

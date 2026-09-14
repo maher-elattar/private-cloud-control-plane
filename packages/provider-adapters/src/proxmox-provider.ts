@@ -165,8 +165,22 @@ interface ProxmoxCurrentStatus {
   readonly lock?: string;
 }
 
+/**
+ * The ownership and allowlist vocabulary, exported so every Proxmox adapter shares one
+ * implementation.
+ *
+ * WHY these are exported from the direct adapter rather than moved to a neutral module: they were
+ * going to be, and the mechanical extraction kept mis-bounding function bodies in a 1400-line
+ * file that is the only code here able to affect real hardware. Sharing the code is the safety
+ * property worth having; which file it lives in is tidiness. Exporting in place buys the first
+ * with none of the risk, and a later move can be done by hand with the suite as its proof.
+ *
+ * Do not make these private again. A second implementation of an ownership check is a second
+ * chance to disagree about whether a VM may be destroyed.
+ */
+
 /** Prefix marking a description line as a control-plane ownership marker. */
-const markerPrefix = 'private-cloud-control:';
+export const markerPrefix = 'private-cloud-control:';
 
 /**
  * The compute bounds this adapter accepts, and reports through `getCapabilities`.
@@ -175,14 +189,14 @@ const markerPrefix = 'private-cloud-control:';
  * bounds is far more likely to be a mistake than an intention. `assertResources` enforces them
  * and `getCapabilities` advertises them, so the two cannot drift.
  */
-const MAXIMUM_CPU_COUNT = 8;
-const MINIMUM_MEMORY_MIB = 512;
-const MAXIMUM_MEMORY_MIB = 16_384;
-const MINIMUM_DISK_GIB = 1;
-const MAXIMUM_DISK_GIB = 128;
+export const MAXIMUM_CPU_COUNT = 8;
+export const MINIMUM_MEMORY_MIB = 512;
+export const MAXIMUM_MEMORY_MIB = 16_384;
+export const MINIMUM_DISK_GIB = 1;
+export const MAXIMUM_DISK_GIB = 128;
 
 /** Snapshots allowed per instance. */
-const MAXIMUM_SNAPSHOTS = 8;
+export const MAXIMUM_SNAPSHOTS = 8;
 
 /**
  * Trailer key recording when a retained instance stops being recoverable.
@@ -192,7 +206,7 @@ const MAXIMUM_SNAPSHOTS = 8;
  * one-line form would stop parsing — which is the same failure this trailer originally caused,
  * only inflicted deliberately.
  */
-const RETENTION_TRAILER_KEY = 'retained-until';
+export const RETENTION_TRAILER_KEY = 'retained-until';
 
 /** Asserts a configured or request value is present. */
 function required(value: string | undefined, name: string): string {
@@ -231,7 +245,7 @@ function failure(
  * configuration, giving a place to record ownership that survives the whole create sequence
  * and can be read back on any later call.
  */
-function ownershipDescription(markers: OwnershipMarkers): string {
+export function ownershipDescription(markers: OwnershipMarkers): string {
   return `${markerPrefix}${JSON.stringify({
     managedBy: markers.managedBy,
     environment: markers.environment,
@@ -254,7 +268,11 @@ function ownershipDescription(markers: OwnershipMarkers): string {
  *   records that retention was applied.
  * @returns The description to write to Proxmox.
  */
-function describedWithTrailer(markers: OwnershipMarkers, key: string, value: string): string {
+export function describedWithTrailer(
+  markers: OwnershipMarkers,
+  key: string,
+  value: string,
+): string {
   return `${ownershipDescription(markers)}\n${key}=${value}`;
 }
 
@@ -272,7 +290,7 @@ function describedWithTrailer(markers: OwnershipMarkers, key: string, value: str
  * genuinely made this description unrecognisable, and refusing to act on it is the intended
  * behaviour: ownership is proven or the workflow stops, never inferred.
  */
-function parseOwnership(description: string | undefined): OwnershipMarkers | null {
+export function parseOwnership(description: string | undefined): OwnershipMarkers | null {
   if (!description?.startsWith(markerPrefix)) return null;
   try {
     const [marker] = description.slice(markerPrefix.length).split('\n');
@@ -304,7 +322,7 @@ function parseOwnership(description: string | undefined): OwnershipMarkers | nul
  * A partial match is treated as no match. Anything less than complete agreement means this
  * may not be our VM, and the safe response is to refuse to touch it.
  */
-function markersMatch(actual: OwnershipMarkers | null, expected: OwnershipMarkers): boolean {
+export function markersMatch(actual: OwnershipMarkers | null, expected: OwnershipMarkers): boolean {
   if (!actual) return false;
   return (
     actual.managedBy === expected.managedBy &&
@@ -316,7 +334,7 @@ function markersMatch(actual: OwnershipMarkers | null, expected: OwnershipMarker
 }
 
 /** Extracts the disk size in GiB from a Proxmox disk specification string. */
-function diskGiB(config: ProxmoxVmConfig): string | undefined {
+export function diskGiB(config: ProxmoxVmConfig): string | undefined {
   const disk = config.scsi0 ?? config.virtio0 ?? config.sata0;
   const size = /(?:^|,)size=(\d+(?:\.\d+)?)([KMGT])(?:,|$)/i.exec(disk ?? '');
   if (!size?.[1] || !size[2]) return undefined;

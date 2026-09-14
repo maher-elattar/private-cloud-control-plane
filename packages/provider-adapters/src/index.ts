@@ -27,3 +27,15 @@ export type {
   InvocationResult,
   TerraformRunnerConfiguration,
 } from './terraform/runner.js';
+export { INSTANCE_ADDRESS, TerraformProxmoxProvider } from './terraform-proxmox-provider.js';
+export type {
+  TerraformProxmoxConfiguration,
+  TerraformRunReader,
+} from './terraform-proxmox-provider.js';
+export {
+  describedWithTrailer,
+  diskGiB,
+  markersMatch,
+  ownershipDescription,
+  parseOwnership,
+} from './proxmox-provider.js';

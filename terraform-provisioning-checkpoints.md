@@ -18,9 +18,9 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-10 — Adapter, read path
-- Last completed checkpoint: T-9 — Runner
-- Completed so far: T-0 through T-9. T-4 was taken ahead of T-3 because the operator
+- Current checkpoint: T-11 — Create, end to end, one request
+- Last completed checkpoint: T-10 — Adapter, read path
+- Completed so far: T-0 through T-10. T-4 was taken ahead of T-3 because the operator
   authorised the token creation directly and it is a live-server action; T-3 is offline and was
   unaffected by the order.
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
@@ -30,7 +30,7 @@ into this work.
   Terraform walkthrough), `7bdeec8` (scoped API token), `dbdc069`
   (readiness probe and capability flags), `0c58ba4` (ownership markers), `9ec2c7f` (live
   server catalog and configuration cross-check), `08ab358` (inventory schema), `580544d` (module and
-  plan gate).
+  plan gate), `602156a` (runner, tfvars and inventory store).
 - **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
   administrator password is retained in the credentials file only so that token can be
   re-minted; it was read into a session transcript during this work and **should be rotated**.
@@ -645,8 +645,55 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-10 — Adapter, read path
 
-- Status: Pending
-- Required work: `TerraformProxmoxProvider` selected by `PROVIDER_ADAPTER=terraform` as a third
+- Status: Complete
+- Evidence recorded 2026-09-14:
+  - `TerraformProxmoxProvider` implements `getCapabilities`, `validateProfile`, `getTask` and
+    `observeInstance`. It opens no HTTP connection to Proxmox at all — every observation goes
+    through Terraform, which holds the credentials.
+  - `getCapabilities` is `async` and cheap, learned from T-3, and reports **`snapshots: false`**.
+    bpg publishes no snapshot resource and no snapshot data source, so claiming the capability
+    would be advertising work this adapter cannot do; snapshots are served by the narrowed direct
+    client instead.
+  - `observeInstance` uses `apply -refresh-only`, which writes to state and never to Proxmox.
+    That is what makes observation safe to run against a live instance, including during
+    reconciliation where SAFE-029 forbids repairing anything.
+  - **The classifications are what the tests are about**, because each decides what a workflow
+    does next. A refused plan reports a _permanent_ failure rather than `running`: the gate will
+    refuse again for the same reason, so reporting it as still running would leave the workflow
+    polling forever. A reference the adapter cannot find reports `UNKNOWN` rather than `FAILED`,
+    because guessing "failed" for a reference that may simply not be committed yet would abandon
+    a live instance. An unreachable state backend raises a retryable transport error rather than
+    reporting absence — reporting "the instance does not exist" because the backend was down is
+    how a reconciler comes to believe a live VM is gone.
+  - The run record is read through a `TerraformRunReader` interface this package declares, not by
+    importing `postgres-adapter`. Both are adapters, and one importing the other would make the
+    provider unusable without a database; the composition root supplies the implementation.
+  - The working directory is discarded in a `finally`, including when the read throws, because it
+    holds a variable file with the cloud-init password in it.
+- **The shared-code decision changed, and the reason is worth recording.** The plan was to extract
+  the ownership and allowlist code into a neutral module. Two attempts at that mechanical
+  extraction mis-bounded function bodies in a 1,400-line file that is the only code here able to
+  affect real hardware, and both were reverted to a green suite. The symbols are now **exported
+  in place** from the direct adapter instead. Sharing one implementation is the safety property
+  worth having; which file it lives in is tidiness. Exporting in place buys the first with none of
+  the risk, and a later move can be done by hand with the suite as its proof. A comment above them
+  says so, and says not to make them private again.
+- Scope recorded honestly: **`provider.factory.ts` does not yet accept `PROVIDER_ADAPTER=terraform`.**
+  `createProvider` returns the intersection of all six narrowed ports, and this adapter implements
+  four methods of seventeen. Wiring it now would mean either widening the factory's return type —
+  which would let a partially-implemented adapter be selected in production — or stubbing the
+  missing methods, which is a lie the type system would then stop catching. The factory value
+  lands with the create path.
+- Verification:
+
+  | Gate                                                        | Result                                                                |
+  | ----------------------------------------------------------- | --------------------------------------------------------------------- |
+  | `npx nx test provider-adapters`                             | 10 files, **120 tests** — was 100; twenty adapter cases added         |
+  | The direct adapter's suite after the export-in-place change | 100 of 100, unchanged — the evidence the sharing altered no behaviour |
+  | `pnpm run test:integration`                                 | 122 tests                                                             |
+  | `pnpm run format:check`, `lint`, `typecheck`, `build`       | clean; 14 projects each                                               |
+
+- Superseded required work: `TerraformProxmoxProvider` selected by `PROVIDER_ADAPTER=terraform` as a third
   value, with the default still `fake` and failing closed. `getCapabilities`, `validateProfile`,
   `getTask`, `observeInstance` via `plan -refresh-only -json`. The VMID clamp, context and
   ownership assertions, marker encode/decode and disk parsing are **extracted and shared**, not
