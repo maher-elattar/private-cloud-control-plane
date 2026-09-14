@@ -769,8 +769,69 @@ with `git check-ignore`. Nothing was committed in the interim.
   | `pnpm run test:integration`                           | 122 tests                                                |
   | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                  |
 
-- Remaining for this checkpoint: the layer-by-layer verifier, a provider image carrying the
-  Terraform binary and a vendored plugin directory, and the live run.
+- Progress recorded 2026-09-14 — **the provider half of the create path is verified live**:
+  - `tools/verification/verify-terraform-adapter.mjs` (`pnpm run verify:terraform-adapter`) drives
+    the adapter against the real server and reports **14 of 14 checks passing**, twice in a row
+    from a clean interval. Evidence: `docs/verification/evidence/terraform-adapter.json`.
+  - What it proves, in order: the reserved interval is clear before anything starts;
+    `validateProfile` initialises the module and the `pg` backend and plans exactly one create;
+    `submitCreateInstance` returns `ACCEPTED` with a run reference; the run row exists before the
+    apply settles; the task polls to `SUCCEEDED`; the gate allowed a create and nothing else; the
+    VM on the server carries the right cores, memory, bridge, **MTU 1400**, `ipconfig0`,
+    nameserver and 32 GiB disk; the ownership marker round-tripped and parses back to this
+    instance; `observeInstance` reports it exists with ownership proven;
+    `applyInstanceConfiguration` finds the workspace converged **from a fresh create**; the
+    workspace inventory records `in_sync` with an apply timestamp; no secret reached
+    `terraform.runs.diagnostics`; and the teardown leaves the interval empty.
+  - The convergence check passing from a _fresh_ create is the one that matters most. T-4's
+    addendum recorded that an incrementally-repaired workspace proves only that config and server
+    agree, not that the config can build a correct VM from nothing. This run starts from nothing.
+
+#### Three defects the live run found
+
+1. **The `pg` backend requires TLS where the application's driver does not.** `terraform init`
+   failed with `pq: SSL is not enabled on the server` against a connection string that works
+   perfectly for the application: lib/pq defaults TLS on, node-postgres defaults it off. The
+   runner now **refuses to construct** without an explicit `sslmode`, because the silent fix
+   would have been for the runner to append `sslmode=disable` itself — a decision about transport
+   security for a database holding credentials, made in the wrong place. `TERRAFORM_STATE_CONN_STR`
+   is a separate setting from `DATABASE_URL` for exactly this reason.
+2. **A transient clone failure was classified as permanent.** A run started seconds after the
+   previous run's destroy failed with `Error: VM clone / All attempts fail` — the template was
+   still locked by the preceding operation — and an identical re-run succeeded. `getTask` reported
+   that as `FAILURE_CATEGORY_PERMANENT`, which would have failed an instance that would have
+   worked a moment later. It now inspects the diagnostics for a narrow set of retryable
+   conditions and reports `TRANSIENT`, with a case asserting a genuine misconfiguration still
+   reports permanent. The patterns are deliberately narrow: a broad one would retry a real fault
+   forever, which is worse than failing it once.
+   Worth stating as a limitation rather than hiding: Terraform flattens the provider's structured
+   error into a diagnostic string, so a text match is the only signal available by then. That is a
+   real cost of routing through Terraform.
+3. **The verifier's own reporter could disagree with itself.** A check returning a field named
+   `status` overwrote its verdict, so a passing check rendered as failed while still counting as
+   passed. The verdict is now written after the detail. A reporter that can contradict its own
+   summary is worse than a terse one.
+
+- Two earlier partial runs left VMs 910017 and 910097 on the server. Both were destroyed
+  deliberately, by VMID, after their ownership markers were read and checked — marker prefix,
+  `managedBy` and `environment` all had to match or the VM would have been reported and left
+  alone. Recorded here because tier 3 of the abort story says a manual destroy is written down.
+- Verification:
+
+  | Gate                                                  | Result                                                  |
+  | ----------------------------------------------------- | ------------------------------------------------------- |
+  | `pnpm run verify:terraform-adapter`                   | **14 of 14** checks, twice consecutively                |
+  | Server state afterwards                               | 211 VMs, **0** inside the reserved interval             |
+  | Secret scan of the evidence file                      | 0 occurrences of the token secret or the password       |
+  | `npx nx test provider-adapters`                       | **132 tests** — was 130; two classification cases added |
+  | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                 |
+  | `pnpm run terraform:check-modules`                    | modules agree                                           |
+
+- **Remaining for this checkpoint**, and not deferred: the layers above the provider. The verifier
+  covers provider → Terraform → Proxmox → inventory. REST accept, the outbox, the Kafka record,
+  the orchestrator's claim and the projection readback are still unverified against this adapter,
+  and reaching them needs a provider container carrying the Terraform binary and a vendored
+  plugin directory. That is the next unit of work, not a deferral.
 - Rationale: the first full-stack run, and the checkpoint the operator described as observing and
   fixing at every level from the request to the server state.
 - Required work: `submitCreateInstance` renders tfvars, gates the plan, applies, records the run;

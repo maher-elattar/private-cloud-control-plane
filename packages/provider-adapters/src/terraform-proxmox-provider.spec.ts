@@ -13,7 +13,7 @@ import {
   ProviderTaskState,
   ValidationCheckState,
 } from '@private-cloud/contracts/provider';
-import { ObservedPowerState } from '@private-cloud/contracts';
+import { FailureCategory, ObservedPowerState } from '@private-cloud/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   INSTANCE_ADDRESS,
@@ -220,6 +220,48 @@ describe('getTask', () => {
 
     expect(response.state).toBe(ProviderTaskState.PROVIDER_TASK_STATE_FAILED);
     expect(response.failure?.code).toBe('TERRAFORM_PLAN_REFUSED');
+  });
+
+  it('reports a locked-template clone failure as transient, not permanent', async () => {
+    // Found live: a run started seconds after a previous destroy failed its clone because the
+    // template was still locked, and an identical re-run succeeded. Classifying that as permanent
+    // fails an instance that would have worked a moment later.
+    const response = await provider(
+      runnerDouble(),
+      runsDouble({
+        status: 'failed',
+        command: 'apply',
+        gateDecision: 'allowed',
+        gateRule: null,
+        exitCode: 1,
+        diagnostics: [
+          { severity: 'error', summary: 'VM clone', detail: 'All attempts fail: VM is locked' },
+        ],
+      }),
+    ).getTask(request);
+
+    expect(response.state).toBe(ProviderTaskState.PROVIDER_TASK_STATE_FAILED);
+    expect(response.failure?.code).toBe('TERRAFORM_RUN_RETRYABLE');
+    expect(response.failure?.category).toBe(FailureCategory.FAILURE_CATEGORY_TRANSIENT);
+  });
+
+  it('still reports a genuine failure as permanent', async () => {
+    // The patterns must stay narrow. A broad match would retry a misconfiguration forever, which
+    // is worse than failing it once.
+    const response = await provider(
+      runnerDouble(),
+      runsDouble({
+        status: 'failed',
+        command: 'apply',
+        gateDecision: 'allowed',
+        gateRule: null,
+        exitCode: 1,
+        diagnostics: [{ severity: 'error', summary: "storage 'local-lvm' does not exist" }],
+      }),
+    ).getTask(request);
+
+    expect(response.failure?.code).toBe('TERRAFORM_RUN_FAILED');
+    expect(response.failure?.category).toBe(FailureCategory.FAILURE_CATEGORY_PERMANENT);
   });
 
   it('reports an unknown run as unknown, so nothing is retried blindly', async () => {

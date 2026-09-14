@@ -34,7 +34,12 @@ export interface TerraformRunnerConfiguration {
   readonly workingRoot: string;
   /** Vendored provider plugins, so `init` needs no registry access. */
   readonly pluginDirectory?: string;
-  /** `pg` backend connection string. Never logged. */
+  /**
+   * `pg` backend connection string. Never logged.
+   *
+   * Must carry an explicit `sslmode`, and is **not** the application's `DATABASE_URL`: see the
+   * class comment for why the two are not interchangeable.
+   */
   readonly backendConnectionString: string;
   /** How long any single invocation may run. */
   readonly timeoutMs?: number;
@@ -77,9 +82,27 @@ const TFVARS_MODE = 0o600;
  */
 const STRIPPED_ENVIRONMENT = ['TF_LOG', 'TF_LOG_PATH', 'TF_LOG_PROVIDER'];
 
-/** Drives Terraform for one workspace at a time. */
+/**
+ * Drives Terraform for one workspace at a time.
+ *
+ * WHY the constructor insists on an explicit `sslmode`: Terraform's `pg` backend uses lib/pq,
+ * which **defaults TLS on**, while the application's driver defaults it off. The same connection
+ * string therefore works for one and fails for the other with `pq: SSL is not enabled on the
+ * server` — an error that names neither the setting nor the difference. Worse, the silent fix
+ * would be for this class to append `sslmode=disable` itself, which is a decision about
+ * transport security for a database holding credentials, made in the wrong place. Requiring the
+ * operator to say which they mean is the only honest option.
+ */
 export class TerraformRunner {
-  public constructor(private readonly configuration: TerraformRunnerConfiguration) {}
+  public constructor(private readonly configuration: TerraformRunnerConfiguration) {
+    if (!/[?&]sslmode=/.test(configuration.backendConnectionString)) {
+      throw new Error(
+        'The Terraform state connection string must set sslmode explicitly. ' +
+          "Terraform's pg backend defaults TLS on where the application's driver defaults it " +
+          'off, so the two strings are not interchangeable.',
+      );
+    }
+  }
 
   /**
    * Prepares a working directory for a workspace and writes its variables.

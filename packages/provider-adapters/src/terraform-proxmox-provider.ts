@@ -138,6 +138,40 @@ export interface TerraformRunStore extends TerraformRunReader {
 const RESERVED_VMID_MINIMUM = 910_000;
 const RESERVED_VMID_MAXIMUM = 910_099;
 
+/**
+ * Diagnostic text that means "try again", not "this will never work".
+ *
+ * Found by live testing rather than reasoning. A verification run started seconds after the
+ * previous run's destroy failed its clone with `Error: VM clone / All attempts fail`, and a
+ * re-run of exactly the same configuration succeeded — the template was still locked by the
+ * preceding operation. The adapter classified that as **permanent**, which would have failed a
+ * workflow that should simply have waited.
+ *
+ * WHY a text match rather than a status code: Terraform flattens the provider's error into a
+ * diagnostic string, so the structured Proxmox response is not available by the time this runs.
+ * That is a real limitation of routing through Terraform and it is better stated than hidden.
+ * The patterns are deliberately narrow — a broad one would retry a genuine misconfiguration
+ * forever, which is worse than failing it once.
+ */
+const TRANSIENT_DIAGNOSTIC_PATTERNS: readonly RegExp[] = [
+  // Proxmox holds a config lock during clone, migrate, backup and snapshot.
+  /\block\b/i,
+  /is locked/i,
+  // bpg's own retry wrapper gives up with this when every attempt hit the same condition.
+  /all attempts fail/i,
+  // Storage or the API briefly unavailable.
+  /connection refused/i,
+  /timeout/i,
+  /temporarily unavailable/i,
+];
+
+/** Whether a failed run's diagnostics describe a condition worth retrying. */
+function isTransient(diagnostics: readonly unknown[] | null): boolean {
+  if (!diagnostics || diagnostics.length === 0) return false;
+  const text = JSON.stringify(diagnostics);
+  return TRANSIENT_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 /** The resource address the module declares, which every plan and state read refers to. */
 export const INSTANCE_ADDRESS = 'proxmox_virtual_environment_vm.instance';
 
@@ -362,12 +396,20 @@ export class TerraformProxmoxProvider {
       };
     }
 
+    // A transient condition is reported as such, so the workflow's retry policy can wait rather
+    // than failing an instance that would have worked a moment later. SAFE-017 asks for exactly
+    // this distinction, and getting it wrong in the safe direction still wedges an instance.
+    const transient = isTransient(run.diagnostics);
     return {
       state: ProviderTaskState.PROVIDER_TASK_STATE_FAILED,
       failure: {
-        category: FailureCategory.FAILURE_CATEGORY_PERMANENT,
-        code: 'TERRAFORM_RUN_FAILED',
-        safeMessage: 'The Terraform run failed.',
+        category: transient
+          ? FailureCategory.FAILURE_CATEGORY_TRANSIENT
+          : FailureCategory.FAILURE_CATEGORY_PERMANENT,
+        code: transient ? 'TERRAFORM_RUN_RETRYABLE' : 'TERRAFORM_RUN_FAILED',
+        safeMessage: transient
+          ? 'The provider was busy; the change can be retried.'
+          : 'The Terraform run failed.',
       },
       observedAt,
     };
