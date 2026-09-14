@@ -18,9 +18,9 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-8 — Module and plan gate
-- Last completed checkpoint: T-7 — Inventory schema
-- Completed so far: T-0 through T-7. T-4 was taken ahead of T-3 because the operator
+- Current checkpoint: T-9 — Runner
+- Last completed checkpoint: T-8 — Module and plan gate
+- Completed so far: T-0 through T-8. T-4 was taken ahead of T-3 because the operator
   authorised the token creation directly and it is a live-server action; T-3 is offline and was
   unaffected by the order.
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
@@ -29,7 +29,7 @@ into this work.
   server, VPC work deferred), `495dab6` (server survey and this ledger), `c218936` (manual
   Terraform walkthrough), `7bdeec8` (scoped API token), `dbdc069`
   (readiness probe and capability flags), `0c58ba4` (ownership markers), `9ec2c7f` (live
-  server catalog and configuration cross-check).
+  server catalog and configuration cross-check), `08ab358` (inventory schema).
 - **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
   administrator password is retained in the credentials file only so that token can be
   re-minted; it was read into a session transcript during this work and **should be rotated**.
@@ -522,8 +522,52 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-8 — Module and plan gate
 
-- Status: Pending
-- Required work: `deploy/terraform/modules/instance/` promoted from the T-2 exploration with the
+- Status: Complete
+- Evidence recorded 2026-09-14:
+  - `deploy/terraform/modules/instance/` carries the spellings T-2 proved, including the three
+    that exist only to stop a diff that never converges — `machine`, `scsi_hardware`,
+    `operating_system.type` — plus `cpu.hotplugged`, `initialization.datastore_id`,
+    `dns.domain`, and `network_device.mtu`. Both modules `terraform validate` clean, and both
+    lock files are committed.
+  - **The `prevent_destroy` design correction is resolved.** A `lifecycle` block takes literals
+    only, so the sibling `instance-purge/` module exists, differing from `instance/` _only_ in its
+    header and its lifecycle block. `pnpm run terraform:check-modules` asserts that: the other
+    three files must be byte-identical, and `main.tf` is compared with the header and the
+    lifecycle block excised by brace depth rather than by regex, because a comment containing a
+    brace defeats a pattern match.
+  - The resources must stay identical for a reason beyond tidiness: a purge destroys _the
+    instance the ordinary module built_, so if the two drifted the purge plan would compare the
+    live VM against a different desired state and could propose changes before destroying it —
+    which is the one moment nothing should be proposing changes.
+  - `evaluatePlan` refuses unless every `resource_changes[].change.actions` entry is `no-op`,
+    `create`, `read` or `update`. It fails closed on an unparseable plan, on a plan Terraform
+    marked errored, and on any action it does not recognise — a future Terraform verb must not
+    pass merely because it is not spelled `delete`.
+  - The purge capability is `allowDestroyOf: <address>`, not a boolean. Naming one address means a
+    purge plan that would _also_ destroy something else is still refused, which on a shared server
+    is the accident worth preventing.
+  - `isRecoverableByUntaint` separates the refusal an operator can clear without touching a VM
+    (`replace_because_tainted`) from one that needs a decision. A mixed refusal is not recoverable.
+- **The module check caught its own false positive**, which is worth recording. It matched the
+  _word_ `prevent_destroy` and so failed on the purge module's comment explaining that
+  attribute's absence. It now matches the assignment. A check an explanatory comment can break is
+  worse than no check: it fails for a reason unrelated to safety, and the obvious fix is to
+  delete the explanation.
+- Verification:
+
+  | Gate                                                  | Result                                                         |
+  | ----------------------------------------------------- | -------------------------------------------------------------- |
+  | `npx nx test provider-adapters`                       | 7 files, **62 tests** — was 38; twenty-four gate cases added   |
+  | Gate fixtures asserted                                | all 7 captured plans; a meta-case fails if one is unreferenced |
+  | `terraform validate`, both modules                    | valid                                                          |
+  | `pnpm run terraform:check-modules`                    | modules agree                                                  |
+  | Same with one line of the purge module altered        | 2 problems, exit 1                                             |
+  | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                        |
+
+  The fixture-coverage case is deliberate: a captured plan nobody asserts against is a plan shape
+  nobody checked, and captured plans are expensive because they need real hardware.
+
+- Superseded required work: `deploy/terraform/modules/instance/` promoted from the T-2 exploration with the
   spellings T-2 proved, `mtu` set explicitly, no ForceNew attributes set, and `ignore_changes` for
   anything T-2 showed as a perpetual diff. Then the plan gate: refuse unless every
   `resource_changes[].change.actions` is `no-op`, `create`, `read` or `update`.

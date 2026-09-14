@@ -33,6 +33,7 @@
     "typecheck": "nx run-many -t typecheck",
     "verify:audit-topology": "nx run-many -t build --projects=application,postgres-adapter,provider-adapters && node tools/verification/verify-audit-topology.mjs",
     "proxmox:check-config": "node tools/proxmox/check-config.mjs",
+    "terraform:check-modules": "node tools/terraform/check-modules.mjs",
     "proxmox:generate-seed": "node tools/proxmox/generate-lab-seed.mjs",
     "proxmox:generate-seed:check": "node tools/proxmox/generate-lab-seed.mjs --check",
     "proxmox:token": "node tools/proxmox/create-api-token.mjs",
