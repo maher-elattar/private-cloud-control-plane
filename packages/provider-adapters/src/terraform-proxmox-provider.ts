@@ -54,6 +54,11 @@ import {
   type SubmitCreateInstanceResponse,
   type ValidateProfileRequest,
   type ValidateProfileResponse,
+  type ProviderCallContext,
+  type StartInstanceRequest,
+  type ShutdownInstanceRequest,
+  type StopInstanceRequest,
+  type RebootInstanceRequest,
 } from '@private-cloud/contracts/provider';
 import { ProviderTransportError, type ProviderCallOptions } from '@private-cloud/provider-sdk';
 import {
@@ -72,6 +77,26 @@ import {
 import type { ProxmoxDirectClient } from './terraform/direct-client.js';
 import { workspaceNameFor, type InstanceTfvars } from './terraform/tfvars.js';
 import type { TerraformRunner } from './terraform/runner.js';
+
+/**
+ * Reads the caller's lease fencing token out of the call context.
+ *
+ * WHY this is not `context.attempt`: it was, and that was wrong. `attempt` is pinned to `1` by
+ * the workflow on purpose, so that `requestId` stays byte-identical across replays and a provider
+ * can recognise a duplicate submission. A fencing token has to do the opposite — change whenever
+ * the lease moves — so comparing `attempt` against a real lease token compared a constant against
+ * a counter. The first full-stack run against real hardware failed on exactly that: the workflow
+ * was on its second claim, the lease held token 2, the adapter presented 1, and the inventory
+ * refused the run as `INSTANCE_BUSY` before Terraform was invoked at all.
+ *
+ * `0` when the caller holds no lease. The inventory treats an instance with no lease row as
+ * unfenced, so an in-process caller — a verifier, a test — is not blocked by a check that has
+ * nothing to compare against.
+ */
+function fencingTokenFrom(context: ProviderCallContext | undefined): string {
+  const token = context?.fencingToken?.trim();
+  return token ? token : '0';
+}
 
 /** The allowlist this adapter is confined to. Mirrors the direct adapter's, minus the HTTP parts. */
 export interface TerraformProxmoxConfiguration {
@@ -148,6 +173,10 @@ export interface TerraformRunStore extends TerraformRunReader {
     readonly applied?: boolean;
     readonly refreshed?: boolean;
     readonly driftState?: 'unknown' | 'in_sync' | 'drifted' | 'absent';
+    /** Write counter for the state document. Absent when state could not be read. */
+    readonly stateSerial?: number;
+    /** Identity of the state *document*. A change means the state was replaced. */
+    readonly stateLineage?: string;
   }): Promise<void>;
 }
 
@@ -180,6 +209,12 @@ const TRANSIENT_DIAGNOSTIC_PATTERNS: readonly RegExp[] = [
   /connection refused/i,
   /timeout/i,
   /temporarily unavailable/i,
+  // systemd on the *host* refusing to act right now because a conflicting job is queued. Seen on
+  // a loaded shared server as `start failed: org.freedesktop.systemd1.TransactionIsDestructive`
+  // — the VM was cloned and configured, and only the final start was refused. The name is
+  // alarming and the condition is not: it says "not in this transaction", not "never". Narrow on
+  // purpose, because it names one systemd error rather than matching the word "destructive".
+  /TransactionIsDestructive/,
 ];
 
 /** Whether a failed run's diagnostics describe a condition worth retrying. */
@@ -621,7 +656,7 @@ export class TerraformProxmoxProvider {
       workspace,
       vmId,
       tfvars,
-      fencingToken: context?.attempt ?? 1,
+      fencingToken: fencingTokenFrom(context),
     });
   }
 
@@ -734,6 +769,9 @@ export class TerraformProxmoxProvider {
         diagnostics: apply.diagnostics,
       });
       if (apply.exitCode === 0) {
+        // Read *after* the apply, so the serial counts this write. A purge is the exception: it
+        // leaves no state to read, and an absent workspace has no serial to report.
+        const state = input.purge ? {} : await this.runner.stateMetadata(directory);
         await this.runs.recordWorkspace({
           instanceId: input.instanceId,
           workspaceName: input.workspace,
@@ -742,6 +780,8 @@ export class TerraformProxmoxProvider {
           // A purge leaves nothing to be in sync with. `absent` is the honest classification, and
           // the reconciler treats it differently from a workspace it simply has not observed.
           driftState: input.purge ? 'absent' : 'in_sync',
+          ...(state.serial === undefined ? {} : { stateSerial: state.serial }),
+          ...(state.lineage === undefined ? {} : { stateLineage: state.lineage }),
         });
         if (input.purge) {
           // The VM is gone, so its workspace is state for something that no longer exists. A
@@ -882,8 +922,21 @@ export class TerraformProxmoxProvider {
    * @param request The power request.
    * @returns `ACCEPTED` with a run reference, or `SUCCEEDED` when already in that state.
    */
-  public async startInstance(request: InstanceMutationRequest): Promise<StartInstanceResponse> {
-    return this.setPowerState(request, true);
+  /**
+   * WHY the wrapper type is named explicitly here and in the three methods below: the four power
+   * RPCs carry their payload nested under a `request` field, and these four declared the *inner*
+   * type and read `context` straight off it. TypeScript never objected, because method parameters
+   * are bivariant — a method taking a narrower parameter still satisfies the interface — so the
+   * mismatch compiled, passed every unit test written against the same wrong shape, and passed an
+   * in-process verifier that happened to call with the unwrapped object. Over real gRPC, `context`
+   * was `undefined`, the profile assertion refused the call, and a create that had already built
+   * and configured a VM failed at the power stage with "Provider profile is not allowlisted".
+   *
+   * The direct adapter had it right all along, which is the useful lesson: when two adapters
+   * implement one port and only one of them is exercised end to end, the untested one drifts.
+   */
+  public async startInstance(request: StartInstanceRequest): Promise<StartInstanceResponse> {
+    return this.setPowerState(request.request ?? {}, true);
   }
 
   /**
@@ -952,13 +1005,13 @@ export class TerraformProxmoxProvider {
       workspace,
       vmId: Number(declared.vm_id),
       tfvars: { ...declared, started },
-      fencingToken: context?.attempt ?? 1,
+      fencingToken: fencingTokenFrom(context),
     });
   }
 
   /** Powers an instance off gracefully, which is what `started = false` means to this provider. */
-  public async shutdownInstance(request: InstanceMutationRequest): Promise<StartInstanceResponse> {
-    return this.setPowerState(request, false);
+  public async shutdownInstance(request: ShutdownInstanceRequest): Promise<StartInstanceResponse> {
+    return this.setPowerState(request.request ?? {}, false);
   }
 
   /**
@@ -968,8 +1021,8 @@ export class TerraformProxmoxProvider {
    * operation with different consequences for the guest. Conflating them would mean a caller
    * asking for one and silently getting the other.
    */
-  public async stopInstance(request: InstanceMutationRequest): Promise<StartInstanceResponse> {
-    return this.directMutation(request, (client, vmid) => client.stopHard(vmid));
+  public async stopInstance(request: StopInstanceRequest): Promise<StartInstanceResponse> {
+    return this.directMutation(request.request ?? {}, (client, vmid) => client.stopHard(vmid));
   }
 
   /**
@@ -978,8 +1031,8 @@ export class TerraformProxmoxProvider {
    * Direct API, because a reboot leaves the desired state exactly as it was: there is nothing for
    * Terraform to converge to.
    */
-  public async rebootInstance(request: InstanceMutationRequest): Promise<StartInstanceResponse> {
-    return this.directMutation(request, (client, vmid) => client.reboot(vmid));
+  public async rebootInstance(request: RebootInstanceRequest): Promise<StartInstanceResponse> {
+    return this.directMutation(request.request ?? {}, (client, vmid) => client.reboot(vmid));
   }
 
   /**
@@ -1050,7 +1103,7 @@ export class TerraformProxmoxProvider {
         ...(target?.memoryMib === undefined ? {} : { memory_mib: Number(target.memoryMib) }),
         ...(requestedDisk === undefined ? {} : { disk_gib: requestedDisk }),
       },
-      fencingToken: context?.attempt ?? 1,
+      fencingToken: fencingTokenFrom(context),
     });
   }
 
@@ -1178,7 +1231,7 @@ export class TerraformProxmoxProvider {
           request.retentionDeadline ?? '',
         ),
       },
-      fencingToken: context?.attempt ?? 1,
+      fencingToken: fencingTokenFrom(context),
     });
   }
 
@@ -1245,7 +1298,7 @@ export class TerraformProxmoxProvider {
       workspace,
       vmId: Number(declared.vm_id),
       tfvars: declared,
-      fencingToken: context?.attempt ?? 1,
+      fencingToken: fencingTokenFrom(context),
       purge: true,
     });
   }
@@ -1335,11 +1388,17 @@ export class TerraformProxmoxProvider {
       const init = await this.runner.init(directory, workspace);
       if (init.exitCode !== 0) return;
       await this.runner.refresh(directory);
+      // A refresh writes state, so it advances the serial. Recording it here is what keeps the
+      // inventory's serial meaningful: a serial that only moved on applies could not distinguish
+      // "nothing has happened" from "nobody has looked".
+      const state = await this.runner.stateMetadata(directory);
       await this.runs.recordWorkspace({
         instanceId,
         workspaceName: workspace,
         refreshed: true,
         driftState,
+        ...(state.serial === undefined ? {} : { stateSerial: state.serial }),
+        ...(state.lineage === undefined ? {} : { stateLineage: state.lineage }),
       });
     } catch {
       // A failed refresh must not fail the mutation that already succeeded. It does mean state

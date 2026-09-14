@@ -246,3 +246,72 @@ describe('CreateInstanceWorkflow', () => {
     expect(store.deadLetters).toHaveLength(0);
   });
 });
+
+/**
+ * The rule that decides whether a replay under a new lease is recognised as a duplicate.
+ *
+ * Both halves matter. Without the first, a workflow that legitimately resumed under a new claim
+ * would be rejected by its provider and its instance abandoned. Without the second, a genuinely
+ * different request could ride in on a reused identifier and the provider would answer it with a
+ * cached result for work it never did.
+ */
+describe('provider idempotency under a moving lease', () => {
+  const context = {
+    requestId: 'operation-1:submit',
+    operationId: '00000000-0000-4000-8000-000000000004',
+    correlationId: '00000000-0000-4000-8000-000000000005',
+    projectId: '00000000-0000-4000-8000-000000000003',
+    instanceId: '00000000-0000-4000-8000-000000000002',
+    providerProfileId: 'fake-lab',
+    attempt: 1,
+  };
+  const request = {
+    imageId: 'ubuntu-24-04-cloud',
+    flavorId: 'lab-small',
+    hostname: 'fence-01',
+    resources: { cpuCount: 2, memoryMib: '4096', diskGib: '32' },
+    network: {
+      networkId: 'lab-primary',
+      ipv4Address: '192.0.2.4',
+      ipv4PrefixLength: 27,
+      ipv4Gateway: '192.0.2.1',
+      dnsServers: ['192.0.2.2'],
+    },
+    sshPublicKeys: [],
+    ownershipMarkers: {
+      managedBy: 'private-cloud-control-plane',
+      projectId: '00000000-0000-4000-8000-000000000003',
+      instanceId: '00000000-0000-4000-8000-000000000002',
+      createOperationId: '00000000-0000-4000-8000-000000000004',
+      environment: 'lab',
+    },
+  };
+
+  it('treats a changed fencing token as the same request', async () => {
+    const provider = new FakeProvider({ defaultTaskPollsBeforeSuccess: 0 });
+
+    await provider.submitCreateInstance({ ...request, context: { ...context, fencingToken: '1' } });
+    await provider.submitCreateInstance({ ...request, context: { ...context, fencingToken: '2' } });
+
+    const submits = provider.calls.filter((call) => call.method === 'submitCreateInstance');
+    expect(submits).toHaveLength(2);
+    expect(submits[1]?.duplicate).toBe(true);
+    // The one assertion that matters: no second VM.
+    expect(provider.resourceCount()).toBe(1);
+  });
+
+  it('still refuses a reused request id that carries different intent', async () => {
+    const provider = new FakeProvider({ defaultTaskPollsBeforeSuccess: 0 });
+
+    await provider.submitCreateInstance({ ...request, context: { ...context, fencingToken: '1' } });
+
+    await expect(
+      provider.submitCreateInstance({
+        ...request,
+        hostname: 'fence-02',
+        context: { ...context, fencingToken: '2' },
+      }),
+    ).rejects.toThrow('was reused with different input');
+    expect(provider.resourceCount()).toBe(1);
+  });
+});

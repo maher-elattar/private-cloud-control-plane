@@ -62,6 +62,10 @@ const context = {
   instanceId: ownership.instanceId,
   providerProfileId: configuration.providerProfileId,
   attempt: 1,
+  // A lease token distinct from `attempt`. The two being different is the point: `attempt` is
+  // pinned to 1 by the workflow so replays are recognisable, and a fencing token must move when
+  // the lease does. A fixture that set both to 1 would pass while the adapter read the wrong one.
+  fencingToken: '7',
 };
 
 /** A runner double that answers with scripted state and records nothing. */
@@ -96,6 +100,7 @@ function runnerDouble(overrides: Partial<TerraformRunner> = {}): TerraformRunner
       invocation: { command: 'plan', exitCode: 0, diagnostics: [], durationMs: 1 },
     }),
     apply: async () => ({ command: 'apply', exitCode: 0, diagnostics: [], durationMs: 1 }),
+    stateMetadata: async () => ({ serial: 3, lineage: 'lineage-abc' }),
     ...overrides,
   } as unknown as TerraformRunner;
 }
@@ -255,6 +260,34 @@ describe('getTask', () => {
 
     expect(response.state).toBe(ProviderTaskState.PROVIDER_TASK_STATE_FAILED);
     expect(response.failure?.code).toBe('TERRAFORM_RUN_RETRYABLE');
+    expect(response.failure?.category).toBe(FailureCategory.FAILURE_CATEGORY_TRANSIENT);
+  });
+
+  it('reports a host systemd refusal as transient, not permanent', async () => {
+    // Found live on a loaded shared server: the VM was cloned and configured, and only the final
+    // start was refused because systemd on the *host* had a conflicting job queued. The error
+    // name reads like a catastrophe and the condition is ordinary — "not in this transaction",
+    // not "never". A permanent classification here abandons a VM that exists and works.
+    const response = await provider(
+      runnerDouble(),
+      runsDouble({
+        status: 'failed',
+        command: 'apply',
+        gateDecision: 'allowed',
+        gateRule: null,
+        exitCode: 1,
+        diagnostics: [
+          {
+            severity: 'error',
+            summary: 'VM start',
+            detail:
+              'start failed: org.freedesktop.systemd1.TransactionIsDestructive: Transaction for 910083.scope/start is destructive',
+          },
+        ],
+      }),
+    ).getTask(request);
+
+    expect(response.state).toBe(ProviderTaskState.PROVIDER_TASK_STATE_FAILED);
     expect(response.failure?.category).toBe(FailureCategory.FAILURE_CATEGORY_TRANSIENT);
   });
 
@@ -508,6 +541,47 @@ describe('submitCreateInstance', () => {
     await settle();
   });
 
+  it('records the state serial and lineage after the apply', async () => {
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    await provider(runnerDouble(), runsDouble(null, recorded)).submitCreateInstance(request);
+    await settle();
+
+    // These two columns existed in the schema with nothing ever writing to them, which the
+    // in-process checks never noticed. The lineage identifies the state *document*: if it changes
+    // under a workspace, the state was replaced — restored from a backup, re-created after a
+    // `state rm`, or pointed at another row — and that is exactly when Terraform's belief about
+    // the world is confidently wrong. An inventory that cannot see that cannot report it.
+    const workspace = recorded.workspaces[0] as { stateSerial?: number; stateLineage?: string };
+    expect(workspace.stateSerial).toBe(3);
+    expect(workspace.stateLineage).toBe('lineage-abc');
+  });
+
+  it('presents the lease fencing token, not the retry attempt', async () => {
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    await provider(runnerDouble(), runsDouble(null, recorded)).submitCreateInstance(request);
+    await settle();
+
+    // The inventory refuses a write whose token does not match the live lease. The adapter used
+    // `context.attempt` here, which the workflow pins to 1 so that replays stay recognisable — so
+    // the check compared a constant against a real token and failed the moment a workflow reached
+    // its second claim. Both writes must carry the token the caller actually holds.
+    expect((recorded.begun[0] as { fencingToken: string }).fencingToken).toBe('7');
+    expect((recorded.completed[0] as { fencingToken: string }).fencingToken).toBe('7');
+  });
+
+  it('treats a caller with no fencing token as unfenced rather than as token 1', async () => {
+    const recorded: RecordedRuns = { begun: [], completed: [], workspaces: [] };
+    await provider(runnerDouble(), runsDouble(null, recorded)).submitCreateInstance({
+      ...request,
+      context: { ...context, fencingToken: undefined },
+    });
+    await settle();
+
+    // `0` and not `1`: an in-process caller holds no lease, and the inventory skips the check
+    // when no lease row exists. Defaulting to `1` would silently match a real first claim.
+    expect((recorded.begun[0] as { fencingToken: string }).fencingToken).toBe('0');
+  });
+
   it('returns accepted without waiting for the apply', async () => {
     let applyFinished = false;
     const runner = runnerDouble({
@@ -716,11 +790,21 @@ function stateRunner(values: Record<string, unknown> = {}): TerraformRunner {
   } as Partial<TerraformRunner>);
 }
 
+/**
+ * The inner payload of a power request.
+ *
+ * The four power RPCs nest it under a `request` field, and these tests used to pass this object
+ * directly — the same mistake the adapter made, which is exactly why they could not catch it.
+ * `powerRequest` below is the shape that actually arrives over gRPC.
+ */
 const mutation = {
   context,
   providerResourceId: '910000',
   expectedOwnershipMarkers: ownership,
 };
+
+/** A power request as the wire delivers it. */
+const powerRequest = { request: mutation };
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -731,7 +815,7 @@ describe('power', () => {
       configuration,
       stateRunner(),
       runsDouble(null, recorded),
-    ).startInstance(mutation);
+    ).startInstance(powerRequest);
 
     // A duplicate delivery must not produce a second run row for work nobody did.
     expect(response.result?.state).toBe(ProviderResultState.PROVIDER_RESULT_STATE_SUCCEEDED);
@@ -744,7 +828,7 @@ describe('power', () => {
       configuration,
       stateRunner(),
       runsDouble(null, recorded),
-    ).shutdownInstance(mutation);
+    ).shutdownInstance(powerRequest);
 
     expect(response.result?.state).toBe(ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED);
     expect(recorded.begun).toHaveLength(1);
@@ -761,7 +845,7 @@ describe('power', () => {
       stateRunner(),
       runsDouble(null, recorded),
       direct.client as never,
-    ).stopInstance(mutation);
+    ).stopInstance(powerRequest);
 
     expect(direct.calls).toEqual(['stopHard 910000']);
     expect(recorded.begun).toHaveLength(0);
@@ -776,7 +860,7 @@ describe('power', () => {
       stateRunner(),
       runsDouble(null),
       direct.client as never,
-    ).rebootInstance(mutation);
+    ).rebootInstance(powerRequest);
     expect(direct.calls).toEqual(['reboot 910000']);
     await settle();
   });
@@ -789,7 +873,7 @@ describe('power', () => {
       stateRunner(),
       runsDouble(null, recorded),
       direct.client as never,
-    ).rebootInstance(mutation);
+    ).rebootInstance(powerRequest);
     await settle();
 
     // Design §6.4's rule, applied here rather than asked of each caller: the difference between
@@ -798,10 +882,22 @@ describe('power', () => {
     expect((recorded.workspaces[0] as { refreshed: boolean }).refreshed).toBe(true);
   });
 
+  it('refuses a power request that arrives with no payload', async () => {
+    // The wire shape nests the payload, and an adapter that read the outer object saw `context`
+    // as `undefined` — which the profile assertion then refused with a message about
+    // allowlisting, hiding a plain shape mismatch behind a security-sounding error. This asserts
+    // the empty case is handled rather than throwing on a property of `undefined`.
+    await expect(
+      new TerraformProxmoxProvider(configuration, stateRunner(), runsDouble(null)).startInstance(
+        {},
+      ),
+    ).rejects.toThrow(/allowlisted/);
+  });
+
   it('fails clearly when no direct client is configured', async () => {
     await expect(
       new TerraformProxmoxProvider(configuration, stateRunner(), runsDouble(null)).rebootInstance(
-        mutation,
+        powerRequest,
       ),
     ).rejects.toThrow(/no direct Proxmox client/);
   });

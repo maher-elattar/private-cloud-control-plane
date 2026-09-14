@@ -140,11 +140,19 @@ const stateConnectionString =
   process.env.TERRAFORM_STATE_CONN_STR ??
   `${databaseUrl}${databaseUrl.includes('?') ? '&' : '?'}sslmode=disable`;
 
-// bpg reads these. Set here rather than passed, because a connection string or token on a
-// command line lands in shell history and the process table.
-process.env.PROXMOX_VE_ENDPOINT = endpoint;
-process.env.PROXMOX_VE_API_TOKEN = `${tokenId}=${tokenSecret}`;
-process.env.PROXMOX_VE_INSECURE = 'false';
+/**
+ * The names bpg authenticates with, handed to the runner rather than exported.
+ *
+ * This used to assign `process.env` here, and that is precisely why the container failed where
+ * this tool passed: the adapter inherited its parent's environment, so an exported value made it
+ * work in-process while the same code in a clean container planned with no endpoint at all.
+ * Passing them means this tool exercises the configuration path the deployed service uses.
+ */
+const providerEnvironment = {
+  PROXMOX_VE_ENDPOINT: endpoint,
+  PROXMOX_VE_API_TOKEN: `${tokenId}=${tokenSecret}`,
+  PROXMOX_VE_INSECURE: 'false',
+};
 
 const workingRoot = await mkdtemp(join(tmpdir(), 'tf-adapter-verify-'));
 const instanceId = randomUUID();
@@ -156,6 +164,7 @@ const runner = new TerraformRunner({
   purgeModulePath: resolve('deploy/terraform/modules/instance-purge'),
   workingRoot,
   backendConnectionString: stateConnectionString,
+  providerEnvironment,
   timeoutMs: APPLY_TIMEOUT_MS,
 });
 

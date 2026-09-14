@@ -155,9 +155,29 @@ interface ValidatedProviderCallContext {
 /** Used once a method's script is exhausted, so tests only script what they care about. */
 const DEFAULT_STEP: FakeProviderStep = { mode: 'success' };
 
-/** Serialises a request for the duplicate-content comparison. */
+/**
+ * Serialises a request for the duplicate-content comparison.
+ *
+ * The lease fencing token is **excluded**, and that exclusion is the whole point of this function
+ * existing rather than a bare `JSON.stringify`.
+ *
+ * The comparison models a real provider's idempotency contract: the same `requestId` presented
+ * twice must carry the same intent, and a provider that saw the same id with different input would
+ * be right to reject it. A fencing token is not intent — it changes precisely when the intent has
+ * *not* changed, because the lease moved to another worker. Including it would make every
+ * legitimate replay under a new claim look like a reused request id, which is the opposite of what
+ * the check is for.
+ *
+ * `attempt` needs no such treatment: the workflow pins it to `1` for the same reason.
+ */
 function requestJson(value: unknown): string {
-  return JSON.stringify(value);
+  if (!value || typeof value !== 'object') return JSON.stringify(value);
+  const { context, ...rest } = value as { context?: Record<string, unknown> };
+  if (!context) return JSON.stringify(value);
+  const intentBearingContext = Object.fromEntries(
+    Object.entries(context).filter(([name]) => name !== 'fencingToken'),
+  );
+  return JSON.stringify({ ...rest, context: intentBearingContext });
 }
 
 /** Injectable delay that honours cancellation, so latency can be simulated without real waits. */

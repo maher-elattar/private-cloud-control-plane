@@ -134,6 +134,42 @@ describe('validateCreateInstance', () => {
     }
   });
 
+  /** A real, structurally complete key. Not a secret: a public key never is. */
+  const wellFormedKey =
+    'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKqQZyPkFmRLBCLiLwCHnUoCQkUxLZ8sKOUVCR+7bgBR lab@example';
+
+  it('accepts a structurally complete key', () => {
+    expect(() =>
+      validateCreateInstance({ ...valid, sshPublicKeys: [wellFormedKey] }),
+    ).not.toThrow();
+  });
+
+  it('rejects a key whose body does not name its own algorithm', () => {
+    // This is the case that reached real hardware. It passes every length and character test, and
+    // Proxmox answers it with an HTTP **500** — which a transport classifier reads as "the server
+    // had a problem, retry". So a tenant pasting a truncated key produced a retryable provider
+    // failure that burned the workflow's retry budget and ended in review, for input that could
+    // never have worked. An SSH public key's body names its own algorithm, length-prefixed, so
+    // the disagreement is detectable here with no provider call at all.
+    const plausible = `ssh-ed25519 ${'A'.repeat(48)} probe@lab`;
+    expect(() => validateCreateInstance({ ...valid, sshPublicKeys: [plausible] })).toThrowError(
+      DomainError,
+    );
+  });
+
+  it('rejects an unknown key type and a body that is not base64', () => {
+    for (const key of [
+      wellFormedKey.replace('ssh-ed25519', 'ssh-dss'),
+      wellFormedKey.replace('AAAAC3Nza', 'not base64!'),
+      'ssh-ed25519',
+      `ssh-ed25519 ${'='.repeat(40)}`,
+    ]) {
+      expect(() => validateCreateInstance({ ...valid, sshPublicKeys: [key] })).toThrowError(
+        DomainError,
+      );
+    }
+  });
+
   it('rejects SSH keys containing control characters', () => {
     // Keys reach cloud-init, so a newline or NUL could inject further guest configuration.
     const injected = ['ssh-ed25519 AAA', 'injected'].join(String.fromCharCode(10));

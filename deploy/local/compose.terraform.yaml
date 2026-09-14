@@ -1,0 +1,108 @@
+# Overlay that points the Phase 4 stack's provider service at a real Proxmox server, through
+# Terraform.
+#
+# Applied on top of `compose.phase4.yaml`, never alone:
+#
+#   pnpm run terraform:compose-env          # writes the gitignored env file from the credentials
+#   docker compose --env-file .env.terraform \
+#     -f compose.phase4.yaml -f compose.terraform.yaml up -d
+#
+# WHY an overlay rather than a profile in the base file: the base stack must keep booting with no
+# credentials and no hardware, and it is what CI builds. Everything here is a real endpoint or a
+# real secret, and a default for any of it would let a partially-configured stack act on somebody
+# else's server. Every value is therefore `${VAR:?}` — `docker compose config` fails loudly rather
+# than starting a provider pointed at nothing.
+#
+# No value appears in this file. They come from the gitignored credentials file and the recorded
+# survey by way of `tools/terraform/compose-env.mjs`.
+name: private-cloud-phase4
+
+services:
+  # The Terraform adapter changes what a "slow" provider call means, so the caller's deadline has
+  # to change with it.
+  provisioning-orchestrator:
+    environment:
+      # The base stack's 10 seconds is right for an adapter that answers from an HTTP call. Two
+      # calls here run Terraform synchronously — the convergence assertion (`init` + `plan`) and
+      # the observation (`init` + `apply -refresh-only`) — and each takes about ten seconds on an
+      # idle server, or up to three minutes more if it waits on the state lock.
+      #
+      # WHY it matters more than latency: a mutation whose transport deadline expires has an
+      # *unknown* outcome, and an unknown outcome goes to `manual_review` by design. A deadline
+      # set too low therefore does not just fail the call — it converts "slow but fine" into "a
+      # human must look at this". The first full-stack run against real hardware did exactly that.
+      #
+      # Ordered deliberately above the provider's own 240-second invocation timeout, so a stuck
+      # invocation yields a recorded run with diagnostics rather than an ambiguous timeout.
+      PROVIDER_GRPC_DEADLINE_MS: '300000'
+
+  proxmox-provider:
+    image: private-cloud/proxmox-provider:terraform
+    build:
+      context: ../..
+      dockerfile: tools/docker/service.Dockerfile
+      target: terraform-runtime
+      args: { APP: proxmox-provider }
+    environment:
+      PROVIDER_ADAPTER: terraform
+
+      # The inventory store. The base file gives this service no database, because the fake and
+      # direct adapters need none; the Terraform adapter records every run and workspace, so it
+      # does. Note it is *not* the state connection string below: the application reads its own
+      # tables with the application role and never reads the state documents.
+      DATABASE_URL: postgresql://private_cloud:private_cloud@postgres:5432/private_cloud
+
+      # The real server. The base file's `NODE_EXTRA_CA_CERTS` is deliberately cleared: this
+      # endpoint presents a publicly trusted certificate, and pinning a lab CA over it would
+      # narrow verification to a CA that did not issue it.
+      NODE_EXTRA_CA_CERTS: ''
+      PROXMOX_ENDPOINT: ${PROXMOX_ENDPOINT:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_API_TOKEN_ID: ${PROXMOX_API_TOKEN_ID:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_API_TOKEN_SECRET: ${PROXMOX_API_TOKEN_SECRET:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_CLUSTER_ALIAS: ${PROXMOX_CLUSTER_ALIAS:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_NODE: ${PROXMOX_NODE:?set by tools/terraform/compose-env.mjs}
+
+      # These must equal the seeded catalog rows of `db/seeds/0002_proxmox_testsrv.sql` exactly.
+      # `assertNetwork` and `assertResources` compare them at create time and refuse otherwise;
+      # `pnpm run proxmox:check-config` asserts the agreement up front instead.
+      PROXMOX_PROVIDER_PROFILE_ID: ${PROXMOX_PROVIDER_PROFILE_ID:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_NETWORK_ID: ${PROXMOX_NETWORK_ID:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_IMAGE_ID: ${PROXMOX_IMAGE_ID:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_PROJECT_ID: ${PROXMOX_PROJECT_ID:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_TEMPLATE_VMID: ${PROXMOX_TEMPLATE_VMID:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_STORAGE: ${PROXMOX_STORAGE:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_BRIDGE: ${PROXMOX_BRIDGE:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_DISK_INTERFACE: ${PROXMOX_DISK_INTERFACE:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_IPV4_CIDR: ${PROXMOX_IPV4_CIDR:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_IPV4_GATEWAY: ${PROXMOX_IPV4_GATEWAY:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_NETWORK_MTU: ${PROXMOX_NETWORK_MTU:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_DNS_DOMAIN: ${PROXMOX_DNS_DOMAIN:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_VMID_MINIMUM: ${PROXMOX_VMID_MINIMUM:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_VMID_MAXIMUM: ${PROXMOX_VMID_MAXIMUM:?set by tools/terraform/compose-env.mjs}
+
+      # Cloud-init. The password reaches the container as an environment variable and reaches
+      # Terraform as a 0600 tfvars file inside a per-run directory. It is in no log, event, span,
+      # metric or API response, and in no committed file.
+      PROXMOX_CLOUD_INIT_USER: ${PROXMOX_CLOUD_INIT_USER:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_CLOUD_INIT_PASSWORD: ${PROXMOX_CLOUD_INIT_PASSWORD:?set by tools/terraform/compose-env.mjs}
+
+      # Terraform state. A separate setting from `DATABASE_URL` and not derivable from it: the
+      # `pg` backend's driver defaults TLS on where the application's driver defaults it off, so
+      # one string cannot serve both. The runner refuses to start without an explicit `sslmode`.
+      TERRAFORM_STATE_CONN_STR: ${TERRAFORM_STATE_CONN_STR:?set by tools/terraform/compose-env.mjs}
+
+    # The base file makes this service wait on the mock Proxmox, which this overlay does not use.
+    # Compose merges `depends_on` by union, so it is replaced rather than added to.
+    depends_on: !override
+      otel-collector: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      seed: { condition: service_completed_successfully }
+
+    # Terraform's working root survives a restart on purpose: a run that dies mid-apply leaves a
+    # directory whose state a later run may need to reconcile against, and the base file's
+    # read-only TLS mount is not wanted here.
+    volumes: !override
+      - 'terraform-working:/var/lib/terraform'
+
+volumes:
+  terraform-working:

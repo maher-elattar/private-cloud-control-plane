@@ -143,6 +143,19 @@ export function providerProfileId(): string | undefined {
  * @returns The configured Terraform adapter, satisfying every narrowed port.
  * @throws Error if any required setting is missing or malformed.
  */
+/**
+ * How long one Terraform invocation may run.
+ *
+ * Must be **less** than the orchestrator's `PROVIDER_GRPC_DEADLINE_MS`, and greater than the
+ * runner's 180-second state-lock wait plus a plan. A synchronous call that legitimately waited on
+ * the lock and then tripped the transport deadline reports an unknown outcome, and an unknown
+ * outcome on a mutation goes to manual review — so a deadline set too low converts "slow but
+ * fine" into "a human must look at this". That is exactly what a 10-second deadline did on the
+ * first full-stack run: the convergence assertion runs `init` and `plan` against a remote API and
+ * needs about ten seconds on an idle server.
+ */
+const TERRAFORM_INVOCATION_TIMEOUT_MS = 240_000;
+
 function createTerraformProvider(): ReturnType<typeof createProvider> {
   const runner = new TerraformRunner({
     binary: requiredEnvironment('TERRAFORM_BINARY'),
@@ -150,9 +163,26 @@ function createTerraformProvider(): ReturnType<typeof createProvider> {
     purgeModulePath: requiredEnvironment('TERRAFORM_PURGE_MODULE_PATH'),
     workingRoot: requiredEnvironment('TERRAFORM_WORKING_ROOT'),
     backendConnectionString: requiredEnvironment('TERRAFORM_STATE_CONN_STR'),
+    // Translated, not inherited. The provider plugin reads `PROXMOX_VE_*`, which are different
+    // names from this system's `PROXMOX_*` settings, so the translation has to happen somewhere;
+    // doing it here means one place decides which server an apply can reach.
+    providerEnvironment: {
+      PROXMOX_VE_ENDPOINT: requiredEnvironment('PROXMOX_ENDPOINT'),
+      PROXMOX_VE_API_TOKEN: `${requiredEnvironment('PROXMOX_API_TOKEN_ID')}=${requiredEnvironment(
+        'PROXMOX_API_TOKEN_SECRET',
+      )}`,
+      // Explicitly false rather than unset. The endpoint presents a publicly trusted certificate,
+      // and this is the one setting whose default would silently disable verification.
+      PROXMOX_VE_INSECURE: 'false',
+    },
     ...(process.env.TERRAFORM_PLUGIN_DIR?.trim()
       ? { pluginDirectory: process.env.TERRAFORM_PLUGIN_DIR.trim() }
       : {}),
+    // Bounded below the caller's gRPC deadline on purpose. Whichever expires first decides what
+    // the workflow learns: this one produces a recorded run with diagnostics, while the caller's
+    // deadline produces an *ambiguous* transport failure that must go to manual review. A
+    // recorded failure is strictly better information, so the runner must give up first.
+    timeoutMs: TERRAFORM_INVOCATION_TIMEOUT_MS,
   });
 
   const runs = new PostgresTerraformInventoryStore(

@@ -105,6 +105,33 @@ function rpcError(error: unknown): RpcException {
   return new RpcException({ code: status.INTERNAL, message: 'Internal provider error.' });
 }
 
+/**
+ * Describes a provider failure for the operation log.
+ *
+ * WHY this exists: a failed provider operation used to log `outcome: "failed"` and nothing else.
+ * The reason reached the orchestrator over gRPC, which replaced it with a generic workflow message
+ * before persisting — so a permanent failure left **no diagnosable record anywhere in the system**.
+ * The first full-stack run against real hardware failed here and the logs could not say why.
+ *
+ * What is logged is exactly what `rpcError` already sends across the boundary: a
+ * `ProviderTransportError`'s code and its own message, which the adapters write to be
+ * vendor-free. An unrecognised error contributes its constructor name only — never its message,
+ * which could carry a URL, a token or a stack frame. The same reasoning as `rpcError`'s generic
+ * `INTERNAL`, applied to the log instead of the wire.
+ */
+function failureReason(error: unknown): {
+  readonly failure_code: string;
+  readonly failure_reason: string;
+} {
+  if (error instanceof ProviderTransportError) {
+    return { failure_code: error.code, failure_reason: error.message };
+  }
+  return {
+    failure_code: 'internal',
+    failure_reason: error instanceof Error ? error.constructor.name : 'unknown',
+  };
+}
+
 /** Serves the Phase 3 subset of `ProviderService` over internal gRPC. */
 /** Protobuf `Timestamp` as decoded by proto-loader. */
 interface WireTimestamp {
@@ -311,6 +338,7 @@ export class ProviderGrpcController {
   private async call<T>(operation: string, handler: () => Promise<T>): Promise<T> {
     const started = performance.now();
     let outcome = 'succeeded';
+    let reason: { readonly failure_code: string; readonly failure_reason: string } | undefined;
     try {
       return await withSpan(
         'controlplane.provider.adapter',
@@ -320,6 +348,7 @@ export class ProviderGrpcController {
             return await handler();
           } catch (error: unknown) {
             outcome = 'failed';
+            reason = failureReason(error);
             throw error;
           } finally {
             // Keep the measurement under the adapter span for trace-aware metric correlation.
@@ -330,7 +359,11 @@ export class ProviderGrpcController {
     } catch (error: unknown) {
       throw rpcError(error);
     } finally {
-      structuredLog('info', 'provider_operation_completed', { operation, outcome });
+      structuredLog('info', 'provider_operation_completed', {
+        operation,
+        outcome,
+        ...(reason ?? {}),
+      });
     }
   }
 }

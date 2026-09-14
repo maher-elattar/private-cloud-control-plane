@@ -818,11 +818,147 @@ with `git check-ignore`. Nothing was committed in the interim.
   | `pnpm run format:check`, `lint`, `typecheck`, `build` | clean; 14 projects each                                 |
   | `pnpm run terraform:check-modules`                    | modules agree                                           |
 
-- **Remaining for this checkpoint**, and not deferred: the layers above the provider. The verifier
-  covers provider → Terraform → Proxmox → inventory. REST accept, the outbox, the Kafka record,
-  the orchestrator's claim and the projection readback are still unverified against this adapter,
-  and reaching them needs a provider container carrying the Terraform binary and a vendored
-  plugin directory. That is the next unit of work, not a deferral.
+- Progress recorded 2026-09-14 — **the layers above the provider, against real hardware**:
+  - `deploy/local/compose.terraform.yaml` points the Phase 4 stack's provider at the real server,
+    and `tools/docker/service.Dockerfile` gained a `terraform-runtime` target carrying the engine
+    and a provider mirror vendored at build time from the module's own committed lock file. The
+    image initialises and validates the module with `--network none`, which is the proof that the
+    vendoring is complete and the runtime needs no registry.
+  - `tools/verification/verify-terraform-runtime.mjs` (`pnpm run verify:terraform-runtime`) drives
+    **one create request through every layer** and then removes it through the control plane's own
+    retention and purge path: REST accept, the replay, the single transactional commit, the outbox
+    row, the Kafka record, the orchestrator's leased and fenced claim, the persisted task
+    reference, the gated Terraform runs, the VM on the server, the ownership marker, the read
+    projection, the restricted-operational view, the inventory, and a redaction scan across
+    container logs, run diagnostics, the outbox and the audit trail.
+  - Nothing in it reaches into a layer to make the next one work. Where a precondition had to be
+    arranged, it is a named check with its own reasoning — see the two deviations below.
+
+#### Nine defects the full-stack run found
+
+The provider half had passed 22 of 22 in-process. Every one of these was invisible to that run,
+and that is the finding worth keeping: **an adapter exercised only in-process drifts from the one
+the wire delivers to.**
+
+1. **The fencing token was a constant.** The adapter passed `context.attempt` as its fencing
+   token, and the workflow pins `attempt` to `1` on purpose so that `requestId` stays
+   byte-identical across replays. So the inventory's fencing check compared a constant against a
+   real lease token — it was not a check at all, and it failed outright the moment a workflow
+   reached its second claim. `ProviderCallContext` gained a `fencing_token` field, the workflow
+   populates it from the claim, and the fake provider excludes it from the idempotency comparison
+   because a token that must change when the lease moves is not part of a request's intent.
+2. **Four power methods read the wrong object.** `StartInstanceRequest` and its three siblings
+   nest their payload under a `request` field. The Terraform adapter declared the _inner_ type and
+   read `context` straight off it — and TypeScript allowed it, because method parameters are
+   bivariant. It compiled, it passed unit tests written against the same wrong shape, and it
+   passed an in-process verifier that happened to call with the unwrapped object. Over gRPC
+   `context` was `undefined` and a create that had already built and configured a VM failed at the
+   power stage with "Provider profile is not allowlisted" — a shape mismatch wearing a security
+   error's clothes. The direct adapter had it right all along.
+3. **The runner relied on an ambient environment.** bpg authenticates with `PROXMOX_VE_*`, which
+   are different names from this system's `PROXMOX_*` settings, and the runner simply inherited
+   its parent's environment. That worked in every earlier run because the manual walkthrough's
+   `env.sh` had exported them into the shell. In a container the plan failed with
+   `Missing Proxmox VE API Endpoint`. The runner now takes the credentials explicitly, **refuses
+   to construct without them**, and strips every inherited `PROXMOX_VE_*` first so a stale shell
+   value cannot decide which server an apply talks to.
+4. **The image had no system trust store.** Two TLS clients live in that container and they trust
+   from different places: Node bundles its own CA list, so the direct client verified the endpoint
+   perfectly, while the provider plugin is a separate Go binary reading `/etc/ssl/certs` — which
+   the base image does not have. A clone failed with `x509: certificate signed by unknown
+authority` against a publicly trusted certificate, in an image where the other client had just
+   verified it. The fix for a trust-store gap is a trust store, not `PROXMOX_VE_INSECURE`.
+5. **A malformed SSH key became a retryable provider failure.** Proxmox validates keys server-side
+   and answers a bad one with an HTTP **500**, which any sane classifier reads as "the server had
+   a problem, retry" — so a tenant pasting a truncated key burned the workflow's retry budget and
+   ended in review, for input that could never have worked. `validateCreateInstance` now checks
+   structure at admission: an SSH public key's body names its own algorithm, length-prefixed, so
+   `ssh-ed25519` plus a run of `A`s is detectable with no provider call at all.
+6. **The provider deadline turned "slow" into "unknown".** The base stack allows a provider call
+   ten seconds, which is right for an adapter that answers from one HTTP request. Two calls here
+   run Terraform synchronously and take about ten seconds on an idle server, or up to three
+   minutes more waiting on the state lock. A mutation whose transport deadline expires has an
+   _unknown_ outcome and goes to `manual_review` by design — so a deadline set too low does not
+   merely fail a call, it converts "slow but fine" into "a human must look at this". The run that
+   exposed it left a **running, correctly configured VM** the control plane had lost track of.
+   The deadline is now 300 seconds, ordered deliberately above the runner's own 240-second
+   invocation timeout so a stuck invocation yields a recorded run with diagnostics rather than an
+   ambiguous timeout.
+7. **A failed provider operation recorded no reason anywhere.** The provider logged
+   `outcome: "failed"` and nothing else; the reason crossed gRPC and the orchestrator replaced it
+   with a generic workflow message before persisting. The first hardware failure was therefore
+   undiagnosable from the logs, the workflow row, or the operation. The operation log now carries
+   the transport code and the adapter's own message — exactly what `rpcError` already sends across
+   the boundary — while an unrecognised error contributes its constructor name only.
+8. **Two inventory columns were never written.** `state_serial` and `state_lineage` existed in the
+   schema and in the store, and no caller ever supplied them. They are how a replaced state
+   document is detected: the lineage identifies the _file_, so a lineage that changes under a
+   workspace means the state was restored, re-created, or pointed elsewhere — precisely when
+   Terraform's belief about the world is confidently wrong. A dedicated `stateMetadata` invocation
+   now reads both after every apply and refresh, and it is the one invocation whose output is
+   never retained: `terraform state pull` emits the whole document, including the rendered
+   cloud-init password.
+9. **Redaction mangled the ownership marker.** Adding the API token to the redaction set redacted
+   the eight characters `control-` everywhere they appeared, because the redactor also replaces
+   each secret's leading prefix so a truncated value is still caught. Handing it a _container_
+   turns that rule against you. The set now holds secret material only — the password extracted
+   from the connection string, the secret half of the token — so what stays readable is exactly
+   what an operator needs to fix a failed authentication: the host, the database, the user and the
+   token id, all identities, none of them credentials.
+
+#### Deviation recorded — the purge guard and the clock
+
+The purge guard requires the retention deadline to have passed, and the shortest window the schema
+permits is one hour (`retention_hours >= 1`). No configuration makes a purge reachable inside a
+single run, so the verifier moves the deadline the application stamped into the past — which is
+precisely what waiting would do.
+
+It does **not** set `purge_eligible`, which would switch the guard off. Every check still runs for
+real: the confirmation must match the instance id, the instance must be retained, the deadline is
+still compared, and the workflow still proves live provider ownership from the VM's own description
+immediately before destroying anything. A mismatched confirmation is asserted to be refused at
+acceptance, before any provider call.
+
+#### Deviation recorded — clearing the lab's own leftovers
+
+A failed create holds an instance row, an IPv4 lease and a slice of the project's quota — correctly,
+because the quota counts committed intent rather than built hardware. The lab quota is deliberately
+three instances and three addresses (SAFE-030), so three finished runs exhaust it and the next run
+is refused at acceptance before it can test anything. Quarantined leases are the subtler half: they
+are held back on purpose after a failed release, because a VM might still be using the address.
+
+The verifier therefore clears terminal-state rows and releases their addresses as a precondition —
+and **the guard is the empty reserved interval, not the row**. It refuses to touch anything unless
+the live server shows no VM in 910000-910099, because every instance in this project can only ever
+have had a VM inside it: if the interval is empty, no address is in use and no row is the last
+record of a live machine. An earlier version also skipped instances that had a Terraform workspace
+row, reasoning that Terraform still tracked them; that was wrong, because a workspace row records
+that Terraform _once_ tracked an instance and every failed run leaves one.
+
+#### Recorded manual destroys
+
+Runs that failed after building a VM left 910033, 910054 and 910083 on the server. Each was removed
+deliberately, by VMID, after reading its description and checking the marker prefix, `managedBy`
+and `environment`. 910054 was still running and Proxmox refused the destroy until it was stopped —
+the API doing the right thing. Written down because tier 3 of the abort story says a manual destroy
+is recorded.
+
+One procedural note kept rather than tidied away: on one of those cleanups the ownership read timed
+out and the destroy had been chained to run unconditionally, so it executed without the proof
+having succeeded. No foreign VM could have been affected — the VMID was constant and read earlier
+in the session, and the scoped token can address nothing outside the reserved interval — but the
+procedure was wrong. The runbook's rule is the right one and it already says so: a manual destroy
+is never scripted, and the ownership check gates it rather than merely preceding it.
+
+#### Environment failure, recorded for honesty
+
+Thirteen image rebuilds filled the host disk. The Compose Postgres died mid-run with
+`ECONNREFUSED`, the API became unreachable, Kafka's log directory was corrupted while being
+written, and the verifier crashed writing its evidence with `ENOSPC` — so a single environment
+problem presented as a dozen unrelated defects in the system under test. Worth stating because
+"record every outcome, do not fail fast" is only useful if the reader can tell an environment
+failure from a finding.
+
 - Rationale: the first full-stack run, and the checkpoint the operator described as observing and
   fixing at every level from the request to the server state.
 - Required work: `submitCreateInstance` renders tfvars, gates the plan, applies, records the run;

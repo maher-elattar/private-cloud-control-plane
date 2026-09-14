@@ -58,3 +58,4 @@ crash.*.log
 vitest.config.*.timestamp*
 .aidesigner/*
 !.aidesigner/.gitkeep
+/deploy/local/.env.terraform

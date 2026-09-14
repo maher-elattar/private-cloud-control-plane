@@ -42,6 +42,18 @@ export interface TerraformRunnerConfiguration {
    * class comment for why the two are not interchangeable.
    */
   readonly backendConnectionString: string;
+  /**
+   * The environment the provider plugin authenticates with, as `PROXMOX_VE_*` names.
+   *
+   * Required, with no default and no fallback to the ambient environment. The bpg provider reads
+   * its endpoint and token from `PROXMOX_VE_ENDPOINT` and `PROXMOX_VE_API_TOKEN`, which are
+   * *different names* from the `PROXMOX_*` settings this system is configured with — so a runner
+   * that merely inherited the parent environment worked on a developer's shell, where the manual
+   * walkthrough's `env.sh` had exported them, and failed in a container with
+   * `Missing Proxmox VE API Endpoint`. Passing them explicitly is what makes the two environments
+   * behave the same.
+   */
+  readonly providerEnvironment: Readonly<Record<string, string>>;
   /** How long any single invocation may run. */
   readonly timeoutMs?: number;
 }
@@ -99,6 +111,29 @@ const LOCK_TIMEOUT = '180s';
 const STRIPPED_ENVIRONMENT = ['TF_LOG', 'TF_LOG_PATH', 'TF_LOG_PROVIDER'];
 
 /**
+ * Prefix of every variable the provider plugin authenticates with.
+ *
+ * Anything inherited under this prefix is removed before the configured environment is applied,
+ * so the configured endpoint and token always win.
+ */
+const PROVIDER_ENVIRONMENT_PREFIX = 'PROXMOX_VE_';
+
+/**
+ * Extracts the password from a Postgres connection string.
+ *
+ * Returns `undefined` when there is none to extract, rather than falling back to the whole string:
+ * a fallback would reintroduce exactly the over-redaction this exists to avoid.
+ */
+function passwordOf(connectionString: string): string | undefined {
+  try {
+    const password = new URL(connectionString).password;
+    return password ? decodeURIComponent(password) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Drives Terraform for one workspace at a time.
  *
  * WHY the constructor insists on an explicit `sslmode`: Terraform's `pg` backend uses lib/pq,
@@ -111,6 +146,21 @@ const STRIPPED_ENVIRONMENT = ['TF_LOG', 'TF_LOG_PATH', 'TF_LOG_PROVIDER'];
  */
 export class TerraformRunner {
   public constructor(private readonly configuration: TerraformRunnerConfiguration) {
+    // Refused at construction for the same reason as the connection string: a runner that cannot
+    // authenticate should fail when the process starts, not part-way through a workflow with a
+    // provider error that names neither the setting nor the missing name.
+    const endpoint = configuration.providerEnvironment.PROXMOX_VE_ENDPOINT;
+    if (!endpoint?.trim()) {
+      throw new Error('The Terraform provider environment must set PROXMOX_VE_ENDPOINT.');
+    }
+    if (
+      !configuration.providerEnvironment.PROXMOX_VE_API_TOKEN?.trim() &&
+      !configuration.providerEnvironment.PROXMOX_VE_PASSWORD?.trim()
+    ) {
+      throw new Error(
+        'The Terraform provider environment must set PROXMOX_VE_API_TOKEN or PROXMOX_VE_PASSWORD.',
+      );
+    }
     if (!/[?&]sslmode=/.test(configuration.backendConnectionString)) {
       throw new Error(
         'The Terraform state connection string must set sslmode explicitly. ' +
@@ -286,6 +336,50 @@ export class TerraformRunner {
   }
 
   /**
+   * Reads the state document's serial and lineage, and nothing else.
+   *
+   * WHY these two values are worth a dedicated invocation: the lineage identifies the state
+   * *file*, and the serial counts writes to it. A lineage that changes underneath a workspace
+   * means the state was replaced — restored from a backup, re-created after a `state rm`, or
+   * pointed at a different row — and that is precisely the situation where Terraform's own belief
+   * about the world is confidently wrong. Recording them is what lets the inventory notice, and
+   * the columns existed in the schema with nothing ever writing to them.
+   *
+   * **This is the one invocation whose output must never be retained.** `terraform state pull`
+   * emits the whole state document, which holds the rendered cloud-init password — so the two
+   * numbers are parsed out in memory and everything else is dropped on the floor. In particular
+   * the diagnostics are discarded rather than returned: `parseDiagnostics` falls back to a
+   * bounded head of the raw text when the output is not a JSON log stream, and a state document
+   * is not, so returning them would write state into a run record.
+   *
+   * @param directory An initialised working directory.
+   * @returns The serial and lineage, or `undefined` for either when state does not exist yet.
+   */
+  public async stateMetadata(
+    directory: string,
+  ): Promise<{ readonly serial?: number; readonly lineage?: string }> {
+    const pulled = await this.run('state-pull', ['state', 'pull'], directory);
+    if (pulled.exitCode !== 0) return {};
+    try {
+      const document = JSON.parse(pulled.stdout) as {
+        serial?: unknown;
+        lineage?: unknown;
+      };
+      const serial = Number(document.serial);
+      return {
+        ...(Number.isSafeInteger(serial) && serial >= 0 ? { serial } : {}),
+        ...(typeof document.lineage === 'string' && document.lineage
+          ? { lineage: document.lineage }
+          : {}),
+      };
+    } catch {
+      // An empty or unparseable state is not an error here: a workspace with no state yet is the
+      // normal case before the first apply.
+      return {};
+    }
+  }
+
+  /**
    * Produces a plan and puts it through the gate.
    *
    * @param directory A prepared, initialised directory.
@@ -438,6 +532,14 @@ export class TerraformRunner {
     const startedAt = Date.now();
     const environment = { ...process.env };
     for (const name of STRIPPED_ENVIRONMENT) delete environment[name];
+    // Every inherited `PROXMOX_VE_*` is discarded before the configured ones are applied. An
+    // ambient value here would decide which server an apply talks to, and it would win silently:
+    // this is the class of bug where a shell that once sourced a credentials file makes a process
+    // behave differently from the same process in a container.
+    for (const name of Object.keys(environment)) {
+      if (name.startsWith(PROVIDER_ENVIRONMENT_PREFIX)) delete environment[name];
+    }
+    Object.assign(environment, this.configuration.providerEnvironment);
     // `TF_IN_AUTOMATION` removes the "run terraform init" advice from error output, which is
     // noise in a run record. `TF_INPUT` is belt and braces beside `-input=false`.
     environment.TF_IN_AUTOMATION = '1';
@@ -484,8 +586,35 @@ export class TerraformRunner {
     };
   }
 
-  /** Values that must never appear in retained output. */
+  /**
+   * Values that must never appear in retained output.
+   *
+   * These are **secret material only**, never the strings that carry it, and that distinction is
+   * load-bearing: the redactor also replaces each value's first eight characters, so that a value
+   * Terraform truncated is still caught. Hand it a container and the prefix rule turns against
+   * you — passing the whole API token (`user@realm!id=secret`) redacted the eight characters
+   * `control-` everywhere they appeared, which mangled the ownership marker in a plan and would
+   * have mangled any log line mentioning the control plane by name. Passing the whole connection
+   * string would likewise redact the word `postgres`.
+   *
+   * So the password comes out of the connection string and the secret half comes out of the token.
+   * What remains readable is exactly what an operator needs in order to fix a failed
+   * authentication: the host, the database, the user, and the token id — all of them identities,
+   * none of them credentials, and every one already in this repository's own documentation.
+   *
+   * Terraform renders whatever a provider put in its error text, and `terraform.runs.diagnostics`
+   * is a column operators read and this repository commits as evidence. That the current provider
+   * does not echo its own credential is not a reason to omit it: the redaction set is the
+   * guarantee, and a diagnostic is the one place text arrives from code this system does not own.
+   */
   private secrets(): readonly string[] {
-    return [this.configuration.backendConnectionString];
+    const environment = this.configuration.providerEnvironment;
+    const token = environment.PROXMOX_VE_API_TOKEN;
+    return [
+      passwordOf(this.configuration.backendConnectionString),
+      // `user@realm!id=secret` — only what follows the last `=` is the credential.
+      token?.includes('=') ? token.slice(token.lastIndexOf('=') + 1) : token,
+      environment.PROXMOX_VE_PASSWORD,
+    ].filter((value): value is string => Boolean(value));
   }
 }

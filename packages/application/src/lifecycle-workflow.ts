@@ -636,6 +636,11 @@ export abstract class LifecycleWorkflow<
       // recognise a duplicate. Phase 3 keeps only a per-claim counter, not a per-stage one, so
       // a real attempt number here would change between replays and defeat that recognition.
       attempt: 1,
+      // The claim's fencing token, which is the opposite case: it MUST change when the lease
+      // moves. An adapter that keeps durable state of its own presents this on every write, so a
+      // worker that stalled past its lease is rejected rather than allowed to act on stale
+      // beliefs. `attempt` cannot serve here precisely because it is pinned above.
+      fencingToken: String(workflow.fencingToken),
     };
   }
 

@@ -99,6 +99,18 @@ local.
 - **No automatic destroy on any failure branch.** A refused plan, a tainted resource and an
   unknown outcome all end in a recorded refusal and `manual_review`.
 
+## Deployment requirements
+
+These are not preferences. Each one was a failure on real hardware before it was a requirement.
+
+| Requirement | Why | Failure without it |
+| --- | --- | --- |
+| A **system trust store** in the image | Two TLS clients trust from different places: Node bundles its own CA list, the provider plugin is a Go binary reading `/etc/ssl/certs` | `x509: certificate signed by unknown authority` on a publicly trusted certificate, in an image whose other client had just verified it |
+| The provider credentials passed **explicitly** as `PROXMOX_VE_*` | They are different names from this system's `PROXMOX_*` settings, and inheriting the parent environment only works where a shell exported them | `Missing Proxmox VE API Endpoint` in a container, after passing everywhere else |
+| `PROVIDER_GRPC_DEADLINE_MS` **above** the provider's invocation timeout, itself above the 180-second lock wait | Two calls run Terraform synchronously. A mutation whose transport deadline expires has an *unknown* outcome, which goes to `manual_review` by design | A running, correctly configured VM the control plane has lost track of |
+| A **vendored plugin directory** | `init` must not reach a registry from a process that can mutate hardware | Not a failure, a property: the image initialises and validates with `--network none` |
+| Structural **SSH key validation at admission** | Proxmox answers a malformed key with HTTP 500, which classifies as retryable | A tenant's typo burns the retry budget and lands in review |
+
 ## Known environmental limitations
 
 These are properties of the target, not of this code, and they are recorded because the

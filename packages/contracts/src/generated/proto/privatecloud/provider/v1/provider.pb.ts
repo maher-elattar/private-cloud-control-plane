@@ -42,6 +42,22 @@ export interface ProviderCallContext {
   readonly instanceId?: string | undefined;
   readonly providerProfileId?: string | undefined;
   readonly attempt?: number | undefined;
+  /**
+   * The caller's lease fencing token, as a decimal string.
+   *
+   * Distinct from `attempt`, which is deliberately pinned so that `request_id` stays
+   * byte-identical across replays and a provider can recognise a duplicate. A fencing token is
+   * the opposite: it MUST change when the lease moves, which is what makes a stalled worker's
+   * write rejectable.
+   *
+   * An adapter that records durable state of its own needs this to refuse a write from a worker
+   * that has been fenced out. Without it such an adapter can only compare against a constant,
+   * which is not a check at all.
+   *
+   * Optional on the wire: an adapter that keeps no state of its own has no use for it, and the
+   * empty string means "the caller holds no lease".
+   */
+  readonly fencingToken?: string | undefined;
 }
 
 export interface ProviderProfileConfiguration {

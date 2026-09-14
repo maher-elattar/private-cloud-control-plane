@@ -249,7 +249,70 @@ export function validateCreateInstance(values: CreateInstanceValues): void {
     if (key.length < 32 || key.length > 8192 || /[\r\n\0]/.test(key)) {
       throw new DomainError('VALIDATION_FAILED', 'An SSH public key is invalid.');
     }
+    if (!isStructurallyValidSshPublicKey(key)) {
+      throw new DomainError('VALIDATION_FAILED', 'An SSH public key is not a well-formed key.');
+    }
   }
+}
+
+/** Key types this control plane accepts. Ordered as OpenSSH names them. */
+const SSH_KEY_TYPES = new Set([
+  'ecdsa-sha2-nistp256',
+  'ecdsa-sha2-nistp384',
+  'ecdsa-sha2-nistp521',
+  'sk-ecdsa-sha2-nistp256@openssh.com',
+  'sk-ssh-ed25519@openssh.com',
+  'ssh-ed25519',
+  'ssh-rsa',
+]);
+
+/**
+ * Whether a string is a structurally well-formed SSH public key.
+ *
+ * WHY structure and not just shape: Proxmox validates keys server-side and answers a malformed one
+ * with an HTTP **500**, which every sane transport classifier reads as "the server had a problem,
+ * retry". So a tenant pasting a truncated key produced a *retryable provider failure* that burned
+ * the workflow's retry budget and ended in review — for input that was never going to work. The
+ * first full-stack run against real hardware did exactly that. Malformed input must be refused at
+ * admission, before any provider is called.
+ *
+ * The check that matters is the last one. An SSH public key's body is a base64-encoded blob whose
+ * first field is the algorithm name, length-prefixed — so a body that decodes but does not name
+ * the same algorithm as its prefix is not a key, however plausible it looks. `ssh-ed25519` plus a
+ * run of `A`s passes every length and character test and fails this one.
+ *
+ * This deliberately does **not** verify the key's mathematics or its length in bits. Those are
+ * properties of a key that is already well-formed, and rejecting on them would refuse keys a
+ * tenant's own tooling considers valid.
+ *
+ * @param key One candidate key, already known to be free of control characters.
+ * @returns `true` when the type, the base64 body, and the embedded algorithm name all agree.
+ */
+export function isStructurallyValidSshPublicKey(key: string): boolean {
+  const [type, body] = key.trim().split(/\s+/);
+  if (!type || !body || !SSH_KEY_TYPES.has(type)) return false;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body)) return false;
+
+  let decoded: Uint8Array;
+  try {
+    // `Buffer` is deliberately avoided: this package is framework-free and must run unchanged
+    // wherever the application layer does, including a runtime with no Node globals.
+    const binary = atob(body);
+    decoded = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return false;
+  }
+
+  // The blob begins with a four-byte big-endian length followed by the algorithm name.
+  if (decoded.length < 4) return false;
+  const nameLength =
+    ((decoded[0] ?? 0) << 24) |
+    ((decoded[1] ?? 0) << 16) |
+    ((decoded[2] ?? 0) << 8) |
+    (decoded[3] ?? 0);
+  if (nameLength <= 0 || nameLength > 64 || decoded.length < 4 + nameLength) return false;
+  const embedded = String.fromCharCode(...decoded.slice(4, 4 + nameLength));
+  return embedded === type;
 }
 
 /** The power transitions a tenant may request on a running instance. */
