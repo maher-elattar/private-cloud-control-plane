@@ -18,16 +18,17 @@ into this work.
 ## Current State
 
 - Overall status: In progress
-- Current checkpoint: T-5 — Ownership-marker defect
-- Last completed checkpoint: T-3 — Readiness probe defect
-- Completed so far: T-0, T-1, T-2, T-3, T-4. T-4 was taken ahead of T-3 because the operator
+- Current checkpoint: T-6 — Catalog rows, configuration, and the config cross-check
+- Last completed checkpoint: T-5 — Ownership-marker defect
+- Completed so far: T-0, T-1, T-2, T-3, T-4, T-5. T-4 was taken ahead of T-3 because the operator
   authorised the token creation directly and it is a live-server action; T-3 is offline and was
   unaffected by the order.
 - Phase 6 dependency: cleared. Phase 6 closed with all fifteen checkpoints complete.
 - Target server: `https://testsrv.mosalam.com:8006`, node `proxtest`, PVE 9.2.11, standalone.
 - Committed so far: `726bc22` (gitignore and credential boundary), `167871f` (plan scoped to one
   server, VPC work deferred), `495dab6` (server survey and this ledger), `c218936` (manual
-  Terraform walkthrough), `7bdeec8` (scoped API token).
+  Terraform walkthrough), `7bdeec8` (scoped API token), `dbdc069`
+  (readiness probe and capability flags).
 - **Credential note.** The adapters now authenticate with the scoped token created at T-4. The
   administrator password is retained in the credentials file only so that token can be
   re-minted; it was read into a session transcript during this work and **should be rotated**.
@@ -357,20 +358,47 @@ with `git check-ignore`. Nothing was committed in the interim.
 
 ### Checkpoint T-5 — Ownership-marker defect
 
-- Status: Pending
-- Rationale: `markInstanceRetained` writes the description as
-  `private-cloud-control:{…}\nretained-until=…`, but `parseOwnership` runs `JSON.parse` over the
-  whole remainder after the prefix, which is invalid JSON once that second line exists. It returns
-  `null`, `markersMatch` fails, and `requireOwnedConfig` throws. **After a soft delete,
-  administrative purge can never prove live ownership (SAFE-006) and observation reports an
-  ownership mismatch that reconciliation will read as drift.** Create, power and resize are
-  unaffected.
-- Required work: parse only the marker line and tolerate following lines. **Not** by folding
-  `retained-until` into the JSON, which would change the marker format and make every
-  already-retained VM unparseable. Fixed in shared code, since the Terraform adapter inherits the
-  same scheme.
-- Verification required: a round-trip test through the retention description shape that fails
-  against current code and passes after; plus trailing whitespace and operator-appended text.
+- Status: Complete
+- Rationale: `markInstanceRetained` wrote the description as
+  `private-cloud-control:{…}\nretained-until=…`, but `parseOwnership` ran `JSON.parse` over the
+  whole remainder after the prefix, which is invalid JSON once that second line exists. It
+  returned `null`, `markersMatch` failed, and `requireOwnedConfig` threw. **After a soft delete,
+  administrative purge could never prove live ownership (SAFE-006), and observation reported an
+  ownership mismatch that reconciliation would read as drift.** Create, power and resize were
+  unaffected, which is why nothing had noticed.
+- Evidence recorded 2026-09-14:
+  - `parseOwnership` now parses only the first line and tolerates trailer lines beneath it. The
+    marker is still required to be the _first_ line: an operator who prepends text has genuinely
+    made the description unrecognisable, and refusing to act is the intended behaviour — ownership
+    is proven or the workflow stops, never inferred.
+  - **Deliberately not fixed by folding `retained-until` into the marker JSON.** That would change
+    the marker's wire format, and every VM already carrying the one-line form would stop parsing —
+    the same failure this trailer caused, only inflicted on purpose.
+  - Appending to a description now goes through `describedWithTrailer`, with the trailer key as a
+    named constant. The original bug was a bare template string at the single call site that
+    needed a trailer; one shared function that keeps the marker on the first line is what stops
+    the next trailer repeating it.
+  - Five cases added to `proxmox-provider.spec.ts`, exercising the public surface rather than the
+    parser, because the behaviour that matters is that a retained VM can still be observed and
+    purged: purge proves ownership on a retained description, observation reports a match on both
+    the retained and the one-line form, and both a prepended-text description and a malformed
+    marker are refused.
+- Verification:
+
+  | Gate                                                 | Result                                                          |
+  | ---------------------------------------------------- | --------------------------------------------------------------- |
+  | New cases against the **defective** parser           | 2 of 38 fail — purge and observation on a retained description  |
+  | The three control cases against the defective parser | pass either way, correctly: those behaviours were already right |
+  | Same suite against the fix                           | 38 of 38 pass                                                   |
+  | `pnpm run format:check`                              | clean                                                           |
+  | `pnpm run lint`                                      | 14 projects                                                     |
+  | `pnpm run typecheck`                                 | 14 projects                                                     |
+  | `pnpm run test`                                      | 11 projects, 0 failures                                         |
+  | `pnpm run test:integration`                          | 5 files, 88 tests                                               |
+  | `pnpm run build`                                     | 14 projects                                                     |
+
+  As with T-3, the first two rows are the point: the suite was run against the original code to
+  prove which cases catch the defect and which do not.
 
 ### Checkpoint T-6 — Catalog rows, configuration, and the config cross-check
 

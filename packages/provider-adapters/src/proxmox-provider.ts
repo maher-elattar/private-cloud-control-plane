@@ -184,6 +184,16 @@ const MAXIMUM_DISK_GIB = 128;
 /** Snapshots allowed per instance. */
 const MAXIMUM_SNAPSHOTS = 8;
 
+/**
+ * Trailer key recording when a retained instance stops being recoverable.
+ *
+ * It lives on its own line *after* the ownership marker rather than inside it. Folding it into
+ * the marker JSON would change the marker's wire format, and every VM already carrying the old
+ * one-line form would stop parsing — which is the same failure this trailer originally caused,
+ * only inflicted deliberately.
+ */
+const RETENTION_TRAILER_KEY = 'retained-until';
+
 /** Asserts a configured or request value is present. */
 function required(value: string | undefined, name: string): string {
   if (!value) {
@@ -231,11 +241,42 @@ function ownershipDescription(markers: OwnershipMarkers): string {
   })}`;
 }
 
-/** Parses ownership markers back out of a description, or `null` if absent or malformed. */
+/**
+ * Renders a description carrying the ownership marker plus one trailer line.
+ *
+ * Exists so that appending to a description goes through one function that keeps the marker on
+ * the first line, where {@link parseOwnership} reads it. The original bug was a bare template
+ * string at the one call site that needed a trailer.
+ *
+ * @param markers Ownership markers, rendered as the first line.
+ * @param key Trailer key, on its own line beneath the marker.
+ * @param value Trailer value. An empty value still writes the key, so the line's presence alone
+ *   records that retention was applied.
+ * @returns The description to write to Proxmox.
+ */
+function describedWithTrailer(markers: OwnershipMarkers, key: string, value: string): string {
+  return `${ownershipDescription(markers)}\n${key}=${value}`;
+}
+
+/**
+ * Parses ownership markers back out of a description, or `null` if absent or malformed.
+ *
+ * WHY only the first line is parsed: retention appends its own trailer line to the description
+ * (see {@link RETENTION_TRAILER_KEY}), and parsing the whole remainder as JSON meant that a
+ * retained VM's markers stopped parsing the moment that line existed. The effect was that a soft
+ * delete made the instance permanently unpurgeable — `requireOwnedConfig` threw
+ * "Provider ownership could not be proven", so SAFE-006's live-ownership proof could never pass —
+ * and observation reported an ownership mismatch that reconciliation would read as drift.
+ *
+ * The marker is still required to be the *first* line. An operator who prepends text has
+ * genuinely made this description unrecognisable, and refusing to act on it is the intended
+ * behaviour: ownership is proven or the workflow stops, never inferred.
+ */
 function parseOwnership(description: string | undefined): OwnershipMarkers | null {
   if (!description?.startsWith(markerPrefix)) return null;
   try {
-    const value = JSON.parse(description.slice(markerPrefix.length)) as Partial<OwnershipMarkers>;
+    const [marker] = description.slice(markerPrefix.length).split('\n');
+    const value = JSON.parse(marker ?? '') as Partial<OwnershipMarkers>;
     if (
       !value.managedBy ||
       !value.environment ||
@@ -1032,7 +1073,11 @@ export class ProxmoxProvider
       'POST',
       `/nodes/${encodeURIComponent(this.configuration.node)}/qemu/${vmid}/config`,
       form({
-        description: `${ownershipDescription(ownership)}\nretained-until=${request.retentionDeadline ?? ''}`,
+        description: describedWithTrailer(
+          ownership,
+          RETENTION_TRAILER_KEY,
+          request.retentionDeadline ?? '',
+        ),
         onboot: '0',
         // Proxmox's comma-separated "unset these keys" parameter.
         delete: 'ipconfig0',

@@ -215,3 +215,129 @@ describe('ProxmoxProvider Phase 3 safety', () => {
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
   });
 });
+
+/**
+ * Ownership must survive retention.
+ *
+ * `markInstanceRetained` appends a `retained-until` line beneath the ownership marker, and
+ * `parseOwnership` used to JSON-parse the whole remainder of the description — which stopped
+ * parsing the moment that line existed. A soft-deleted instance therefore became permanently
+ * unpurgeable: `requireOwnedConfig` threw "Provider ownership could not be proven", so SAFE-006's
+ * live-ownership proof could never pass, and observation reported a mismatch that reconciliation
+ * would classify as drift.
+ *
+ * These cases go through the public surface rather than testing the parser directly, because the
+ * behaviour that matters is that a retained VM can still be observed and purged.
+ */
+describe('ownership markers across retention', () => {
+  /** The description Proxmox holds for an instance that has been soft deleted. */
+  const retainedDescription = `private-cloud-control:${JSON.stringify({
+    managedBy: ownership.managedBy,
+    environment: ownership.environment,
+    projectId: ownership.projectId,
+    instanceId: ownership.instanceId,
+    createOperationId: ownership.createOperationId,
+  })}\nretained-until=2026-10-01T00:00:00.000Z`;
+
+  /** The single-line form written on create, before any retention. */
+  const freshDescription = retainedDescription.split('\n')[0] as string;
+
+  it('proves ownership of a retained instance, so purge remains reachable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        // requireOwnedConfig
+        .mockResolvedValueOnce(
+          response({ description: retainedDescription, scsi0: 'lab-storage:vm-1,size=32G' }),
+        )
+        // currentStatus, checked for a config lock before the destructive call
+        .mockResolvedValueOnce(response({ status: 'stopped' }))
+        // the purge itself
+        .mockResolvedValueOnce(response('UPID:pve-lab-1:0000000A:qmdestroy:')),
+    );
+
+    const result = await new ProxmoxProvider(configuration).purgeInstance({
+      request: { context, providerResourceId: '910000', expectedOwnershipMarkers: ownership },
+      purgeAuthorizationId: '00000000-0000-4000-8000-0000000000ff',
+      retentionDeadline: '2026-10-01T00:00:00.000Z',
+    });
+
+    expect(result.result?.state).toBe(ProviderResultState.PROVIDER_RESULT_STATE_ACCEPTED);
+  });
+
+  it('reports a matching owner when observing a retained instance', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(response({ description: retainedDescription }))
+        .mockResolvedValueOnce(response({ status: 'stopped' })),
+    );
+
+    const { observation } = await new ProxmoxProvider(configuration).observeInstance({
+      context,
+      providerResourceId: '910000',
+      expectedOwnershipMarkers: ownership,
+    });
+
+    expect(observation?.ownership?.complete).toBe(true);
+    expect(observation?.ownership?.match).toBe(true);
+  });
+
+  it('still proves ownership of the one-line form written on create', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(response({ description: freshDescription }))
+        .mockResolvedValueOnce(response({ status: 'running' })),
+    );
+
+    const { observation } = await new ProxmoxProvider(configuration).observeInstance({
+      context,
+      providerResourceId: '910000',
+      expectedOwnershipMarkers: ownership,
+    });
+
+    expect(observation?.ownership?.match).toBe(true);
+  });
+
+  it('refuses a description whose marker is not the first line', async () => {
+    // An operator who prepends text has made the description unrecognisable. Refusing is the
+    // intended behaviour: ownership is proven or the workflow stops, never inferred.
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(response({ description: `operator note\n${freshDescription}` }))
+        .mockResolvedValueOnce(response({ status: 'running' })),
+    );
+
+    const { observation } = await new ProxmoxProvider(configuration).observeInstance({
+      context,
+      providerResourceId: '910000',
+      expectedOwnershipMarkers: ownership,
+    });
+
+    expect(observation?.ownership?.match).toBe(false);
+  });
+
+  it('refuses a marker line that is not valid JSON', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(response({ description: 'private-cloud-control:{broken' }))
+        .mockResolvedValueOnce(response({ status: 'running' })),
+    );
+
+    const { observation } = await new ProxmoxProvider(configuration).observeInstance({
+      context,
+      providerResourceId: '910000',
+      expectedOwnershipMarkers: ownership,
+    });
+
+    expect(observation?.ownership?.match).toBe(false);
+  });
+});
