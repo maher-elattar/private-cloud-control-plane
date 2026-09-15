@@ -1176,8 +1176,62 @@ dangling endpoints that only a Docker daemon restart clears.
 
 Recorded as open rather than claimed as passing. What _is_ verified end to end on real hardware is
 the provider half at 24 of 24, including both drift drills; what is verified for the layers above
-it is every layer up to and including the read projection, across several runs, with each
-correction proven by the run that followed it.
+
+#### Plan audit — two required items that were missing
+
+Checked the original plan item by item rather than trusting the ledger, and found two pieces of
+**required verification** that had never been written. Both are now done.
+
+**The runner's crash test (plan T-7).** The requirement was "an integration test that kills a
+runner mid-apply and proves the advisory lock releases and the run is resumable". What existed was
+an integration test proving two sessions cannot hold the same advisory lock at once — mutual
+exclusion, which is a different property from crash recovery. The distinction matters: mutual
+exclusion is what stops two applies racing, while lock release on death is what decides whether a
+crashed worker needs an operator to intervene.
+
+`packages/provider-adapters/src/terraform/runner.integration.spec.ts` now measures it against a
+real killed process. The module under test is provider-free — `terraform_data` is built into
+Terraform and `local-exec` needs no plugin — so it exercises the `pg` backend and its lock without
+touching a hypervisor. `SIGKILL`, deliberately, because SIGTERM would prove only that the graceful
+path works and a crashed worker does not take the graceful path.
+
+| Measured                                   |        |
+| ------------------------------------------ | ------ |
+| Advisory locks held during the apply       | 1      |
+| Advisory locks after the process is killed | 0      |
+| A fresh `plan` with `-lock-timeout=10s`    | exit 0 |
+| `force-unlock` needed                      | none   |
+
+That last row is the one worth keeping. A backend whose locks outlive their holder needs
+`force-unlock` as a routine, and an operator reaching for it cannot distinguish "the worker died"
+from "another apply is still running" — so the crash procedure would be indistinguishable from the
+procedure that corrupts state by running two applies at once. This backend has nothing to unlock.
+
+**The single-trace assertion (plan T-9's last table row).** The verifier proved thoroughly that no
+credential reaches any log, span, metric or readback, but never asserted that _one trace spans all
+of it_. `one-trace-spans-every-layer` now sends a `traceparent` the verifier itself chose and
+requires spans from `control-api`, `provisioning-orchestrator` and `proxmox-provider` under that
+exact trace id. Choosing the id matters: searching Tempo for "a trace that looks like ours" would
+pass on any trace with the right span names, including one from an earlier run. The three layers
+are joined by three different mechanisms — an HTTP header, Kafka record headers, gRPC metadata —
+and each is its own chance to drop the context, which is why a break shows up only as one
+service's spans being absent from an otherwise healthy-looking trace.
+
+This check has not yet run, for the same reason as the rest of the full-stack verifier: the
+Compose network. It is written and syntax-checked, not verified.
+
+#### Two incidental defects the audit turned up
+
+- **`pnpm run test:integration` raced itself.** Adding a second project with an integration suite
+  made two global setups start concurrently, and the setup tears the database down first to
+  guarantee a known-empty start — so one project's teardown destroyed the other's database
+  mid-test. It now runs with `--parallel=1`. Tolerating a shared database instead would have cost
+  the known-empty guarantee, which is worth more than the wall-clock time.
+- **Neither package's `vitest.integration.config.ts` was in a tsconfig**, so the new one failed
+  lint with a parse error and the existing one was latently unlintable. Both are now included in
+  their package's `tsconfig.spec.json`, which type-checks them rather than ignoring them.
+  it is every layer up to and including the read projection, across several runs, with each
+  correction proven by the run that followed it.
 
 ## Rollback and abort
 

@@ -522,6 +522,12 @@ importers:
       '@private-cloud/application':
         specifier: workspace:*
         version: link:../application
+      '@types/pg':
+        specifier: 8.15.6
+        version: 8.15.6
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
       vitest:
         specifier: 4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.10.1)(@vitest/coverage-v8@4.1.11)(vite@8.2.2(@types/node@24.10.1)(jiti@2.7.0)(less@4.5.1)(sass-embedded@1.103.1)(sass@1.103.1)(terser@5.50.0)(yaml@2.9.0))

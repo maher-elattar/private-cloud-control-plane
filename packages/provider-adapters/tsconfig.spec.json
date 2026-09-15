@@ -4,10 +4,16 @@
     "outDir": "./out-tsc/vitest",
     "types": ["vitest/globals", "node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "vite.config.ts", "vitest.integration.config.ts"],
   "references": [
-    { "path": "../application/tsconfig.lib.json" },
-    { "path": "../contracts/tsconfig.lib.json" },
-    { "path": "../provider-sdk/tsconfig.lib.json" }
+    {
+      "path": "../application/tsconfig.lib.json"
+    },
+    {
+      "path": "../contracts/tsconfig.lib.json"
+    },
+    {
+      "path": "../provider-sdk/tsconfig.lib.json"
+    }
   ]
 }

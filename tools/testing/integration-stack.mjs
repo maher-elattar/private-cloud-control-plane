@@ -41,6 +41,12 @@ async function compose(args) {
  * interrupted previous run still holds its rows. Starting from a known-empty database is the
  * difference between a test that fails honestly and one that passes on inherited state.
  *
+ * WHY the integration targets must not run in parallel: that teardown is why. More than one
+ * project owns an integration suite now, and they share this one database — so a second project
+ * starting up would tear down the first one's database mid-test. `test:integration` therefore
+ * passes `--parallel=1`. Making this function tolerate sharing instead would cost the
+ * known-empty guarantee above, which is worth more than the wall-clock time.
+ *
  * @returns The connection string suites should use.
  */
 export async function startIntegrationStack() {

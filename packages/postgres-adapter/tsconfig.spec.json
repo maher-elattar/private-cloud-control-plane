@@ -4,7 +4,12 @@
     "outDir": "./out-tsc/vitest",
     "types": ["vitest/globals", "node"]
   },
-  "include": ["src/**/*.spec.ts", "src/integration-support.ts"],
+  "include": [
+    "src/**/*.spec.ts",
+    "src/integration-support.ts",
+    "vite.config.ts",
+    "vitest.integration.config.ts"
+  ],
   "references": [
     {
       "path": "./tsconfig.lib.json"

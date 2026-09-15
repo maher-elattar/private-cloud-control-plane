@@ -37,7 +37,7 @@
     "terraform:compose-env": "node tools/terraform/compose-env.mjs",
     "terraform:compose-env:check": "node tools/terraform/compose-env.mjs --check",
     "test": "nx run-many -t test && pnpm run test:tools",
-    "test:integration": "nx run-many -t test-integration",
+    "test:integration": "nx run-many -t test-integration --parallel=1",
     "test:tools": "node --test \"tools/**/*.spec.mjs\"",
     "typecheck": "nx run-many -t typecheck",
     "verify:audit-topology": "nx run-many -t build --projects=application,postgres-adapter,provider-adapters && node tools/verification/verify-audit-topology.mjs",

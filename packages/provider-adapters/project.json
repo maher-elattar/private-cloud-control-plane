@@ -4,5 +4,15 @@
   "sourceRoot": "packages/provider-adapters/src",
   "projectType": "library",
   "tags": ["type:lib", "layer:adapter", "visibility:production"],
-  "targets": {}
+  "targets": {
+    "test-integration": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vitest run --config vitest.integration.config.ts",
+        "cwd": "packages/provider-adapters"
+      },
+      "cache": false,
+      "dependsOn": ["^build"]
+    }
+  }
 }

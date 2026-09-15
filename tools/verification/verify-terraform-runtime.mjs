@@ -324,10 +324,30 @@ async function waitForOperation(operationId, authorization, expected, timeoutMs,
 }
 
 /** The fixture this run creates, filled in as the layers are asserted. */
+/** Tempo's query API, as published by `compose.phase4.yaml`. */
+const TEMPO_BASE = 'http://127.0.0.1:3200';
+
+/**
+ * The services whose spans must share the create request's trace.
+ *
+ * One per process the request actually passes through. `reconciler` is deliberately absent: it
+ * runs on its own schedule and is not part of this request's causal chain, so requiring it would
+ * make the check flaky for a reason unrelated to propagation.
+ */
+const REQUIRED_TRACE_SERVICES = ['control-api', 'provisioning-orchestrator', 'proxmox-provider'];
+
+/** How long to allow for spans to be exported, batched and indexed. */
+const TRACE_BUDGET_MS = 120_000;
+
 const fixture = {
   hostname: `tf-rt-${runId}`.slice(0, 63),
   idempotencyKey: `terraform-runtime-${runId}`,
   correlationId: randomUUID(),
+  // The verifier chooses the trace id and sends it as a `traceparent`, so proving one trace spans
+  // every layer is a lookup rather than a search. Searching for "the trace that looks like ours"
+  // would pass on any trace with the right span names, including one from an earlier run.
+  traceId: randomUUID().replaceAll('-', ''),
+  parentSpanId: randomUUID().replaceAll('-', '').slice(0, 16),
   // A structurally complete key, because admission now refuses one that only looks like a key —
   // and rightly: Proxmox answers a malformed key with an HTTP 500, which classifies as retryable.
   // A public key is not a secret; this one is a fixture whose comment makes it traceable to this
@@ -535,6 +555,9 @@ await check('rest-accepts-the-create', async () => {
         'content-type': 'application/json',
         'idempotency-key': fixture.idempotencyKey,
         'x-correlation-id': fixture.correlationId,
+        // Sampled (`-01`), because an unsampled parent means the whole trace is dropped and the
+        // assertion below would fail for a reason that has nothing to do with propagation.
+        traceparent: `00-${fixture.traceId}-${fixture.parentSpanId}-01`,
       },
       body: JSON.stringify({
         imageId: IMAGE_ID,
@@ -1094,6 +1117,60 @@ if (!keep) {
 // ---------------------------------------------------------------------------------------------
 // Redaction, across every surface this run touched
 // ---------------------------------------------------------------------------------------------
+
+await check('one-trace-spans-every-layer', async () => {
+  // The last row of T-9's table. Everything above proves each layer did its job; this proves an
+  // operator can *see* that as one causal story rather than four disconnected ones.
+  //
+  // WHY it earns a check of its own: the layers are joined by three different mechanisms — an
+  // HTTP header, a Kafka record's headers, and a gRPC metadata entry — and each is a separate
+  // opportunity to drop the context. A trace that stops at the Kafka boundary looks perfectly
+  // healthy in isolation; it is only the absence of the orchestrator's spans under the same trace
+  // id that reveals the break, which is exactly what this asserts.
+  const deadline = Date.now() + TRACE_BUDGET_MS;
+  let trace;
+  let services = new Set();
+  while (Date.now() < deadline) {
+    const response = await fetch(`${TEMPO_BASE}/api/traces/${fixture.traceId}`).catch(
+      () => undefined,
+    );
+    if (response?.status === 200) {
+      trace = await response.json();
+      services = new Set(
+        (trace.batches ?? []).map(
+          (batch) =>
+            (batch.resource?.attributes ?? []).find((attribute) => attribute.key === 'service.name')
+              ?.value?.stringValue,
+        ),
+      );
+      if (REQUIRED_TRACE_SERVICES.every((service) => services.has(service))) break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+
+  assert(trace !== undefined, `Tempo has no trace ${fixture.traceId}`);
+  const missing = REQUIRED_TRACE_SERVICES.filter((service) => !services.has(service));
+  assert.deepEqual(
+    missing,
+    [],
+    `the trace stops before ${missing.join(', ')} — context was dropped at that boundary`,
+  );
+
+  const allSpans = (trace.batches ?? []).flatMap((batch) =>
+    (batch.scopeSpans ?? []).flatMap((scope) => scope.spans ?? []),
+  );
+  assert(allSpans.length > 0, 'the trace carries no spans');
+  // Every span must belong to the trace the verifier started. A span under a different trace id
+  // in the same response would mean Tempo matched something else.
+  const foreign = allSpans.filter((span) => span.traceId && span.traceId !== fixture.traceId);
+  assert.deepEqual(foreign, [], 'the response carries spans from another trace');
+
+  return {
+    traceId: fixture.traceId,
+    services: [...services].filter(Boolean).sort(),
+    spanCount: allSpans.length,
+  };
+});
 
 await check('no-secret-reached-any-observable-surface', async () => {
   // Two kinds of value, and they are not scanned for the same things.
