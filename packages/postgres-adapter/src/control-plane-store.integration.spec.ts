@@ -1040,13 +1040,13 @@ describe('the live test server catalog', () => {
     // this assertion read `192.168.4.2` until a re-survey found .2 occupied and the allocator
     // correctly returned .3. A test that hardcodes the answer fails whenever the lab network
     // changes, which says nothing about the allocator.
-    const [network] = await db
+    const network = await db
       .selectFrom('control.networks')
       .select(['ipv4_cidr', 'gateway', 'exclusions'])
       .where('id', '=', 'testsrv-vmbr1')
-      .execute();
+      .executeTakeFirstOrThrow();
     const excluded = new Set([network.gateway, ...(network.exclusions as readonly string[])]);
-    const [networkAddress, prefixLength] = String(network.ipv4_cidr).split('/');
+    const [networkAddress = '', prefixLength = '32'] = String(network.ipv4_cidr).split('/');
     const toNumber = (address: string): number =>
       address.split('.').reduce((total, octet) => total * 256 + Number(octet), 0);
     const toAddress = (value: number): string =>
@@ -1064,7 +1064,11 @@ describe('the live test server catalog', () => {
         break;
       }
     }
-    expect(lowestFree, 'the seeded pool has no free address at all').toBeDefined();
+    if (lowestFree === undefined) {
+      throw new Error(
+        'the seeded pool has no free address at all, so this test cannot mean anything',
+      );
+    }
 
     expect(lease.address).toBe(lowestFree);
 
