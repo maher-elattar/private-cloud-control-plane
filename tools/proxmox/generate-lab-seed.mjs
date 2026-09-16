@@ -41,9 +41,29 @@ const DNS_SERVERS = ['1.1.1.1'];
 /** The clone template. */
 const TEMPLATE_VMID = 110;
 
-/** The reserved VMID interval the adapter clamps itself to. */
-const VMID_MINIMUM = 910_000;
-const VMID_MAXIMUM = 910_099;
+/**
+ * The reserved VMID interval the adapter clamps itself to — read from the survey, not assumed.
+ *
+ * WHY it is measured rather than written here: on this server the token's VM privileges are
+ * explicit per-VMID ACL entries rather than a pool grant, and twenty-two of the hundred reserved
+ * identifiers carry none. Seeding the whole reservation made the allocator pick 910058, which has
+ * no entry, and the clone came back `HTTP 403 - Permission check failed` *after* the instance, the
+ * lease and the quota had been committed. A resource range a credential cannot allocate is a
+ * configuration that lies, and it fails at the latest possible moment.
+ *
+ * The survey records the longest unbroken allocatable run; the seed claims exactly that. Widening
+ * it means adding the missing ACLs on the server and re-running the survey.
+ */
+function reservedInterval(evidence) {
+  const run = evidence.reservedRange?.longestAllocatableRun;
+  if (!run?.minimum || !run?.maximum) {
+    throw new Error(
+      'The survey records no allocatable VMID run. Re-run `pnpm run survey:proxmox` with a ' +
+        'credential that can read /access/permissions.',
+    );
+  }
+  return { minimum: run.minimum, maximum: run.maximum };
+}
 
 /**
  * A deliberately tight quota, because this project reaches real hardware.
@@ -81,6 +101,9 @@ function wrappedAddresses(addresses) {
 }
 
 const evidence = JSON.parse(await readFile(EVIDENCE_PATH, 'utf8'));
+
+/** The VMID interval this seed may honestly claim, measured by the survey. */
+const { minimum: VMID_MINIMUM, maximum: VMID_MAXIMUM } = reservedInterval(evidence);
 const addresses = (evidence.addressesInUseOnBridge?.addresses ?? []).map((entry) => entry.address);
 const capturedAt = String(evidence.capturedAt ?? '').slice(0, 10);
 const node = evidence.node;

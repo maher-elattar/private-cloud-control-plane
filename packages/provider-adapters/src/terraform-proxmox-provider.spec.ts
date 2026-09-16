@@ -263,6 +263,62 @@ describe('getTask', () => {
     expect(response.failure?.category).toBe(FailureCategory.FAILURE_CATEGORY_TRANSIENT);
   });
 
+  it('classifies a permission denial as permanent even though bpg wraps it in a retry message', async () => {
+    // The measured regression. bpg's retry wrapper prefixes *every* exhausted failure with
+    // "All attempts fail", which the transient list matches — so unless the permanent patterns win
+    // first, an HTTP 403 is reported as "the provider was busy" and the workflow spends its whole
+    // retry budget on a request that could never have succeeded. Seen on real hardware: a clone to
+    // a VMID the API token had no `VM.Allocate` on.
+    const response = await provider(
+      runnerDouble(),
+      runsDouble({
+        status: 'failed',
+        command: 'apply',
+        gateDecision: 'allowed',
+        gateRule: null,
+        exitCode: 1,
+        diagnostics: [
+          {
+            severity: 'error',
+            summary: 'VM clone',
+            detail:
+              'All attempts fail:\n#1: error cloning VM: received an HTTP 403 response - Reason: Permission check failed',
+          },
+        ],
+      }),
+    ).getTask(request);
+
+    expect(response.state).toBe(ProviderTaskState.PROVIDER_TASK_STATE_FAILED);
+    expect(response.failure?.code).toBe('TERRAFORM_RUN_FAILED');
+    expect(response.failure?.category).toBe(FailureCategory.FAILURE_CATEGORY_PERMANENT);
+  });
+
+  it('still retries a lock that arrives with the same retry-exhaustion prefix', async () => {
+    // The other side of the same coin: the prefix must not become a permanence signal either.
+    // A config lock is precisely what the retry policy exists for, and it is reported through the
+    // same wrapper as the 403 above.
+    const response = await provider(
+      runnerDouble(),
+      runsDouble({
+        status: 'failed',
+        command: 'apply',
+        gateDecision: 'allowed',
+        gateRule: null,
+        exitCode: 1,
+        diagnostics: [
+          {
+            severity: 'error',
+            summary: 'VM clone',
+            detail: 'All attempts fail:\n#1: error cloning VM: VM is locked (clone)',
+          },
+        ],
+      }),
+    ).getTask(request);
+
+    expect(response.failure?.code).toBe('TERRAFORM_RUN_RETRYABLE');
+    expect(response.failure?.category).toBe(FailureCategory.FAILURE_CATEGORY_TRANSIENT);
+  });
+
   it('reports a host systemd refusal as transient, not permanent', async () => {
     // Found live on a loaded shared server: the VM was cloned and configured, and only the final
     // start was refused because systemd on the *host* had a conflicting job queued. The error

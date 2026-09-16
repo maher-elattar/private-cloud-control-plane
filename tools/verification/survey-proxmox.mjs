@@ -240,6 +240,35 @@ const occupiedReserved = vmids.filter(
   (vmid) => vmid >= RESERVED_VMID_MINIMUM && vmid <= RESERVED_VMID_MAXIMUM,
 );
 
+// Which reserved VMIDs this credential may actually create. `VM.Allocate` on `/vms/<id>` is the
+// privilege a clone needs for its *target*, and it is granted per path.
+const permissions = await get('/access/permissions').catch(() => ({}));
+const allocatableReserved = [];
+const notAllocatableReserved = [];
+for (let vmid = RESERVED_VMID_MINIMUM; vmid <= RESERVED_VMID_MAXIMUM; vmid += 1) {
+  const granted = permissions?.[`/vms/${vmid}`]?.['VM.Allocate'] === 1;
+  (granted ? allocatableReserved : notAllocatableReserved).push(vmid);
+}
+
+/**
+ * The longest unbroken run of allocatable VMIDs.
+ *
+ * The seed needs a contiguous minimum and maximum, and holes scattered through the interval mean
+ * the widest honest claim is a sub-range rather than the whole reservation.
+ */
+const longestRun = (() => {
+  let best = { minimum: null, maximum: null, length: 0 };
+  let start = null;
+  let previous = null;
+  for (const vmid of allocatableReserved) {
+    if (start === null || previous === null || vmid !== previous + 1) start = vmid;
+    previous = vmid;
+    const length = vmid - start + 1;
+    if (length > best.length) best = { minimum: start, maximum: vmid, length };
+  }
+  return best;
+})();
+
 const evidence = {
   capturedAt: new Date().toISOString(),
   endpoint: secrets.endpoint,
@@ -297,6 +326,17 @@ const evidence = {
     occupied: occupiedReserved,
     free: occupiedReserved.length === 0,
     nextIdRestriction: clusterOptions?.['next-id'] ?? null,
+    // WHY a *free* interval is not an *allocatable* one, and why this had to be added:
+    // the survey originally answered "are these VMIDs unused?" and stopped there. On this server
+    // the token's VM privileges are explicit per-VMID ACL entries rather than a pool grant — the
+    // lab pool is empty — and twenty-two of the hundred reserved identifiers carry no entry. The
+    // control plane was configured with the whole interval, the allocator picked 910058, and the
+    // clone came back `HTTP 403 - Permission check failed` *after* the instance, the lease and the
+    // quota had already been committed. Reading the grants here turns that into a configuration
+    // fact measured up front instead of a failure discovered at apply time.
+    allocatable: allocatableReserved,
+    notAllocatable: notAllocatableReserved,
+    longestAllocatableRun: longestRun,
   },
   addressesInUseOnBridge: {
     bridge: EXPECTED_BRIDGE,

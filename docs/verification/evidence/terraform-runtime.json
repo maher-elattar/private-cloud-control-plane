@@ -1,0 +1,286 @@
+{
+  "startedAt": "2026-09-15T23:48:18.422Z",
+  "status": "passed",
+  "runId": "20260915234818",
+  "stack": [
+    "deploy/local/compose.phase4.yaml",
+    "deploy/local/compose.terraform.yaml"
+  ],
+  "checks": {
+    "stack-is-healthy": {
+      "control-api": "healthy",
+      "provisioning-orchestrator": "healthy",
+      "proxmox-provider": "healthy",
+      "kafka": "healthy",
+      "debezium-connect": "healthy",
+      "status": "passed",
+      "durationMs": 1392
+    },
+    "provider-is-the-terraform-adapter": {
+      "adapter": "terraform",
+      "profile": "proxmox-testsrv",
+      "node": "proxtest",
+      "terraform": "Terraform v1.15.9",
+      "pluginDirectory": "/opt/terraform/plugins",
+      "status": "passed",
+      "durationMs": 534
+    },
+    "reserved-range-is-clear": {
+      "reservedVmidsPresent": 0,
+      "virtualMachinesVisibleToThisToken": 1,
+      "status": "passed",
+      "durationMs": 1054
+    },
+    "failed-fixtures-from-earlier-runs-cleared": {
+      "clearedInstances": [],
+      "releasedAddresses": [
+        "192.168.4.4"
+      ],
+      "quotaInstances": 3,
+      "instancesLive": 2,
+      "quotaAddresses": 3,
+      "addressesHeld": 2,
+      "status": "passed",
+      "durationMs": 149
+    },
+    "catalog-and-provider-configuration-agree": {
+      "comparisons": "pnpm run proxmox:check-config passed against the compose database",
+      "status": "passed",
+      "durationMs": 198
+    },
+    "rest-accepts-the-create": {
+      "operationId": "b94b07e7-1dca-4f9e-bfb8-c44df97dcc64",
+      "targetId": "376a1088-cdd7-4f32-a5d9-dcf0309354c2",
+      "acceptedAt": "2026-09-15T23:48:21.808Z",
+      "statusUrl": "/v1/projects/00000000-0000-4000-8000-0000000000a1/operations/b94b07e7-1dca-4f9e-bfb8-c44df97dcc64",
+      "replayed": false,
+      "status": "passed",
+      "durationMs": 69
+    },
+    "the-same-key-replays": {
+      "replayed": true,
+      "instancesWithThisHostname": 1,
+      "status": "passed",
+      "durationMs": 13
+    },
+    "one-transaction-committed-instance-operation-lease-and-audit": {
+      "lifecycleState": "pending",
+      "operationState": "accepted",
+      "address": "192.168.4.4",
+      "prefixLength": 22,
+      "networkId": "testsrv-vmbr1",
+      "auditEntries": [
+        "create_instance:accepted"
+      ],
+      "status": "passed",
+      "durationMs": 15
+    },
+    "outbox-published-one-command": {
+      "rows": 1,
+      "topic": "provisioning.commands.v1",
+      "partitionKey": "376a1088-cdd7-4f32-a5d9-dcf0309354c2",
+      "status": "passed",
+      "durationMs": 4
+    },
+    "kafka-carried-the-command": {
+      "records": 1,
+      "key": "376a1088-cdd7-4f32-a5d9-dcf0309354c2",
+      "partition": 1,
+      "headers": [
+        "__debezium.context.connectorLogicalName",
+        "__debezium.context.connectorName",
+        "__debezium.context.runId",
+        "__debezium.context.taskId",
+        "event-id",
+        "id",
+        "outbox-id",
+        "replay-generation",
+        "schema-name",
+        "schema-version",
+        "traceparent"
+      ],
+      "payloadKeys": [
+        "aggregateId",
+        "aggregateType",
+        "causationId",
+        "correlationId",
+        "data",
+        "eventId",
+        "occurredAt",
+        "operationId",
+        "partitionKey",
+        "projectId",
+        "schemaName",
+        "schemaVersion",
+        "traceContext"
+      ],
+      "status": "passed",
+      "durationMs": 5362
+    },
+    "orchestrator-claimed-with-a-lease-and-a-fencing-token": {
+      "leaseOwner": "phase4-orchestrator-1",
+      "fencingToken": 6,
+      "stage": "polling_create",
+      "status": "passed",
+      "commandReceipts": [
+        "provisioning-orchestrator.v1"
+      ],
+      "durationMs": 11
+    },
+    "task-reference-was-persisted-before-polling": {
+      "reference": "83a7b75b-b047-4e4f-a8cf-c7cb92d7d6b8",
+      "runs": 1,
+      "firstCommand": "apply",
+      "status": "passed",
+      "durationMs": 5
+    },
+    "operation-reaches-succeeded": {
+      "state": "succeeded",
+      "stage": "completed",
+      "status": "passed",
+      "durationMs": 42404
+    },
+    "every-terraform-run-was-gated": {
+      "runs": [
+        {
+          "command": "apply",
+          "status": "succeeded",
+          "gate": "allowed",
+          "actions": {
+            "read": 0,
+            "no-op": 0,
+            "create": 1,
+            "delete": 0,
+            "update": 0,
+            "replace": 0
+          }
+        }
+      ],
+      "status": "passed",
+      "durationMs": 25
+    },
+    "proxmox-holds-the-expected-vm": {
+      "vmid": 910004,
+      "node": "proxtest",
+      "cores": 2,
+      "memoryMib": "4096",
+      "net0": "virtio=BC:24:11:82:10:DD,bridge=vmbr1,firewall=1,mtu=1400",
+      "ipconfig0": "gw=192.168.4.1,ip=192.168.4.4/22",
+      "nameserver": "1.1.1.1",
+      "leasedAddress": "192.168.4.4",
+      "status": "passed",
+      "durationMs": 994
+    },
+    "ownership-marker-identifies-this-instance": {
+      "managedBy": "private-cloud-control-plane",
+      "environment": "lab",
+      "markerKeys": [
+        "createOperationId",
+        "environment",
+        "instanceId",
+        "managedBy",
+        "projectId"
+      ],
+      "status": "passed",
+      "durationMs": 117
+    },
+    "projection-reads-back-what-was-built": {
+      "lifecycleState": "active",
+      "hostname": "tf-rt-20260915234818",
+      "observed": {
+        "exists": true,
+        "diskGiB": 32,
+        "cpuCount": 2,
+        "memoryMiB": 4096,
+        "observedAt": "2026-09-15T23:49:08.345Z",
+        "powerState": "running",
+        "markerMatch": true
+      },
+      "drift": "none",
+      "ipv4Address": "192.168.4.4",
+      "status": "passed",
+      "durationMs": 8
+    },
+    "no-route-leaks-the-provider-identifier": {
+      "taskReferenceClearedOnCompletion": true,
+      "vmidInTenantView": false,
+      "vmidInAdministrativeView": false,
+      "vmidRecordedOnTheWorkflow": "910004",
+      "status": "passed",
+      "durationMs": 16
+    },
+    "inventory-records-the-workspace-in-sync": {
+      "workspace": "instance-376a1088-cdd7-4f32-a5d9-dcf0309354c2",
+      "driftState": "in_sync",
+      "stateSerial": 2,
+      "status": "passed",
+      "durationMs": 3
+    },
+    "retention-detaches-through-the-api": {
+      "operationId": "1e6474e5-9c4d-4b7e-b202-2e636bc5d46d",
+      "vmStillPresent": true,
+      "lifecycleState": "retained",
+      "markerStillParses": true,
+      "onBoot": 0,
+      "status": "passed",
+      "durationMs": 23131
+    },
+    "retention-deadline-advanced-to-simulate-the-wait": {
+      "stampedDeadline": "2026-09-22T23:49:10.826Z",
+      "advancedBy": "set to one minute ago",
+      "guardsStillEnforced": [
+        "confirmation matches",
+        "instance is retained",
+        "live ownership"
+      ],
+      "status": "passed",
+      "durationMs": 6
+    },
+    "purge-destroys-only-when-authorized": {
+      "operationId": "6613fa0d-1b65-41d4-bddf-2f4c84ac9c93",
+      "reservedVmidsPresent": 0,
+      "wrongConfirmationRefused": true,
+      "workspaceDriftState": "absent",
+      "status": "passed",
+      "durationMs": 19791
+    },
+    "one-trace-spans-every-layer": {
+      "traceId": "fc3406d943fd4a62a4bcdf3c5912cec3",
+      "services": [
+        "control-api",
+        "debezium-connect",
+        "provisioning-orchestrator",
+        "proxmox-provider"
+      ],
+      "spanCount": 1972,
+      "status": "passed",
+      "durationMs": 472
+    },
+    "no-secret-reached-any-observable-surface": {
+      "surfacesScanned": [
+        "logs:control-api",
+        "logs:provisioning-orchestrator",
+        "logs:proxmox-provider",
+        "logs:reconciler",
+        "terraform.runs.diagnostics",
+        "control.outbox",
+        "audit.entries"
+      ],
+      "credentialsScannedFor": 2,
+      "surfacesAllowedToCarryTheSshKey": [
+        "control.outbox"
+      ],
+      "status": "passed",
+      "durationMs": 1102
+    }
+  },
+  "finishedAt": "2026-09-15T23:49:55.316Z",
+  "failures": [],
+  "fixture": {
+    "instanceId": "376a1088-cdd7-4f32-a5d9-dcf0309354c2",
+    "operationId": "b94b07e7-1dca-4f9e-bfb8-c44df97dcc64",
+    "hostname": "tf-rt-20260915234818",
+    "vmid": 910004,
+    "node": "proxtest"
+  }
+}

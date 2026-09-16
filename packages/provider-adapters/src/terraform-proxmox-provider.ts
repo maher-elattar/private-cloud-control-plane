@@ -255,10 +255,55 @@ const TRANSIENT_DIAGNOSTIC_PATTERNS: readonly RegExp[] = [
   /TransactionIsDestructive/,
 ];
 
-/** Whether a failed run's diagnostics describe a condition worth retrying. */
+/**
+ * Conditions that will fail identically forever, checked **before** the transient patterns.
+ *
+ * WHY this list has to win: `all attempts fail` above is bpg's *generic* retry-exhaustion prefix.
+ * It wraps every failure its retry wrapper gave up on, and it gives up on permanent failures too —
+ * so on its own that pattern classifies an HTTP 403 as "the provider was busy". Measured on real
+ * hardware: a clone to a VMID the API token had no `VM.Allocate` on produced
+ *
+ *   All attempts fail:
+ *   #1: error cloning VM: received an HTTP 403 response - Reason: Permission check failed
+ *
+ * and the workflow spent its whole retry budget on a request that could never have succeeded.
+ * This is the second time a wrong "retryable" verdict has cost a run here — the first was Proxmox
+ * answering a malformed SSH key with an HTTP 500 — and both share one shape: **the transport's
+ * status code describes how the server felt, not whether the request was possible.**
+ *
+ * Deliberately narrow. Each entry names a specific denial or a specific impossibility, never a
+ * general word like "error" or "failed", because a pattern that over-matches here wedges an
+ * instance that a retry would have fixed.
+ */
+const PERMANENT_DIAGNOSTIC_PATTERNS: readonly RegExp[] = [
+  // Authorization. The token lacks a privilege on this path, and waiting cannot grant it.
+  /HTTP 403 response/i,
+  /permission check failed/i,
+  // Authentication. A bad or expired token stays bad until someone rotates it.
+  /HTTP 401 response/i,
+  /authentication failure/i,
+  /invalid (?:ticket|csrf|token)/i,
+  // The request names something that is not there. A retry re-sends the same name.
+  /HTTP 404 response/i,
+  /does not exist/i,
+  /no such (?:vm|volume|storage|file)/i,
+  // The request names something that is already there, so the same request cannot ever be new.
+  /already exists/i,
+  // Proxmox rejecting the *content* of a parameter. Narrow on purpose: this is the server saying
+  // the value is wrong, not that it is busy.
+  /parameter verification failed/i,
+];
+
+/**
+ * Whether a failed run's diagnostics describe a condition worth retrying.
+ *
+ * Permanent patterns are tested first and win, because bpg's retry-exhaustion prefix appears on
+ * permanent failures as well as transient ones.
+ */
 function isTransient(diagnostics: readonly unknown[] | null): boolean {
   if (!diagnostics || diagnostics.length === 0) return false;
   const text = JSON.stringify(diagnostics);
+  if (PERMANENT_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text))) return false;
   return TRANSIENT_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text));
 }
 

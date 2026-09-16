@@ -23,9 +23,9 @@ into this work.
   [Terraform Call Map](docs/architecture/terraform-call-map.md).
 - `PROVIDER_ADAPTER` accepts `fake`, `proxmox` and `terraform`. **The default is still `fake`**
   and the direct adapter is unchanged apart from the shared marker fix of T-5.
-- **Every checkpoint T-0 through T-17 is complete.** The one item left open is named in T-17: the
-  full-stack verifier's own assertions were corrected after its last complete run, and it has not
-  been re-run to a clean pass because a host disk-full event left the Compose network unusable.
+- **Every checkpoint T-0 through T-17 is complete, with nothing left open.** Both verifiers pass
+  completely against the live server: `verify:terraform-adapter` 24 of 24 and
+  `verify:terraform-runtime` 24 of 24.
 - The server is left with **0 VMs inside the reserved interval 910000-910099** after every run.
   This is checked as both a precondition and a teardown assertion.
 
@@ -1164,18 +1164,86 @@ assertion was not.
   | `pnpm run terraform:check-modules`           | modules differ only in header and `lifecycle`          |
   | `pnpm run proxmox:generate-seed:check`       | seed current against the recorded survey               |
 
-#### One item left open, stated plainly
+#### The full-stack verifier: 24 of 24
 
-The full-stack verifier's **last complete run scored 20 of 22**, and the two failures were its own
-assertions rather than system defects: it read `state` where the projection carries
-`lifecycleState`, and it asserted a provider resource id on the tenant route, which deliberately
-does not expose one. Both were corrected, along with the `observeInstance` gap that T-16 then
-found independently — but the corrected verifier has **not been re-run to a clean 22 of 22**,
-because the host disk filled during the thirteenth image build and left the Compose network with
-dangling endpoints that only a Docker daemon restart clears.
+`pnpm run verify:terraform-runtime` passes completely, against the live server, including the
+trace assertion added by the plan audit below. One trace, **1972 spans**, spanning `control-api`,
+`debezium-connect`, `provisioning-orchestrator` and `proxmox-provider` — the context survives the
+Debezium hop as well as the Kafka and gRPC ones.
 
-Recorded as open rather than claimed as passing. What _is_ verified end to end on real hardware is
-the provider half at 24 of 24, including both drift drills; what is verified for the layers above
+Reaching it took four more defects and three corrected assertions of my own.
+
+**Defect — a Kafka handler failure recorded no reason.** The consumer logged
+`error_type: "error"` and nothing else, which for plain `Error` instances is every failure. A
+create that never reached the orchestrator produced twenty such lines and named no cause; the log
+was indistinguishable from a healthy consumer. The handler now records `error_message`, and the
+stack on the final attempt. This is the _third_ instance of the same defect in this phase — the
+provider's failed operations, the workflow's generic message, and now the consumer — and the
+pattern is worth naming: **a catch block that classifies without recording leaves nothing to
+diagnose.** Adding one field turned a twenty-minute dead end into an instant answer.
+
+**Defect — a permission denial was classified retryable.** With the reason recorded, the cause was
+`duplicate key value violates unique constraint "command_receipts_source_record_unique"`, and
+behind that a second failure: the clone came back
+
+    All attempts fail:
+    #1: error cloning VM: received an HTTP 403 response - Reason: Permission check failed
+
+and the adapter reported it as `TERRAFORM_RUN_RETRYABLE` — "the provider was busy". `all attempts
+fail` is bpg's _generic_ retry-exhaustion prefix: it wraps every failure its retry wrapper gave up
+on, including permanent ones. A permanent-pattern list now wins over the transient one, covering
+403, 401, 404, `already exists` and `parameter verification failed`. Deliberately narrow, and a
+lock arriving through the same prefix is still retried — both directions are tested.
+
+This is the second wrong "retryable" verdict in this phase, after Proxmox answering a malformed
+SSH key with an HTTP 500, and both share one shape: **the transport's status code describes how
+the server felt, not whether the request was possible.**
+
+**Defect — the survey measured "free" and called it "allocatable".** The 403 was correct. The
+token's VM privileges on this server are explicit per-VMID ACL entries rather than a pool grant —
+the lab pool is empty — and **22 of the 100 reserved identifiers carry none**, scattered through
+the interval. The control plane was configured with the whole reservation, the allocator picked
+910058, and the clone was refused _after_ the instance, the lease and the quota had been committed.
+
+The survey had answered "are these VMIDs unused?" and stopped there. It now reads
+`/access/permissions` and records `allocatable`, `notAllocatable` and the longest contiguous
+allocatable run; the seed generator derives the profile's resource range from that measurement
+instead of asserting 910000–910099. Measured: 78 allocatable, longest run **910002–910016**.
+A resource range a credential cannot allocate is a configuration that lies, and it fails at the
+latest possible moment.
+
+`pnpm run proxmox:check-config` then earned its place immediately: with the seed narrowed and the
+provider's environment still claiming the wide range, it reported
+`profile.resource_id_minimum: environment '910000' vs catalog '910002'` — the disagreement that
+had just put a VM at 910022, outside the range the verifier scans.
+
+**Defect — an integration test hardcoded a dated measurement.** The allocation test asserted
+`192.168.4.2`, and a re-survey found .2 live on the bridge, so the allocator correctly returned
+.3. The expectation is now derived from the seeded exclusions by walking the real /22, which
+asserts the allocator's _property_ rather than a value that changes when someone else joins the
+lab network.
+
+#### Three assertions of mine that were wrong, and why it matters
+
+The same check was wrong three times, each time in the same direction — assuming the API should
+surface provider internals:
+
+1. It required the **tenant** route to expose the VMID.
+2. Then the **administrative** route. The contract exposes it on neither, and that is the design:
+   THR-005's mitigation is _"provider-neutral contracts"_, so a Proxmox VMID in a REST body would
+   leak the provider's identifier scheme into an API meant to outlive the provider.
+3. Then it required `providerTaskReference` on a **completed** operation. The projection clears
+   that field on completion on purpose — the code says _"leaving a stale reference here would
+   invite an operator to poll a finished task"_ — so requiring it after success asserted the
+   opposite of the intended behaviour.
+
+What the check asserts now is the negative guarantee: neither view carries the VMID, a completed
+operation advertises no pollable handle, and the VMID is still recorded durably on the workflow
+row. That is stronger than anything the three earlier versions would have proved.
+
+Recorded because the correction matters more than the result: **a verifier that asserts what it
+assumed rather than what the system promises will manufacture defects.** Each of these three would
+have been reported as a product bug had I trusted my own assertion over the contract.
 
 #### Plan audit — two required items that were missing
 

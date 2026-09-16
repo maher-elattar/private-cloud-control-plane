@@ -1034,9 +1034,39 @@ describe('the live test server catalog', () => {
       .where('state', '=', 'active')
       .executeTakeFirstOrThrow();
 
-    // The allocator returns the lowest free address. .1 is the gateway and is always excluded,
-    // so the first instance must land on .2 — a long way below the occupied 192.168.7.x region.
-    expect(lease.address).toBe('192.168.4.2');
+    // The allocator returns the lowest address in the pool that is neither the gateway nor
+    // excluded. The expectation is *derived from the seeded exclusions* rather than written as a
+    // literal, because that list is a dated measurement of who else is live on the lab bridge —
+    // this assertion read `192.168.4.2` until a re-survey found .2 occupied and the allocator
+    // correctly returned .3. A test that hardcodes the answer fails whenever the lab network
+    // changes, which says nothing about the allocator.
+    const [network] = await db
+      .selectFrom('control.networks')
+      .select(['ipv4_cidr', 'gateway', 'exclusions'])
+      .where('id', '=', 'testsrv-vmbr1')
+      .execute();
+    const excluded = new Set([network.gateway, ...(network.exclusions as readonly string[])]);
+    const [networkAddress, prefixLength] = String(network.ipv4_cidr).split('/');
+    const toNumber = (address: string): number =>
+      address.split('.').reduce((total, octet) => total * 256 + Number(octet), 0);
+    const toAddress = (value: number): string =>
+      [24, 16, 8, 0].map((shift) => (value >>> shift) & 0xff).join('.');
+
+    // Walk the usable host space of the real prefix. This is a /22, so it spans four third
+    // octets and a single-octet loop would miss most of it.
+    const first = toNumber(networkAddress) + 1;
+    const last = toNumber(networkAddress) + 2 ** (32 - Number(prefixLength)) - 2;
+    let lowestFree: string | undefined;
+    for (let value = first; value <= last; value += 1) {
+      const candidate = toAddress(value);
+      if (!excluded.has(candidate)) {
+        lowestFree = candidate;
+        break;
+      }
+    }
+    expect(lowestFree, 'the seeded pool has no free address at all').toBeDefined();
+
+    expect(lease.address).toBe(lowestFree);
 
     const instance = await db
       .selectFrom('control.instances')

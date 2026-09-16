@@ -324,6 +324,17 @@ async function waitForOperation(operationId, authorization, expected, timeoutMs,
 }
 
 /** The fixture this run creates, filled in as the layers are asserted. */
+/**
+ * Renders a trace id as lower-case hex, whichever spelling it arrived in.
+ *
+ * Tempo's OTLP JSON carries ids as base64 of the raw 16 bytes; `traceparent` carries them as 32
+ * hex characters. Both name the same trace, so a comparison has to pick one spelling.
+ */
+function normalizeTraceId(value) {
+  if (/^[0-9a-f]{32}$/i.test(value)) return value.toLowerCase();
+  return Buffer.from(value, 'base64').toString('hex');
+}
+
 /** Tempo's query API, as published by `compose.phase4.yaml`. */
 const TEMPO_BASE = 'http://127.0.0.1:3200';
 
@@ -937,25 +948,64 @@ await check('projection-reads-back-what-was-built', async () => {
   };
 });
 
-await check('the-administrative-route-carries-the-provider-resource', async () => {
-  // The restricted-operational view, and the only place the VMID is exposed. This is what closes
-  // the loop: the id the administrator can see must be the VM the server actually holds.
-  const operationView = await operation(fixture.operationId, administrator, {
+await check('no-route-leaks-the-provider-identifier', async () => {
+  // This check was wrong three times before it was right, and each wrong version was wrong in the
+  // same direction: it assumed the API should surface provider internals.
+  //
+  //  1. It required the *tenant* route to expose the VMID.
+  //  2. Then the *administrative* route. The contract exposes it on neither, and that is the
+  //     design: THR-005's mitigation is "provider-neutral contracts", so a Proxmox VMID in a REST
+  //     body would leak the provider's identifier scheme into an API meant to outlive the
+  //     provider.
+  //  3. Then it required `providerTaskReference` on a *completed* operation. The projection
+  //     clears that field on completion on purpose — "leaving a stale reference here would invite
+  //     an operator to poll a finished task" — so requiring it after success asserted the
+  //     opposite of the intended behaviour. That the reference is durable *while in flight* is
+  //     already proved by `task-reference-was-persisted-before-polling`.
+  //
+  // What is left is the negative guarantee, which is the one actually worth testing and stronger
+  // than anything the three earlier versions would have proved.
+  const tenantView = await operation(fixture.operationId, developer);
+  const administrativeView = await operation(fixture.operationId, administrator, {
     administrative: true,
   });
-  assert(operationView, 'the administrative route could not find the create operation');
+  assert(administrativeView, 'the administrative route could not find the create operation');
   assert.equal(
-    String(operationView.providerResourceId ?? ''),
-    String(fixture.vmid),
-    `the administrative view reports ${operationView.providerResourceId}, the server holds ${fixture.vmid}`,
+    administrativeView.providerTaskReference ?? null,
+    null,
+    'a completed operation still advertises a task reference an operator could poll',
   );
-  assert(
-    operationView.providerTaskReference,
-    'no provider task reference on the administrative view',
+
+  const vmid = String(fixture.vmid);
+  for (const [name, view] of [
+    ['tenant', tenantView],
+    ['administrative', administrativeView],
+  ]) {
+    assert(
+      !JSON.stringify(view ?? {}).includes(vmid),
+      `the ${name} view carries the provider VMID ${vmid}`,
+    );
+  }
+
+  // And it is reachable where it belongs, so "not in the API" does not mean "lost". The workflow
+  // row is where it lives: `terraform.workspaces` records how Terraform tracks an instance —
+  // workspace name, state serial, lineage, drift — and deliberately not the provider's id for it,
+  // because that is a fact about the VM rather than about the state document.
+  const [workflow] = await query(
+    'SELECT provider_resource_id FROM workflow.workflows WHERE instance_id = $1',
+    [fixture.instanceId],
   );
+  assert.equal(
+    String(workflow?.provider_resource_id ?? ''),
+    vmid,
+    'no durable record holds the VMID the server actually built',
+  );
+
   return {
-    providerResourceId: operationView.providerResourceId,
-    providerTaskReference: operationView.providerTaskReference,
+    taskReferenceClearedOnCompletion: true,
+    vmidInTenantView: false,
+    vmidInAdministrativeView: false,
+    vmidRecordedOnTheWorkflow: vmid,
   };
 });
 
@@ -1162,8 +1212,18 @@ await check('one-trace-spans-every-layer', async () => {
   assert(allSpans.length > 0, 'the trace carries no spans');
   // Every span must belong to the trace the verifier started. A span under a different trace id
   // in the same response would mean Tempo matched something else.
-  const foreign = allSpans.filter((span) => span.traceId && span.traceId !== fixture.traceId);
-  assert.deepEqual(foreign, [], 'the response carries spans from another trace');
+  //
+  // Tempo returns span ids as **base64 of the raw bytes** (`74aEXz1hQK2U6DFOuQtBDw==`), not as
+  // the hex the `traceparent` header carries. Comparing the two spellings directly reported every
+  // span as foreign — a bug in this assertion, not in the propagation it was checking.
+  const foreign = allSpans.filter(
+    (span) => span.traceId && normalizeTraceId(span.traceId) !== fixture.traceId,
+  );
+  assert.deepEqual(
+    foreign.map((span) => normalizeTraceId(span.traceId)),
+    [],
+    'the response carries spans from another trace',
+  );
 
   return {
     traceId: fixture.traceId,

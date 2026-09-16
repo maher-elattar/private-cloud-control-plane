@@ -298,12 +298,26 @@ export class KafkaConsumerRunner {
         return await this.options.handle(record);
       } catch (error: unknown) {
         lastError = error;
+        // WHY the message and not only the type: `error_type` alone is almost always `"error"`,
+        // because most failures here are plain `Error` instances. A handler that retried three
+        // times and gave up then leaves a log line saying that something failed and nothing about
+        // what — which is indistinguishable from a healthy consumer to anyone reading the logs,
+        // and leaves the operator with no starting point at all. Measured: a create that never
+        // reached the orchestrator produced twenty such lines and named no cause.
+        //
+        // The message is the handler's own text, not tenant data: these are decode failures,
+        // constraint violations and transport errors. The stack is included only on the final
+        // attempt, where someone is actually going to read it.
         structuredLog(attempt < this.maximumAttempts ? 'warn' : 'error', 'kafka_handler_failed', {
           topic: this.options.topic,
           consumer_group: this.options.groupId,
           attempt,
           exhausted: attempt === this.maximumAttempts,
           error_type: error instanceof Error ? error.name : 'UnknownError',
+          error_message: error instanceof Error ? error.message : String(error),
+          ...(attempt === this.maximumAttempts && error instanceof Error && error.stack
+            ? { error_stack: error.stack }
+            : {}),
         });
         if (attempt < this.maximumAttempts) {
           await heartbeat();
