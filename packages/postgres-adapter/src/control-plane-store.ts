@@ -2327,14 +2327,32 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     };
   }
 
-  /** Lists enabled catalog networks. */
+  /**
+   * Lists enabled catalog networks, each naming the provider profile it belongs to.
+   *
+   * WHY the join: acceptance resolves the provider profile through the requested image and then
+   * refuses the request unless that profile's network is the one named. A client that cannot see
+   * which network belongs to which profile has no way to offer only valid combinations, so it
+   * offers invalid ones and the user meets a 400 for a choice the interface presented.
+   *
+   * A left join, because a network no profile references is still a catalog row — it simply has
+   * no pairing to report, and hiding it here would make it invisible rather than unusable.
+   */
   public async listNetworks(_projectId: string, page: PageRequest): Promise<Page<NetworkView>> {
     const rows = await this.db
       .selectFrom('control.networks')
-      .selectAll()
-      .where('enabled', '=', true)
-      .$if(Boolean(page.cursor), (query) => query.where(seekAscending(page.cursor, 'id')))
-      .orderBy('id')
+      .leftJoin(
+        'control.provider_profiles',
+        'control.provider_profiles.network_id',
+        'control.networks.id',
+      )
+      .selectAll('control.networks')
+      .select('control.provider_profiles.id as provider_profile_id')
+      .where('control.networks.enabled', '=', true)
+      .$if(Boolean(page.cursor), (query) =>
+        query.where(seekAscending(page.cursor, 'control.networks.id')),
+      )
+      .orderBy('control.networks.id')
       .limit(page.limit + 1)
       .execute();
     const trimmed = paginate(rows, page.limit, (row) => ({ sortKey: row.id, id: row.id }));
@@ -2342,6 +2360,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       items: trimmed.items.map((row) => ({
         id: row.id,
         name: row.name,
+        ...(row.provider_profile_id ? { providerProfileId: row.provider_profile_id } : {}),
         ipv4Cidr: row.ipv4_cidr,
         gateway: row.gateway,
         dnsServers: parseJsonColumn<string[]>(row.dns_servers),

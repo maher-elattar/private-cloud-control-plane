@@ -113,6 +113,15 @@ export interface TerraformProxmoxConfiguration {
    * through `PROXMOX_TEMPLATE_DISK_FORMAT`, so the answer is both honest and free.
    */
   readonly templateDiskFormat: 'qcow2' | 'raw';
+  /**
+   * The Proxmox resource pool created instances join.
+   *
+   * An authorization control. Proxmox checks `VM.Allocate` on `/pool/<id>` when a create names a
+   * pool and on `/vms/<vmid>` when it does not — and it **deletes a VMID's ACL entry when the VM
+   * is destroyed**, so a deployment authorized per-VMID loses one usable identifier per instance
+   * lifecycle. A pool grant outlives the VMs in it.
+   */
+  readonly poolId: string;
   readonly imageId: string;
   readonly storage: string;
   readonly diskInterface: string;
@@ -752,6 +761,7 @@ export class TerraformProxmoxProvider {
       datastore_id: this.configuration.storage,
       disk_interface: this.configuration.diskInterface,
       disk_format: this.configuration.templateDiskFormat,
+      pool_id: this.configuration.poolId,
       disk_gib: Number(resources.diskGib ?? 0),
       cpu_cores: resources.cpuCount ?? 1,
       memory_mib: Number(resources.memoryMib ?? 512),
@@ -1620,6 +1630,7 @@ export class TerraformProxmoxProvider {
       datastore_id: this.configuration.storage,
       disk_interface: this.configuration.diskInterface,
       disk_format: this.configuration.templateDiskFormat,
+      pool_id: this.configuration.poolId,
       bridge: this.configuration.bridge,
       network_mtu: this.configuration.networkMtu,
       dns_domain: this.configuration.dnsDomain,
@@ -1685,6 +1696,7 @@ export class TerraformProxmoxProvider {
       datastore_id: this.configuration.storage,
       disk_interface: this.configuration.diskInterface,
       disk_format: this.configuration.templateDiskFormat,
+      pool_id: this.configuration.poolId,
       disk_gib: 32,
       cpu_cores: 1,
       memory_mib: 512,

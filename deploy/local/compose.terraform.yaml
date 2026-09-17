@@ -70,6 +70,12 @@ services:
       PROXMOX_IMAGE_ID: ${PROXMOX_IMAGE_ID:?set by tools/terraform/compose-env.mjs}
       PROXMOX_PROJECT_ID: ${PROXMOX_PROJECT_ID:?set by tools/terraform/compose-env.mjs}
       PROXMOX_TEMPLATE_VMID: ${PROXMOX_TEMPLATE_VMID:?set by tools/terraform/compose-env.mjs}
+      # The template's disk format, measured by the survey. It decides whether the adapter reports
+      # snapshot support, because Proxmox refuses to snapshot a `raw` disk and a full clone
+      # inherits its template's format. Without this the adapter defaults to `raw` and reports
+      # snapshots unavailable — which is the safe default, and wrong for a qcow2 template.
+      PROXMOX_TEMPLATE_DISK_FORMAT: ${PROXMOX_TEMPLATE_DISK_FORMAT:?set by tools/terraform/compose-env.mjs}
+      PROXMOX_POOL_ID: ${PROXMOX_POOL_ID:?set by tools/terraform/compose-env.mjs}
       PROXMOX_STORAGE: ${PROXMOX_STORAGE:?set by tools/terraform/compose-env.mjs}
       PROXMOX_BRIDGE: ${PROXMOX_BRIDGE:?set by tools/terraform/compose-env.mjs}
       PROXMOX_DISK_INTERFACE: ${PROXMOX_DISK_INTERFACE:?set by tools/terraform/compose-env.mjs}

@@ -30,6 +30,7 @@ const configuration: TerraformProxmoxConfiguration = {
   node: 'proxtest',
   templateVmid: 9100,
   templateDiskFormat: 'qcow2',
+  poolId: 'control-plane-lab',
   imageId: 'ubuntu-noble-2404',
   storage: 'local',
   diskInterface: 'scsi0',

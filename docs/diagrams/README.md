@@ -73,6 +73,8 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | Terraform capability routing    | `mermaid/terraform-capability-routing.mmd` | `rendered/terraform-capability-routing.mermaid.svg` |
 | Terraform request path          | `mermaid/terraform-request-path.mmd` | `rendered/terraform-request-path.mermaid.svg` |
 | Snapshot capability chain       | `mermaid/snapshot-capability-chain.mmd` | `rendered/snapshot-capability-chain.mermaid.svg` |
+| Console session and proxy       | `mermaid/console-session.mmd` | `rendered/console-session.mermaid.svg` |
+| Proxmox authorization erosion   | `mermaid/proxmox-authorization.mmd` | `rendered/proxmox-authorization.mermaid.svg` |
 
 ## Mermaid Editing And Validation
 

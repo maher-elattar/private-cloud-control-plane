@@ -236,6 +236,7 @@ function createTerraformProvider(): ReturnType<typeof createProvider> {
       node: requiredEnvironment('PROXMOX_NODE'),
       templateVmid: requiredInteger('PROXMOX_TEMPLATE_VMID'),
       templateDiskFormat: templateDiskFormat(),
+      poolId: requiredEnvironment('PROXMOX_POOL_ID'),
       imageId: requiredEnvironment('PROXMOX_IMAGE_ID'),
       storage: requiredEnvironment('PROXMOX_STORAGE'),
       diskInterface: requiredEnvironment('PROXMOX_DISK_INTERFACE'),

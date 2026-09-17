@@ -43,6 +43,7 @@
     "test:tools": "node --test \"tools/**/*.spec.mjs\"",
     "typecheck": "nx run-many -t typecheck",
     "verify:audit-topology": "nx run-many -t build --projects=application,postgres-adapter,provider-adapters && node tools/verification/verify-audit-topology.mjs",
+    "verify:console": "node tools/verification/verify-console.mjs",
     "verify:phase4-runtime": "node tools/verification/verify-phase4-runtime.mjs",
     "verify:phase6-runtime": "node tools/kubernetes/verify-phase6.mjs",
     "verify:terraform-adapter": "nx run-many -t build --projects=provider-adapters,postgres-adapter && node tools/verification/verify-terraform-adapter.mjs",

@@ -187,7 +187,26 @@ function ConsoleData({ children }: { readonly children: ReactNode }) {
   const quota = useQuery({ queryKey: ['quota', projectId], queryFn: () => unwrap(getQuota()) });
   const flavors = useQuery({
     queryKey: ['flavors', projectId],
-    queryFn: () => unwrap(listFlavors({ limit: 100 })),
+    queryFn: async () => {
+      const page = await unwrap(listFlavors({ limit: 100 }));
+      // Smallest first, by what a flavour actually costs to run.
+      //
+      // WHY re-sort rather than take the catalog's order: the API orders by id, which is
+      // alphabetical — and `lab-medium` sorts before `lab-small`. The wizard defaults to the
+      // first entry, so it defaulted to the *larger, dearer* flavour, and a user accepting the
+      // default got more than they probably wanted. It also meant a fresh server had nothing
+      // larger to grow into.
+      return {
+        ...page,
+        items: [...page.items].sort(
+          (left, right) =>
+            left.cpuCount - right.cpuCount ||
+            left.memoryMiB - right.memoryMiB ||
+            left.minimumDiskGiB - right.minimumDiskGiB ||
+            left.id.localeCompare(right.id),
+        ),
+      };
+    },
     // The catalog is operator-curated and changes rarely; refetching it every few seconds would
     // be pure noise.
     staleTime: 5 * 60_000,

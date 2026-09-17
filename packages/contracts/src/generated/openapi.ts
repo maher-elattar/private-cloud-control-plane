@@ -939,6 +939,7 @@ export interface components {
       /** Format: date-time */
       readonly createdAt: string;
       readonly id: string;
+      readonly providerProfileId?: string;
       /** Format: date-time */
       readonly updatedAt: string;
     };

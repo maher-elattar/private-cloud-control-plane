@@ -23,6 +23,19 @@ resource "proxmox_virtual_environment_vm" "instance" {
   description = var.ownership_marker
   tags        = var.tags
 
+  # The resource pool the instance belongs to.
+  #
+  # WHY this is an authorization control and not organisation. Proxmox checks `VM.Allocate` on
+  # `/pool/<id>` when a create names a pool, and on `/vms/<vmid>` when it does not. Without a pool
+  # this deployment needed one ACL entry per reserved VMID — and **Proxmox deletes a VMID's ACL
+  # entry when the VM is destroyed**, so every instance lifecycle permanently consumed one of
+  # them. Measured: eight entries disappeared across a single afternoon of verification runs, and
+  # the next create on a consumed VMID failed with `HTTP 403 - Permission check failed` after the
+  # control plane had already committed the instance, the lease and the quota.
+  #
+  # A pool grant cannot erode, because the pool outlives the VMs in it.
+  pool_id = var.pool_id
+
   # Full clone, so the instance does not depend on the template's disk staying put.
   clone {
     vm_id        = var.template_vm_id
@@ -133,6 +146,17 @@ resource "proxmox_virtual_environment_vm" "instance" {
       # plans a destroy-and-create. Orphan recovery — adopting a VM that exists while state does
       # not — is impossible without it. Measured; see the walkthrough's finding 6.
       clone,
+
+      # WHY pool membership is ignored after creation: the pool is what *authorizes* the create —
+      # Proxmox checks `VM.Allocate` on `/pool/<id>` when a request names one — and membership is
+      # established by that create. bpg does not read the membership back into state, so every
+      # later plan sees `pool_id` as a change and re-adds a VM that is already in the pool, which
+      # Proxmox refuses with `HTTP 500 - VM <id> is already a pool member`.
+      #
+      # Measured: the create succeeded, then the configure apply that follows it failed on the
+      # re-add, so the instance never reached `active` and every subsequent operation failed the
+      # same way. Ignoring it afterwards leaves the create doing the one thing it needs to.
+      pool_id,
     ]
   }
 }

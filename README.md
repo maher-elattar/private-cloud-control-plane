@@ -273,6 +273,8 @@ Start here if you are new to the codebase. It is not a conventional `Controller 
 
 These are design documents for work that has not been implemented. They are plans, not descriptions of the system.
 
+- [Customer Console](docs/architecture/console.md): the tenant web console — what it is backed by, what it deliberately does not claim, and why its session lives on a server rather than in the browser
+- [Running the Console](docs/operations/console-operations.md): the Compose commands, the demo account, and the two things that will bite
 - [Terraform Request Path](docs/diagrams/mermaid/terraform-request-path.mmd): one create request from the REST boundary to the VM and back through the read projection, with every arrow asserted by the live verifier
 - [Terraform Call Map](docs/architecture/terraform-call-map.md): what the Terraform adapter does for each provider-port method, which nine go through Terraform and which six cannot, and the environmental limitations measured on the target
 - [Terraform Manual Walkthrough](docs/architecture/terraform-manual-walkthrough.md): what the `bpg/proxmox` provider actually does on real hardware, measured before any of it was wired into a workflow

@@ -84,6 +84,24 @@ const ROLE_PRIVILEGES = [
   // Disk allocation on the one allowlisted storage.
   'Datastore.AllocateSpace',
   'Datastore.Audit',
+
+  // WHY a pool privilege appears in a role that is otherwise per-VM.
+  //
+  // Proxmox authorizes a create against `/pool/<id>` when the request names a pool, and against
+  // `/vms/<vmid>` when it does not — and it **deletes a VMID's ACL entry when the VM is
+  // destroyed**. A deployment authorized per-VMID therefore loses one usable identifier per
+  // instance lifecycle: measured, eight of the hundred reserved identifiers were consumed by a
+  // single afternoon of verification runs, and the next create on a consumed identifier failed
+  // with `HTTP 403 - Permission check failed` *after* the control plane had committed the
+  // instance, the lease and the quota.
+  //
+  // Creating into a pool fixes that, because the pool outlives the VMs in it. `VM.Allocate` on
+  // the pool authorizes the create; `Pool.Allocate` is separately required to *add the VM to* the
+  // pool, which is the step that failed with
+  // `Permission check failed (/pool/control-plane-lab, Pool.Allocate)`.
+  //
+  // It is granted only on this deployment's own pool, so it cannot touch another.
+  'Pool.Allocate',
 ];
 
 /** Read-only node access, needed by validateProfile's node-status check. */

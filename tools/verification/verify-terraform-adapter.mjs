@@ -72,6 +72,15 @@ const TEMPLATE_VMID = 9100;
  * replacement.
  */
 const TEMPLATE_DISK_FORMAT = 'qcow2';
+
+/**
+ * The pool created instances join, which is what authorizes the create.
+ *
+ * Proxmox deletes a VMID's ACL entry when its VM is destroyed, so a deployment authorized
+ * per-VMID loses one usable identifier per instance lifecycle. Creating into a pool the token is
+ * granted on cannot erode that way.
+ */
+const POOL_ID = 'control-plane-lab';
 const NETWORK_MTU = 1400;
 
 /** The address this run's VM is given. Inside the pool, and excluded from no other lease. */
@@ -143,6 +152,7 @@ function fixtureTfvars() {
     datastore_id: STORAGE,
     disk_interface: 'scsi0',
     disk_format: TEMPLATE_DISK_FORMAT,
+    pool_id: POOL_ID,
     disk_gib: desired.diskGib,
     cpu_cores: desired.cpuCores,
     memory_mib: desired.memoryMib,
@@ -289,6 +299,7 @@ const provider = new TerraformProxmoxProvider(
     node: NODE,
     templateVmid: TEMPLATE_VMID,
     templateDiskFormat: TEMPLATE_DISK_FORMAT,
+    poolId: POOL_ID,
     imageId: IMAGE_ID,
     storage: STORAGE,
     diskInterface: 'scsi0',

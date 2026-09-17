@@ -85,7 +85,32 @@ export function CreateServer() {
   // The first entry of each catalog is the default, so a wizard opened cold is already valid.
   const flavor = flavors.find((entry) => entry.id === flavorId) ?? flavors[0];
   const image = images.find((entry) => entry.id === imageId) ?? images[0];
-  const network = networks.find((entry) => entry.id === networkId) ?? networks[0];
+
+  /**
+   * Only the networks that belong to the chosen image's provider profile.
+   *
+   * WHY this filter is load-bearing rather than cosmetic: acceptance resolves the provider profile
+   * through the *image*, then refuses the request unless the named network is that profile's. The
+   * catalog endpoints return every enabled image and every enabled network across all profiles,
+   * so an unfiltered wizard offers pairs that cannot work — and it did: the default selection
+   * combined one profile's image with another's network, and every create was rejected with a 400
+   * for a combination the interface had presented as available.
+   *
+   * Networks with no profile are kept, because a catalog row nothing references is unusable rather
+   * than invalid, and hiding it would make its absence unexplainable.
+   */
+  const eligibleNetworks = useMemo(
+    () =>
+      networks.filter(
+        (candidate) =>
+          candidate.providerProfileId === undefined ||
+          image === undefined ||
+          candidate.providerProfileId === image.providerProfileId,
+      ),
+    [networks, image],
+  );
+
+  const network = eligibleNetworks.find((entry) => entry.id === networkId) ?? eligibleNetworks[0];
 
   const keys = useMemo(() => parseKeys(sshKeys), [sshKeys]);
   const tooManyKeys = keys.length > MAXIMUM_SSH_KEYS;
@@ -243,8 +268,12 @@ export function CreateServer() {
           </StepperStep>
 
           <StepperStep state={network ? 'done' : 'optional'} title="Network">
+            <p className="mb-4 text-sm text-text-muted">
+              Networks are listed for the image selected above. An image and a network belong to the
+              same provider profile, and the two cannot be mixed.
+            </p>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {networks.map((candidate) => {
+              {eligibleNetworks.map((candidate) => {
                 const selected = candidate.id === network?.id;
                 return (
                   <button
@@ -298,6 +327,14 @@ export function CreateServer() {
                     <span className="block text-[1.0625rem] text-text">{candidate.name}</span>
                     <span className="mt-1 block text-sm text-text-muted">
                       {candidate.architecture}
+                    </span>
+                    {/* The profile, because it decides which networks appear below and which
+                        provider will serve the request. The catalog is not scoped to the
+                        deployment's active provider, so a catalog holding more than one profile
+                        can offer an image the running provider refuses — and naming it here is
+                        the only way that is visible before the request is made. */}
+                    <span className="mt-1 block text-[0.6875rem] uppercase tracking-wide text-text-disabled">
+                      {candidate.providerProfileId}
                     </span>
                   </button>
                 );
@@ -410,7 +447,11 @@ export function CreateServer() {
             >
               <MinusIcon size={16} />
             </button>
-            <span className="text-[1.0625rem] text-text">
+            {/* `role="status"` with a polite live region, so a screen reader announces the count
+                when the stepper changes it rather than leaving the press silent. It also gives
+                the value one unambiguous accessible name — the price breakdown below repeats the
+                same words, which made it impossible to address this one specifically. */}
+            <span role="status" aria-live="polite" className="text-[1.0625rem] text-text">
               {count} Server{count === 1 ? '' : 's'}
             </span>
             <button

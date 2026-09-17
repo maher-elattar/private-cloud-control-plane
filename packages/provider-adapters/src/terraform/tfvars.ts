@@ -32,6 +32,8 @@ export interface InstanceTfvars {
    * makes every later plan a replacement rather than converting anything.
    */
   readonly disk_format: 'qcow2' | 'raw';
+  /** The resource pool created instances join, which is what authorizes the create. */
+  readonly pool_id: string;
   readonly disk_gib: number;
   readonly cpu_cores: number;
   readonly memory_mib: number;

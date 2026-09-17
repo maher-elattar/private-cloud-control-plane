@@ -13,15 +13,3 @@ allowBuilds:
   protobufjs: false
   unrs-resolver: true
   '@nestjs/core': false
-
-# Forced resolutions.
-#
-# `fastify` is a direct dependency of control-api, but `@nestjs/platform-fastify` resolves its own
-# copy, and that nested copy was the one carrying two advisories — a schema validation bypass and
-# X-Forwarded-* spoofing under a trustProxy hop count. The first matters here in particular:
-# control-api's rejection of unknown body properties rests on schema validation, so a bypass in it
-# undermines the `forbidNonWhitelisted` guarantee the whole REST surface depends on.
-#
-# Same major version, so this is a patch-level pin rather than an upgrade.
-overrides:
-  fastify: 5.12.4

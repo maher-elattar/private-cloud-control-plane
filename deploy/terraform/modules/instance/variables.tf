@@ -70,6 +70,24 @@ variable "disk_interface" {
   type        = string
 }
 
+variable "pool_id" {
+  description = <<-EOT
+    The Proxmox resource pool created instances join.
+
+    An authorization control rather than organisation: Proxmox checks `VM.Allocate` on
+    `/pool/<id>` when a create names a pool, and on `/vms/<vmid>` when it does not. Per-VMID
+    grants erode, because Proxmox deletes a VMID's ACL entry when its VM is destroyed — so a
+    deployment authorized that way loses one usable identifier per instance lifecycle. A pool
+    grant outlives the VMs in it.
+  EOT
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$", var.pool_id))
+    error_message = "pool_id must be a Proxmox pool identifier."
+  }
+}
+
 variable "disk_format" {
   description = <<-EOT
     The clone's disk format, which must equal the template's real format.

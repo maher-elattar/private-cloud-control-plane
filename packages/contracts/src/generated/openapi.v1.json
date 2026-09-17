@@ -2370,6 +2370,10 @@
                 "type": "string",
                 "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
               },
+              "providerProfileId": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+              },
               "createdAt": {
                 "type": "string",
                 "format": "date-time"

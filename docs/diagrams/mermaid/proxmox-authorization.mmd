@@ -1,0 +1,33 @@
+flowchart TB
+    subgraph before["Per-VMID grants: erodes"]
+        B1["Token granted VM.Allocate<br/>on /vms/910000 … /vms/910099"]
+        B2["Create names a VMID<br/>Proxmox checks /vms/&lt;vmid&gt;"]
+        B3["VM destroyed"]
+        B4["Proxmox deletes that VMID's<br/>ACL entry with the VM"]
+        B5["Next create on that VMID:<br/>HTTP 403 Permission check failed"]
+        B1 --> B2 --> B3 --> B4 --> B5
+    end
+
+    subgraph after["Pool grant: survives"]
+        A1["Token granted VM.Allocate<br/>and Pool.Allocate on<br/>/pool/control-plane-lab"]
+        A2["Create names the pool<br/>Proxmox checks /pool/&lt;id&gt;"]
+        A3["VM destroyed"]
+        A4["The pool is untouched —<br/>it outlives the VMs in it"]
+        A5["Next create succeeds"]
+        A1 --> A2 --> A3 --> A4 --> A5
+    end
+
+    N1["Measured: eight of the hundred reserved identifiers were<br/>consumed by one afternoon of verification runs. The failure<br/>arrives after the control plane has already committed the<br/>instance, the IPv4 lease and the quota slice."]
+    N2["Pool.Allocate is separately required to <i>add</i> a VM to a pool.<br/>Without it the create fails with<br/>Permission check failed (/pool/control-plane-lab, Pool.Allocate)."]
+    N3["Membership is ignored after creation: bpg does not read it<br/>back, so every later plan re-adds a VM already in the pool<br/>and Proxmox answers HTTP 500 already a pool member."]
+
+    B4 -.- N1
+    A1 -.- N2
+    A2 -.- N3
+
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef note fill:#f8fafc,stroke:#94a3b8,color:#334155
+    class B1,B2,B3,B4,B5 bad
+    class A1,A2,A3,A4,A5 good
+    class N1,N2,N3 note

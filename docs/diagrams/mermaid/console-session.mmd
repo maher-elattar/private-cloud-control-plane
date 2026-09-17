@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant B as Browser (SPA)
+    participant C as console-bff
+    participant I as local-oidc
+    participant A as control-api
+
+    Note over B,C: Same origin. The API sets no CORS headers at all,<br/>so a console served elsewhere could not call it.
+
+    User->>B: opens /servers/abc/networking
+    B->>C: GET /auth/session
+    C-->>B: 401 AUTHENTICATION_REQUIRED
+    B->>B: redirect to /login, remembering the path
+
+    User->>B: username and password
+    B->>C: POST /auth/login
+    C->>I: POST /token (grant_type=password)
+    I->>I: scrypt verify, timing-safe
+    I-->>C: access_token (15 min)
+    C->>C: store token in a server-side session
+    C-->>B: Set-Cookie console_session (httpOnly, SameSite=Strict)<br/>body carries subject and project, never a token
+    B->>B: return to /servers/abc/networking
+
+    B->>C: GET /v1/projects/{id}/instances
+    C->>C: read session from the cookie
+    C->>A: same request + Authorization: Bearer
+    A-->>C: InstancePage
+    C-->>B: InstancePage
+
+    Note over B: A cross-site scripting bug can act through the<br/>session but cannot exfiltrate the credential:<br/>the browser never receives one.
+
+    B->>C: POST /v1/.../instances (Idempotency-Key derived from the body)
+    C->>A: forwarded with the token
+    A-->>C: 202 MutationAccepted + statusUrl
+    C-->>B: 202
+    loop until terminal
+        B->>C: GET /v1/.../operations
+        C->>A: forwarded
+    end

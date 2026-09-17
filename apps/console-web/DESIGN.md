@@ -49,28 +49,33 @@ the bare letters `FI` and the location pickers stop being scannable.
 
 ## Relationship to the control-plane API
 
-Wired to `packages/contracts/openapi/control-plane.v1.yaml`:
+**This section was rewritten.** It previously claimed eleven operations were wired; three existed
+in `data/api.ts` and one of those was ever called. The rest ran against a `localStorage` mock, and
+the create never reached the backend at all.
 
-| Screen                               | Operation                                                               |
-| ------------------------------------ | ----------------------------------------------------------------------- |
-| Servers list                         | `listInstances`                                                         |
-| Wizard catalog                       | `listFlavors`, `listImages`, `listNetworks`                             |
-| Create & Buy now                     | `createInstance` with an `Idempotency-Key`                              |
-| Provisioning progress, activity feed | `listOperations`, `getOperation`                                        |
-| Power toggle, Rescale                | `mutateInstance`                                                        |
-| Snapshots tab                        | `listSnapshots`, `createSnapshot`, `rollbackSnapshot`, `deleteSnapshot` |
+The client now covers all sixteen tenant operations in
+`packages/contracts/openapi/control-plane.v1.yaml`, typed from the generated contract so a field
+rename breaks the build rather than producing `undefined`. It returns a result carrying either a
+value or the problem document, and **never falls back to mock data** — the previous version
+returned `null` on any failure so the UI could render the static catalog, which would have shown a
+customer a project full of servers that did not exist.
 
-**Stubbed, because the contract has no endpoint for them:** Volumes, Load Balancers, Networks, DNS,
-Object Storage, Storage Boxes, Placement groups, Backups, and Floating IPs. These render the
-standard empty state with a disabled action rather than a control that would fail on click.
+What is wired, and what is marked on the roadmap instead, is documented in
+[docs/architecture/console.md](../../docs/architecture/console.md). The short version: create,
+list, detail, all four power actions, resize with the shrink guard, the full snapshot lifecycle,
+soft delete, operations, quota and the project. Everything else in the navigation says so.
 
-Backups and Floating IPs are the two exceptions that are **fully built against local state** rather
-than left inert, because both carry pricing and multi-step flows worth reviewing before an endpoint
-exists. Neither survives a `localStorage` clear, and both need an API before they mean anything.
+`data/catalog.ts` is no longer a catalog. It held ten flavours, six datacentres and seven image
+families read off a commercial provider's console, priced in euros — none of which described this
+system, which runs on one standalone Proxmox node. Flavours, images and networks come from the API;
+what remains is a price table keyed by the real flavour identifiers, because billing is planned
+work rather than an excluded concern.
 
-`data/api.ts` degrades to `null` when the control API is unreachable, so the console renders
-against `data/catalog.ts` for design review and offline development. That is why `pnpm exec vite`
-alone produces a fully explorable UI.
+`data/store.tsx` is TanStack Query rather than a hand-rolled store. The 465 lines it replaced
+simulated the system instead of reading it: `setInterval` advanced a provisioning percentage by 12%
+every 900ms, addresses were generated arithmetically, and the whole thing persisted under
+`console-web:state:v1`. Polling is now conditional on something actually being in flight, so an
+idle project makes no requests.
 
 ## Billing confirmations
 

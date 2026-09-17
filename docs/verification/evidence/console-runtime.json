@@ -1,0 +1,127 @@
+{
+  "startedAt": "2026-09-17T18:36:20.302Z",
+  "console": "http://127.0.0.1:3102",
+  "project": "00000000-0000-4000-8000-0000000000a1",
+  "checks": {
+    "console-is-healthy": {
+      "liveness": 200,
+      "readiness": 200,
+      "status": "passed",
+      "durationMs": 20
+    },
+    "project-is-clear-for-a-run": {
+      "status": "failed",
+      "durationMs": 43025,
+      "error": "refusing to clear rows while VMs exist: 910020\n+ actual - expected\n\n+ [\n+   910020\n+ ]\n- []\n"
+    },
+    "an-unauthenticated-deep-link-redirects-to-sign-in": {
+      "landedOn": "/login",
+      "status": "passed",
+      "durationMs": 337
+    },
+    "a-wrong-password-is-refused": {
+      "message": "Sign-in failed",
+      "status": "passed",
+      "durationMs": 260
+    },
+    "signing-in-lands-on-the-servers-list": {
+      "landedOn": "/servers",
+      "project": "testsrv-lab",
+      "status": "passed",
+      "durationMs": 473
+    },
+    "the-browser-never-holds-an-access-token": {
+      "httpOnly": true,
+      "sameSite": "Strict",
+      "documentCookieEmpty": true,
+      "localStorageEmpty": true,
+      "status": "passed",
+      "durationMs": 8
+    },
+    "the-wizard-shows-the-real-catalog": {
+      "flavors": [
+        "Lab Small",
+        "Lab Medium"
+      ],
+      "network": "Test server vmbr1",
+      "status": "passed",
+      "durationMs": 715
+    },
+    "the-wizard-caps-the-count-at-the-remaining-quota": {
+      "status": "failed",
+      "durationMs": 44,
+      "error": "the stepper reached 1 with 2 of quota remaining\n\n1 !== 2\n"
+    },
+    "a-create-is-accepted-and-appears-as-provisioning": {
+      "instanceId": "75056eeb-5eb0-4288-b7a1-0ce7d5257049",
+      "lifecycleState": "pending",
+      "status": "passed",
+      "durationMs": 452
+    },
+    "the-create-converges-and-a-real-vm-exists": {
+      "status": "failed",
+      "durationMs": 69959,
+      "error": "the marker names a different instance\n+ actual - expected\n\n+ '6a96f8bc-c5af-4f42-81f2-35e0c8ae3cb7'\n- '75056eeb-5eb0-4288-b7a1-0ce7d5257049'\n"
+    },
+    "the-list-shows-the-address-the-server-was-leased": {
+      "address": "192.168.4.4",
+      "status": "passed",
+      "durationMs": 168
+    },
+    "power-off-and-on-through-the-console": {
+      "status": "failed",
+      "durationMs": 602907,
+      "error": "the VM runs again did not hold within 420s"
+    },
+    "a-disk-shrink-is-refused-before-it-is-submitted": {
+      "offered": 2,
+      "note": "shrink guard asserted after the grow",
+      "status": "passed",
+      "durationMs": 211
+    },
+    "a-rescale-to-the-larger-flavour-succeeds": {
+      "status": "failed",
+      "durationMs": 420895,
+      "error": "the VM reports the larger sizing did not hold within 420s"
+    },
+    "the-snapshot-lifecycle-works-through-the-console": {
+      "status": "failed",
+      "durationMs": 30044,
+      "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Take snapshot' })\u001b[22m\n"
+    },
+    "delete-is-a-soft-delete-and-the-vm-survives": {
+      "status": "failed",
+      "durationMs": 20039,
+      "error": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('DELETE', { exact: true }) to be visible\u001b[22m\n"
+    },
+    "no-credential-reached-the-browser": {
+      "consoleLinesScanned": 77,
+      "responseBodiesScanned": 549,
+      "status": "passed",
+      "durationMs": 9
+    },
+    "teardown": {
+      "status": "failed",
+      "durationMs": 589,
+      "error": "refusing to destroy a VM whose marker does not name this run"
+    }
+  },
+  "finishedAt": "2026-09-17T18:56:13.928Z",
+  "status": "failed",
+  "failures": [
+    "project-is-clear-for-a-run: refusing to clear rows while VMs exist: 910020\n+ actual - expected\n\n+ [\n+   910020\n+ ]\n- []\n",
+    "the-wizard-caps-the-count-at-the-remaining-quota: the stepper reached 1 with 2 of quota remaining\n\n1 !== 2\n",
+    "the-create-converges-and-a-real-vm-exists: the marker names a different instance\n+ actual - expected\n\n+ '6a96f8bc-c5af-4f42-81f2-35e0c8ae3cb7'\n- '75056eeb-5eb0-4288-b7a1-0ce7d5257049'\n",
+    "power-off-and-on-through-the-console: the VM runs again did not hold within 420s",
+    "a-rescale-to-the-larger-flavour-succeeds: the VM reports the larger sizing did not hold within 420s",
+    "the-snapshot-lifecycle-works-through-the-console: locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Take snapshot' })\u001b[22m\n",
+    "delete-is-a-soft-delete-and-the-vm-survives: locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('DELETE', { exact: true }) to be visible\u001b[22m\n",
+    "teardown: refusing to destroy a VM whose marker does not name this run"
+  ],
+  "fixture": {
+    "hostname": "console-mu5vf0zz",
+    "instanceId": "75056eeb-5eb0-4288-b7a1-0ce7d5257049",
+    "vmid": 910020,
+    "address": "192.168.4.4"
+  }
+}

@@ -30,7 +30,7 @@ function InfoPair({ label, value }: { readonly label: string; readonly value: st
 
 export function VncConsole() {
   const { id } = useParams();
-  const { instances } = useConsole();
+  const { instances, loading } = useConsole();
   const [guiMode, setGuiMode] = useState(false);
   const [focused, setFocused] = useState(false);
 
@@ -40,6 +40,9 @@ export function VncConsole() {
     document.title = instance ? `${instance.name} · Console` : 'Console';
   }, [instance]);
 
+  // Loading is not absence. This window is opened from a link, so it is always a cold navigation
+  // and redirecting on the first render would mean it never showed anything at all.
+  if (loading) return null;
   if (!instance) return <Navigate to="/servers" replace />;
 
   return (

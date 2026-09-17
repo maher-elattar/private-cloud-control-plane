@@ -64,11 +64,20 @@ function serverTabs(id: string): readonly TabItem[] {
   ];
 }
 
-/** Resolves the instance for the current route, or null when the id is unknown. */
-function useInstance(): Instance | null {
+/**
+ * Resolves the instance for the current route.
+ *
+ * Returns `loading` as well as the instance, because the two absences mean different things and
+ * conflating them was a real defect: the layout redirected to the list whenever this returned
+ * null, and it returns null on the first render of *any* direct navigation — the query has not
+ * answered yet. So pasting a link to a server, or reloading its page, bounced the user to the
+ * list. A server that genuinely does not exist still redirects, which is the correct answer for
+ * that case only.
+ */
+function useInstance(): { readonly instance: Instance | null; readonly loading: boolean } {
   const { id } = useParams();
-  const { instances } = useConsole();
-  return instances.find((instance) => instance.id === id) ?? null;
+  const { instances, loading } = useConsole();
+  return { instance: instances.find((instance) => instance.id === id) ?? null, loading };
 }
 
 /** On/off switch mirroring the console's pill-shaped power toggle. */
@@ -93,9 +102,11 @@ function PowerToggle({ on, onToggle }: { readonly on: boolean; readonly onToggle
 }
 
 export function ServerDetailLayout() {
-  const instance = useInstance();
+  const { instance, loading } = useInstance();
   const { setPower } = useConsole();
 
+  // Nothing rather than a spinner: the list is usually already cached, so this is a frame or two.
+  if (loading) return null;
   if (!instance) return <Navigate to="/servers" replace />;
 
   return (
@@ -229,7 +240,7 @@ function observedLabel(label: string, desired: number | null, observed: number |
 }
 
 export function ServerOverview() {
-  const instance = useInstance();
+  const { instance } = useInstance();
   const { activities } = useConsole();
   if (!instance) return null;
 
@@ -428,7 +439,7 @@ function InfoPanel({
  * `control.snapshots`, which is a different thing taken on demand.
  */
 export function ServerBackups() {
-  const instance = useInstance();
+  const { instance } = useInstance();
   if (!instance) return null;
 
   return (
@@ -460,7 +471,7 @@ export function ServerBackups() {
  * rather than claiming it unconditionally.
  */
 export function ServerSnapshots() {
-  const instance = useInstance();
+  const { instance } = useInstance();
   const { useSnapshots, takeSnapshot, rollbackSnapshot, deleteSnapshot } = useConsole();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [rollbackTarget, setRollbackTarget] = useState<string | null>(null);
@@ -647,7 +658,7 @@ function NetworkTable({
  * belonging to another company.
  */
 export function ServerNetworking() {
-  const instance = useInstance();
+  const { instance } = useInstance();
   if (!instance) return null;
 
   return (
@@ -747,7 +758,7 @@ export function ServerVolumes() {
 }
 
 export function ServerPower() {
-  const instance = useInstance();
+  const { instance } = useInstance();
   const { setPower } = useConsole();
   const [forceStop, setForceStop] = useState(false);
   if (!instance) return null;
@@ -841,7 +852,7 @@ export function ServerIsoImages() {
  * this is worth respecting: a refused shrink still writes the rejected size into Terraform state.
  */
 export function ServerRescale() {
-  const instance = useInstance();
+  const { instance } = useInstance();
   const { flavors, resizeInstance } = useConsole();
   const [target, setTarget] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -944,7 +955,7 @@ export function ServerRebuild() {
  * so the button says what happens rather than what the route is called.
  */
 export function ServerDelete() {
-  const instance = useInstance();
+  const { instance } = useInstance();
   const { retainInstance } = useConsole();
   const navigate = useNavigate();
   const [confirming, setConfirming] = useState(false);

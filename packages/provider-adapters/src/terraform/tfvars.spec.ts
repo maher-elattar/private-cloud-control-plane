@@ -26,6 +26,7 @@ const tfvars: InstanceTfvars = {
   datastore_id: 'local',
   disk_interface: 'scsi0',
   disk_format: 'qcow2',
+  pool_id: 'control-plane-lab',
   disk_gib: 32,
   cpu_cores: 2,
   memory_mib: 4096,

@@ -260,6 +260,18 @@ components:
           required: [id, createdAt, updatedAt]
           properties:
             id: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
+            # The profile this network belongs to, so a client can tell which image it pairs with.
+            #
+            # WHY a tenant needs it: `loadAcceptanceContext` resolves the provider profile through
+            # the requested *image*, then refuses the request unless that profile's network is the
+            # one named. Without this field the valid pairings are invisible to a client — the
+            # catalog lists every enabled image and every enabled network, a console faithfully
+            # offers a combination from two different profiles, and the user meets a 400 at create
+            # time for a choice the interface presented as available.
+            #
+            # It is an identifier, not an endpoint or a credential, so it carries no restricted
+            # classification: `Image` has exposed the same field since the contract was written.
+            providerProfileId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
     ImagePage:
