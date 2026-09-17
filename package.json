@@ -64,6 +64,7 @@
     "@nx/vitest": "23.1.1",
     "@nx/web": "23.1.1",
     "@nx/webpack": "23.1.1",
+    "@playwright/test": "1.63.0",
     "@redocly/cli": "2.47.0",
     "@swc/helpers": "0.5.23",
     "@types/node": "24.10.1",
