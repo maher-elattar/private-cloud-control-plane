@@ -43,6 +43,12 @@ playwright-report/
 crash.log
 crash.*.log
 
+# Pre-change snapshots. The git tag `console-web-original` is the real safety net; these archives
+# exist only for diffing while a rewrite is in progress. Ignored before the first one is written,
+# because a tarball swept into history is exactly the mistake phase 5 recorded about this
+# directory.
+.backup/
+
 # Tool and operating-system state
 .DS_Store
 .idea/

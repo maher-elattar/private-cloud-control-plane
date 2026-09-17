@@ -17,17 +17,22 @@
  * logs; a tool that echoed the secret it just minted would defeat both.
  *
  * Usage:
- *   node tools/proxmox/create-api-token.mjs            # create or re-mint, then verify
- *   node tools/proxmox/create-api-token.mjs --verify   # verify an existing token only
+ *   node tools/proxmox/create-api-token.mjs                # create or re-mint, then verify
+ *   node tools/proxmox/create-api-token.mjs --verify       # verify an existing token only
+ *   node tools/proxmox/create-api-token.mjs --repair-acl   # grant identity and ACLs, keep the token
  *
  * @see terraform-provisioning-checkpoints.md
  * @see docs/architecture/safety-invariants.md
  */
 import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-
-/** The gitignored credentials file this tool reads root access from and writes the token into. */
-const CREDENTIALS_PATH = resolve('terraformProxServerTestCredntails.txt');
+import {
+  administer as administerCall,
+  administratorSession as openAdministratorSession,
+  CREDENTIALS_PATH,
+  loadCredentials,
+  parseCredentials,
+  report,
+} from './session.mjs';
 
 /** Identities and scopes this tool owns. Everything else on the server is left alone. */
 const ROLE_ID = 'ControlPlaneLifecycle';
@@ -177,103 +182,32 @@ const PERMISSION_ASSERTIONS = [
 
 const flags = process.argv.slice(2);
 const verifyOnly = flags.includes('--verify');
+/**
+ * Grants the role, pool, user and every ACL, then stops before the token.
+ *
+ * WHY this is separate from a full run: the token secret is returned exactly once, so a full run
+ * has to delete and re-mint it, which invalidates the credential every running service is using.
+ * Repairing a missing ACL should not cost a credential rotation.
+ */
+const aclOnly = flags.includes('--repair-acl');
 
 // --- Credentials file, in either the legacy three-line form or KEY=value ---
 
-/** Parses the credentials file, accepting the original three-line layout or KEY=value lines. */
-function parseCredentials(text) {
-  const lines = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'));
-  if (lines.some((line) => /^[A-Z][A-Z0-9_]*=/.test(line))) {
-    const values = Object.fromEntries(
-      lines
-        .filter((line) => line.includes('='))
-        .map((line) => {
-          const index = line.indexOf('=');
-          return [line.slice(0, index), line.slice(index + 1)];
-        }),
-    );
-    return {
-      endpoint: values.PROXMOX_ENDPOINT?.replace(/\/$/, ''),
-      rootUsername: values.PROXMOX_ROOT_USERNAME,
-      rootPassword: values.PROXMOX_ROOT_PASSWORD,
-      tokenId: values.PROXMOX_API_TOKEN_ID,
-      tokenSecret: values.PROXMOX_API_TOKEN_SECRET,
-    };
-  }
-  const [endpoint, user, password] = lines;
-  return {
-    endpoint: endpoint?.replace(/\/$/, ''),
-    rootUsername: user?.includes('@') ? user : `${user}@pam`,
-    rootPassword: password,
-  };
-}
+const credentials = await loadCredentials();
 
-const credentials = parseCredentials(await readFile(CREDENTIALS_PATH, 'utf8'));
-if (!credentials.endpoint) throw new Error(`${CREDENTIALS_PATH}: no endpoint found.`);
+/** Opens the administrator session, curried with this tool's credentials. */
+const administratorSession = () => openAdministratorSession(credentials);
 
-/** Authenticates as the administrator, for the token-administration calls only. */
-async function administratorSession() {
-  if (!credentials.rootPassword) {
-    throw new Error('Administrator credentials are required to create or re-mint a token.');
-  }
-  const response = await fetch(`${credentials.endpoint}/api2/json/access/ticket`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      username: credentials.rootUsername,
-      password: credentials.rootPassword,
-    }),
-  });
-  if (!response.ok) throw new Error(`Administrator login failed: ${response.status}`);
-  const { data } = await response.json();
-  return {
-    cookie: `PVEAuthCookie=${data.ticket}`,
-    csrf: data.CSRFPreventionToken,
-  };
-}
-
-/** One administrative call. Returns `{ ok, status, data }` rather than throwing, so callers
- * can treat "already exists" as success. */
-async function administer(session, method, path, body) {
-  const response = await fetch(`${credentials.endpoint}/api2/json${path}`, {
-    method,
-    headers: {
-      cookie: session.cookie,
-      CSRFPreventionToken: session.csrf,
-      ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}),
-    },
-    ...(body ? { body: new URLSearchParams(body) } : {}),
-  });
-  const text = await response.text();
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = undefined;
-  }
-  return { ok: response.ok, status: response.status, data: parsed?.data, raw: text };
-}
-
-/** Reports what an administrative step did, without ever echoing a secret. */
-function report(step, result, alreadyExists = 'already present') {
-  if (result.ok) {
-    process.stdout.write(`  created  ${step}\n`);
-    return true;
-  }
-  if (result.status === 500 && /already exists/i.test(result.raw)) {
-    process.stdout.write(`  reused   ${step} (${alreadyExists})\n`);
-    return true;
-  }
-  process.stdout.write(`  FAILED   ${step}: ${result.status} ${result.raw.slice(0, 160)}\n`);
-  return false;
-}
+/** One administrative call, curried with this tool's endpoint. */
+const administer = (session, method, path, body) =>
+  administerCall(session, credentials.endpoint, method, path, body);
 
 let tokenId = credentials.tokenId;
 
-if (!verifyOnly) {
+/** Shared across the administration and verification phases, so either can fail the run. */
+let failures = 0;
+
+if (!verifyOnly || aclOnly) {
   const session = await administratorSession();
   process.stdout.write(`administering ${credentials.endpoint} as ${credentials.rootUsername}\n`);
 
@@ -344,56 +278,89 @@ if (!verifyOnly) {
     );
   }
 
-  // The interval, in one call per chunk to keep the request bodies small.
-  const CHUNK = 25;
-  for (let index = 0; index < vmidPaths.length; index += CHUNK) {
-    const chunk = vmidPaths.slice(index, index + CHUNK);
-    for (const path of chunk) {
-      await administer(session, 'PUT', '/access/acl', {
-        path,
-        roles: ROLE_ID,
-        users: USER_ID,
-        propagate: '1',
-      });
-    }
+  // The interval, one call per VMID because Proxmox ACL paths have no range syntax.
+  //
+  // WHY each result is checked: this loop previously discarded every response and then printed
+  // "created" for all hundred entries unconditionally. Twenty-two of them had in fact failed, and
+  // nothing said so — the gap surfaced months later as an `HTTP 403 - Permission check failed` on
+  // a clone, after the control plane had already committed an instance, a lease and a quota slice.
+  // A loop that reports success it never checked is the same defect as a catch block that
+  // classifies without recording.
+  const refused = [];
+  for (const path of vmidPaths) {
+    const result = await administer(session, 'PUT', '/access/acl', {
+      path,
+      roles: ROLE_ID,
+      users: USER_ID,
+      propagate: '1',
+    });
+    if (!result.ok) refused.push({ path, status: result.status, raw: result.raw.slice(0, 120) });
   }
-  process.stdout.write(
-    `  created  acl ${VMID_MINIMUM}-${VMID_MAXIMUM} -> ${ROLE_ID} (${vmidPaths.length} entries)\n`,
-  );
+  if (refused.length === 0) {
+    process.stdout.write(
+      `  created  acl ${VMID_MINIMUM}-${VMID_MAXIMUM} -> ${ROLE_ID} (${vmidPaths.length} entries)\n`,
+    );
+  } else {
+    process.stdout.write(
+      `  FAILED   acl ${VMID_MINIMUM}-${VMID_MAXIMUM} -> ${ROLE_ID}: ` +
+        `${vmidPaths.length - refused.length}/${vmidPaths.length} granted, ` +
+        `${refused.length} refused\n`,
+    );
+    for (const entry of refused.slice(0, 5)) {
+      process.stdout.write(`           ${entry.path}: ${entry.status} ${entry.raw}\n`);
+    }
+    if (refused.length > 5) {
+      process.stdout.write(`           and ${refused.length - 5} more\n`);
+    }
+    failures += 1;
+  }
 
   // --- Token. Deleted and re-minted, because the secret is returned only at creation ---
-  await administer(session, 'DELETE', `/access/users/${USER_ID}/token/${TOKEN_NAME}`);
-  const minted = await administer(session, 'POST', `/access/users/${USER_ID}/token/${TOKEN_NAME}`, {
-    comment: 'Control plane provisioner token.',
-    // privsep=0: the token inherits the user's permissions, and the user is already the narrow
-    // identity created above. With privsep=1 the token would additionally need its own ACLs.
-    privsep: '0',
-  });
-  if (!minted.ok || !minted.data?.value) {
-    throw new Error(`Minting the token failed: ${minted.status} ${minted.raw.slice(0, 200)}`);
+  //
+  // Skipped under `--repair-acl`: rotating a credential that every running service holds is a
+  // heavy price for adding a missing ACL entry, and the two concerns are independent.
+  if (aclOnly) {
+    process.stdout.write('\n  skipped  token re-mint (--repair-acl)\n');
   }
-  tokenId = minted.data['full-tokenid'];
-  process.stdout.write(`  created  token ${tokenId}\n`);
+  if (!aclOnly) {
+    await administer(session, 'DELETE', `/access/users/${USER_ID}/token/${TOKEN_NAME}`);
+    const minted = await administer(
+      session,
+      'POST',
+      `/access/users/${USER_ID}/token/${TOKEN_NAME}`,
+      {
+        comment: 'Control plane provisioner token.',
+        // privsep=0: the token inherits the user's permissions, and the user is already the narrow
+        // identity created above. With privsep=1 the token would additionally need its own ACLs.
+        privsep: '0',
+      },
+    );
+    if (!minted.ok || !minted.data?.value) {
+      throw new Error(`Minting the token failed: ${minted.status} ${minted.raw.slice(0, 200)}`);
+    }
+    tokenId = minted.data['full-tokenid'];
+    process.stdout.write(`  created  token ${tokenId}\n`);
 
-  // --- Write the credentials file. The secret goes here and nowhere else ---
-  const rewritten = [
-    '# Proxmox credentials for the control plane. This file is gitignored and must stay that way.',
-    '#',
-    '# The token is what the adapters use. The administrator credentials below are retained only',
-    '# for re-running tools/proxmox/create-api-token.mjs, and rotating them does not invalidate',
-    '# the token.',
-    '',
-    `PROXMOX_ENDPOINT=${credentials.endpoint}`,
-    `PROXMOX_API_TOKEN_ID=${tokenId}`,
-    `PROXMOX_API_TOKEN_SECRET=${minted.data.value}`,
-    '',
-    '# Administrative, for token management only.',
-    `PROXMOX_ROOT_USERNAME=${credentials.rootUsername}`,
-    `PROXMOX_ROOT_PASSWORD=${credentials.rootPassword}`,
-    '',
-  ].join('\n');
-  await writeFile(CREDENTIALS_PATH, rewritten);
-  process.stdout.write(`  wrote    ${CREDENTIALS_PATH} (secret not echoed)\n`);
+    // --- Write the credentials file. The secret goes here and nowhere else ---
+    const rewritten = [
+      '# Proxmox credentials for the control plane. This file is gitignored and must stay that way.',
+      '#',
+      '# The token is what the adapters use. The administrator credentials below are retained only',
+      '# for re-running tools/proxmox/create-api-token.mjs, and rotating them does not invalidate',
+      '# the token.',
+      '',
+      `PROXMOX_ENDPOINT=${credentials.endpoint}`,
+      `PROXMOX_API_TOKEN_ID=${tokenId}`,
+      `PROXMOX_API_TOKEN_SECRET=${minted.data.value}`,
+      '',
+      '# Administrative, for token management only.',
+      `PROXMOX_ROOT_USERNAME=${credentials.rootUsername}`,
+      `PROXMOX_ROOT_PASSWORD=${credentials.rootPassword}`,
+      '',
+    ].join('\n');
+    await writeFile(CREDENTIALS_PATH, rewritten);
+    process.stdout.write(`  wrote    ${CREDENTIALS_PATH} (secret not echoed)\n`);
+  }
 }
 
 // --- Verification: the token works, and its boundaries hold ---
@@ -438,7 +405,6 @@ async function bridgeVisible() {
   return Array.isArray(data) && data.some((entry) => entry.iface === BRIDGE);
 }
 
-let failures = 0;
 for (const [path, label] of allowed) {
   const status = await probe(path);
   const ok = status === 200;
