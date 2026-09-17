@@ -111,6 +111,9 @@ const settings = {
   PROXMOX_NODE: survey.node,
   ...CATALOG,
   PROXMOX_TEMPLATE_VMID: String(template.vmid ?? ''),
+  // The surveyed disk format. It decides whether the adapter reports snapshot support, because
+  // Proxmox refuses to snapshot a `raw` disk and a full clone inherits its template's format.
+  PROXMOX_TEMPLATE_DISK_FORMAT: String(template.diskFormat ?? 'raw'),
   PROXMOX_STORAGE: template.storage ?? '',
   PROXMOX_BRIDGE: property(template.networkDevice, 'bridge'),
   PROXMOX_NETWORK_MTU: property(template.networkDevice, 'mtu'),

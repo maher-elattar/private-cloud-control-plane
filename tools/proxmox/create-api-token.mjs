@@ -43,7 +43,9 @@ const TOKEN_NAME = 'provisioner';
 /** The node, storage and template this deployment is allowlisted to. */
 const NODE = 'proxtest';
 const STORAGE = 'local';
-const TEMPLATE_VMID = 110;
+// The operative clone template. 110's ACL entry from earlier runs is left in place — Proxmox
+// removes an ACL only on explicit request — and it stays useful as the rebuild source.
+const TEMPLATE_VMID = 9100;
 
 /** The reserved VMID interval the adapter clamps itself to. */
 const VMID_MINIMUM = 910_000;

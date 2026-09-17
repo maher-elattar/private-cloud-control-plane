@@ -1,17 +1,17 @@
 {
-  "startedAt": "2026-09-14T23:00:13.456Z",
+  "startedAt": "2026-09-17T00:53:29.756Z",
   "status": "passed",
   "checks": {
     "reserved-range-is-clear": {
-      "totalVms": 1,
+      "totalVms": 2,
       "reserved": 0,
       "status": "passed",
-      "durationMs": 763
+      "durationMs": 733
     },
     "database-is-migrated": {
       "instanceRow": "seeded",
       "status": "passed",
-      "durationMs": 47
+      "durationMs": 49
     },
     "validate-profile": {
       "checks": [
@@ -19,22 +19,22 @@
         "module_variables=VALIDATION_CHECK_STATE_PASSED"
       ],
       "status": "passed",
-      "durationMs": 8050
+      "durationMs": 8024
     },
     "submit-create": {
-      "taskReference": "f4022fbd-3a05-471f-9829-64480f4ab046",
-      "vmId": 910049,
+      "taskReference": "6d13177d-c1de-4fcb-b91c-d5711bbb297f",
+      "vmId": 910048,
       "status": "passed",
-      "durationMs": 8422
+      "durationMs": 8717
     },
     "run-row-exists-before-the-apply-settles": {
       "runStatus": "running",
       "runCommand": "apply",
       "status": "passed",
-      "durationMs": 5
+      "durationMs": 6
     },
     "poll-task-to-completion": {
-      "polls": 13,
+      "polls": 14,
       "runStatus": "succeeded",
       "planActions": {
         "read": 0,
@@ -45,7 +45,7 @@
         "replace": 0
       },
       "status": "passed",
-      "durationMs": 36109
+      "durationMs": 39099
     },
     "gate-allowed-a-create-and-nothing-else": {
       "planActions": {
@@ -62,11 +62,11 @@
     "proxmox-holds-the-expected-vm": {
       "cores": 2,
       "memory": "4096",
-      "net0": "virtio=BC:24:11:1D:7D:4D,bridge=vmbr1,firewall=1,mtu=1400",
+      "net0": "virtio=BC:24:11:B1:D0:CC,bridge=vmbr1,firewall=1,mtu=1400",
       "ipconfig0": "gw=192.168.4.1,ip=192.168.4.3/22",
-      "scsi0": "local:910049/vm-910049-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,format=raw,iothread=1,replicate=1,size=32G,ssd=1",
+      "scsi0": "local:910048/vm-910048-disk-0.qcow2,aio=io_uring,backup=1,cache=none,discard=on,format=qcow2,iothread=1,replicate=1,size=32G,ssd=1",
       "status": "passed",
-      "durationMs": 468
+      "durationMs": 434
     },
     "ownership-marker-round-tripped": {
       "markerFields": [
@@ -77,59 +77,60 @@
         "projectId"
       ],
       "status": "passed",
-      "durationMs": 127
+      "durationMs": 122
     },
     "observe-reports-what-exists": {
       "powerState": "OBSERVED_POWER_STATE_RUNNING",
       "ownershipMatch": true,
       "status": "passed",
-      "durationMs": 9974
+      "durationMs": 10315
     },
     "configuration-has-converged": {
       "state": "PROVIDER_RESULT_STATE_SUCCEEDED",
       "status": "passed",
-      "durationMs": 11746
+      "durationMs": 10977
     },
     "workspace-inventory-recorded": {
-      "workspace": "instance-c5b7428b-1dd9-42c6-a623-c99dd2990f09",
+      "workspace": "instance-f647fc79-2fc2-4c89-824b-7fffd1e06a26",
       "driftState": "in_sync",
       "status": "passed",
       "durationMs": 21
     },
     "power-off-and-on-through-terraform": {
-      "offPolls": 5,
+      "offPolls": 6,
       "onPolls": 9,
       "status": "passed",
-      "durationMs": 72217
+      "durationMs": 78151
     },
     "start-again-is-a-no-op": {
       "state": "PROVIDER_RESULT_STATE_SUCCEEDED",
       "status": "passed",
-      "durationMs": 7916
+      "durationMs": 10249
     },
     "reboot-through-the-direct-client": {
       "polls": 2,
       "reference": "upid:<redacted>",
       "status": "passed",
-      "durationMs": 5076
+      "durationMs": 4682
     },
     "resize-grows-and-refuses-a-shrink": {
       "cores": 4,
       "memory": "8192",
-      "scsi0": "local:910049/vm-910049-disk-0.raw,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=40G,ssd=1",
+      "scsi0": "local:910048/vm-910048-disk-0.qcow2,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=40G,ssd=1",
       "status": "passed",
-      "durationMs": 56537
+      "durationMs": 64775
     },
     "snapshot-support-matches-the-storage": {
-      "storageSupportsSnapshots": false,
-      "limitation": "directory storage snapshots qcow2 only; template 110 is raw",
+      "storageSupportsSnapshots": true,
+      "exercised": "create, list, delete",
+      "disk": "local:910048/vm-910048-disk-0.qcow2,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=40G,ssd=1",
       "status": "passed",
-      "durationMs": 2301
+      "durationMs": 7911
     },
     "direct-mutations-triggered-a-refresh": {
       "driftState": "in_sync",
       "status": "passed",
-      "durationMs": 22
+      "durationMs": 23
     },
     "real-drift-is-reported-and-not-repaired": {
       "coresDeclared": 4,
@@ -139,7 +140,7 @@
       "repairedByTheControlPlane": false,
       "restoredByHandAfterwards": true,
       "status": "passed",
-      "durationMs": 12711
+      "durationMs": 13084
     },
     "a-replace-plan-is-refused-and-nothing-is-destroyed": {
       "barrier": "prevent_destroy refused to produce the plan",
@@ -156,31 +157,31 @@
         "replace": 0
       },
       "status": "passed",
-      "durationMs": 13135
+      "durationMs": 13850
     },
     "retention-detaches-without-destroying": {
       "onboot": 0,
       "trailer": "present",
       "status": "passed",
-      "durationMs": 30418
+      "durationMs": 31113
     },
     "purge-refuses-without-an-authorization-id": {
       "refused": true,
       "status": "passed",
-      "durationMs": 124
+      "durationMs": 131
     },
     "purge-destroys-when-authorized": {
       "destroyed": true,
       "status": "passed",
-      "durationMs": 24450
+      "durationMs": 25411
     },
     "diagnostics-carry-no-secret": {
       "runRows": 6,
       "status": "passed",
-      "durationMs": 20
+      "durationMs": 21
     }
   },
-  "finishedAt": "2026-09-14T23:05:14.181Z",
+  "finishedAt": "2026-09-17T00:58:57.723Z",
   "failures": [],
-  "instanceId": "c5b7428b-1dd9-42c6-a623-c99dd2990f09"
+  "instanceId": "f647fc79-2fc2-4c89-824b-7fffd1e06a26"
 }

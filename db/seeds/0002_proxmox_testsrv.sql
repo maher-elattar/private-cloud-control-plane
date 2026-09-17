@@ -116,7 +116,7 @@ VALUES (
   'https://testsrv.mosalam.com:8006',
   'testsrv',
   'proxtest',
-  '110',
+  '9100',
   'local',
   'vmbr1',
   910000,
@@ -154,7 +154,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 -- No new flavours.
 --
--- Template 110 is 2 vCPU, 4096 MiB and 32 GiB, which `lab-small` already
+-- Template 9100 is 2 vCPU, 4096 MiB and 32 GiB, which `lab-small` already
 -- describes exactly. That matters rather than being a coincidence: `assertResources` refuses a
 -- create unless the requested disk equals the template's disk exactly, so a flavour that
 -- disagreed by a single gibibyte would fail every create. `lab-medium` (4 / 8192 / 64) is the

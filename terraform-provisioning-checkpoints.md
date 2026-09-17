@@ -1245,6 +1245,57 @@ Recorded because the correction matters more than the result: **a verifier that 
 assumed rather than what the system promises will manufacture defects.** Each of these three would
 have been reported as a product bug had I trusted my own assertion over the contract.
 
+#### Snapshots now work on real hardware
+
+Recorded 2026-09-17, while starting the customer-console work. The one capability this deployment
+could not perform is no longer a gap.
+
+The cause was never the adapter. Proxmox snapshots a disk only where the storage supports it, and
+directory storage supports snapshots **only for qcow2**; a full clone inherits its template's
+format; and bpg ignores `file_format` on a clone, so the module could not convert anything. The
+template was the only place the format could be chosen, and template 110's disk was
+`local:110/base-110-disk-0.raw`.
+
+`tools/proxmox/build-qcow2-template.mjs` builds a **new** template rather than converting 110 —
+clone, `move_disk` to qcow2 on the same storage, seal as a template, grant the scoped token an ACL
+on it. Nothing that already worked was touched, and the whole thing is reversible by deleting one
+VM. Measured result: `local:9100/base-9100-disk-1.qcow2`, sealed, readable by the scoped token.
+
+`verify:terraform-adapter` now exercises the real snapshot lifecycle — create, list, delete — on a
+real qcow2 disk, and still reports **24 of 24**.
+
+|                                             | Before            | After                            |
+| ------------------------------------------- | ----------------- | -------------------------------- |
+| Template                                    | 110, `raw`        | 9100, `qcow2`                    |
+| `getCapabilities().snapshots`               | hardcoded `false` | derived from the template format |
+| Snapshot create/rollback/delete on hardware | impossible        | verified working                 |
+
+#### Three defects the change exposed
+
+**The capability flag was hardcoded `false` for the wrong reason.** Its comment read _"Snapshots
+are not in this provider at all — bpg publishes no snapshot resource"_, which contradicted the six
+snapshot methods immediately below it that work perfectly well through the direct client. It was
+accidentally correct because the disk really was raw, and would have stayed wrong after that was
+fixed. It now derives from `templateDiskFormat`, which the survey measures and
+`compose-env.mjs` carries — configuration rather than a live read, because `getCapabilities` is
+called by the readiness probe every few seconds and must never reach a hypervisor.
+
+**The module declared `file_format = "raw"` as a literal.** That was right when the only template
+was raw and load-bearing either way: a declared format the template does not have makes every
+later plan a _replacement_, which the gate refuses, taking out convergence and resize as well as
+the snapshot it was meant to enable. It is now `var.disk_format`, validated to `qcow2` or `raw`,
+with no default — a deployment must state what its template actually is.
+
+**A verification check asserted a stale conclusion.** `snapshot-support-matches-the-storage`
+returned a hardcoded `limitation: "directory storage snapshots qcow2 only; template 110 is raw"`.
+After the template became qcow2 the check **still passed** while reporting something no longer
+true, because it was asserting a remembered fact rather than the disk in front of it. It now reads
+the format from the live disk and reports that.
+
+The pattern is the same one this phase has hit repeatedly: **an assertion that encodes an
+assumption keeps passing after the assumption expires.** The first two instances were the fencing
+token compared against a constant and the three wrong versions of the provider-identifier check.
+
 #### Plan audit — two required items that were missing
 
 Checked the original plan item by item rather than trusting the ledger, and found two pieces of

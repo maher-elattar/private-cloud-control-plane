@@ -72,6 +72,7 @@ Rendered artifacts are derived files. Change the matching `.mmd` or `.drawio` so
 | Terraform apply outcomes        | `mermaid/terraform-apply-outcomes.mmd` | `rendered/terraform-apply-outcomes.mermaid.svg` |
 | Terraform capability routing    | `mermaid/terraform-capability-routing.mmd` | `rendered/terraform-capability-routing.mermaid.svg` |
 | Terraform request path          | `mermaid/terraform-request-path.mmd` | `rendered/terraform-request-path.mermaid.svg` |
+| Snapshot capability chain       | `mermaid/snapshot-capability-chain.mmd` | `rendered/snapshot-capability-chain.mermaid.svg` |
 
 ## Mermaid Editing And Validation
 

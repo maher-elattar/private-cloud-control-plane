@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-09-17T00:35:34.072Z",
+  "capturedAt": "2026-09-17T00:40:01.993Z",
   "endpoint": "https://testsrv.mosalam.com:8006",
   "authenticatedAs": "root@pam",
   "capabilityGroups": [
@@ -12,23 +12,23 @@
     "vms"
   ],
   "version": {
+    "repoid": "f6997e698c7933ea",
     "version": "9.2.11",
-    "release": "9.2",
-    "repoid": "f6997e698c7933ea"
+    "release": "9.2"
   },
   "node": "proxtest",
   "nodeCount": 1,
   "clusterOptions": {
-    "allowed-tags": [],
+    "description": "",
     "mac_prefix": "BC:24:11",
-    "description": ""
+    "allowed-tags": []
   },
   "storage": [
     {
-      "storage": "local",
-      "type": "dir",
+      "storage": "SBMazeed",
+      "type": "pbs",
       "active": 1,
-      "content": "vztmpl,snippets,rootdir,images,iso,backup"
+      "content": "backup"
     },
     {
       "storage": "SBMosalam",
@@ -37,10 +37,10 @@
       "content": "backup"
     },
     {
-      "storage": "SBMazeed",
-      "type": "pbs",
+      "storage": "local",
+      "type": "dir",
       "active": 1,
-      "content": "backup"
+      "content": "vztmpl,snippets,iso,rootdir,images,backup"
     }
   ],
   "network": [
@@ -69,27 +69,11 @@
       "bridgePorts": "enp41s0.4022"
     },
     {
-      "iface": "vmbr44",
-      "type": "bridge",
+      "iface": "enp41s0",
+      "type": "eth",
       "active": 1,
-      "cidr": "192.168.18.1/24",
-      "address": "192.168.18.1",
-      "bridgePorts": ""
-    },
-    {
-      "iface": "vmbr1",
-      "type": "bridge",
-      "active": 1,
-      "cidr": "192.168.4.1/22",
-      "address": "192.168.4.1",
-      "bridgePorts": ""
-    },
-    {
-      "iface": "enp41s0.4022",
-      "type": "vlan",
-      "active": 1,
-      "cidr": null,
-      "address": null,
+      "cidr": "157.90.75.55/28",
+      "address": "157.90.75.55",
       "bridgePorts": null
     },
     {
@@ -101,74 +85,93 @@
       "bridgePorts": ""
     },
     {
-      "iface": "enp41s0",
-      "type": "eth",
-      "active": 1,
-      "cidr": "157.90.75.55/28",
-      "address": "157.90.75.55",
-      "bridgePorts": null
-    },
-    {
       "iface": "vi1",
       "type": "bridge",
       "active": 1,
       "cidr": "192.168.0.1/22",
       "address": "192.168.0.1",
       "bridgePorts": ""
+    },
+    {
+      "iface": "vmbr1",
+      "type": "bridge",
+      "active": 1,
+      "cidr": "192.168.4.1/22",
+      "address": "192.168.4.1",
+      "bridgePorts": ""
+    },
+    {
+      "iface": "vmbr44",
+      "type": "bridge",
+      "active": 1,
+      "cidr": "192.168.18.1/24",
+      "address": "192.168.18.1",
+      "bridgePorts": ""
+    },
+    {
+      "iface": "enp41s0.4022",
+      "type": "vlan",
+      "active": 1,
+      "cidr": null,
+      "address": null,
+      "bridgePorts": null
     }
   ],
   "template": {
-    "vmid": 110,
+    "vmid": 9100,
     "isTemplate": true,
-    "name": "UbuntuNoble24.04",
-    "diskSpecification": "local:110/base-110-disk-0.raw,discard=on,iothread=1,size=32G,ssd=1",
+    "name": "UbuntuNoble24.04-qcow2",
+    "diskSpecification": "local:9100/base-9100-disk-1.qcow2,discard=on,iothread=1,size=32G,ssd=1",
     "diskGiB": 32,
     "storage": "local",
+    "diskFormat": "qcow2",
+    "snapshotsPossible": true,
     "cpuCores": 2,
     "sockets": 1,
     "memoryMib": "4096",
     "guestAgent": "1",
-    "cloudInitDrive": "local:110/vm-110-cloudinit.raw,media=cdrom,size=4M",
-    "networkDevice": "virtio=BC:24:11:89:33:77,bridge=vmbr1,firewall=1,mtu=1400",
+    "cloudInitDrive": "local:9100/vm-9100-cloudinit.raw,media=cdrom,size=4M",
+    "networkDevice": "virtio=BC:24:11:8E:65:9B,bridge=vmbr1,firewall=1,mtu=1400",
     "nameserver": "1.1.1.1",
     "cloudInitUser": "root",
     "powerState": "stopped",
     "configuration": {
-      "numa": 0,
-      "meta": "creation-qemu=9.2.0,ctime=1754844279",
       "boot": "order=scsi0;ide2;net0",
       "scsihw": "virtio-scsi-single",
       "ciuser": "root",
-      "smbios1": "uuid=8b43bed2-a3e2-4361-b893-1d704893cd3c",
+      "numa": 0,
+      "meta": "creation-qemu=9.2.0,ctime=1754844279",
+      "smbios1": "uuid=a45466de-078f-4458-87e5-af89d130a464",
       "sockets": 1,
-      "net0": "virtio=BC:24:11:89:33:77,bridge=vmbr1,firewall=1,mtu=1400",
+      "description": "Control-plane clone template. qcow2 so that instance snapshots are possible.",
       "template": 1,
-      "digest": "04b6cadfd13b74011bb1007888bd805cd3768d3d",
-      "machine": "q35",
-      "vcpus": 2,
+      "net0": "virtio=BC:24:11:8E:65:9B,bridge=vmbr1,firewall=1,mtu=1400",
       "ostype": "l26",
-      "onboot": 0,
+      "vcpus": 2,
       "cipassword": "<redacted>",
-      "agent": "1",
+      "onboot": 0,
+      "digest": "bc6fcc1826665d7ab9e538295ffe68eae99eaa3e",
+      "machine": "q35",
       "cpu": "host",
-      "cores": 2,
+      "agent": "1",
       "nameserver": "1.1.1.1",
-      "ide0": "local:110/vm-110-cloudinit.raw,media=cdrom,size=4M",
+      "ide0": "local:9100/vm-9100-cloudinit.raw,media=cdrom,size=4M",
       "searchdomain": "1.1.1.1",
-      "scsi0": "local:110/base-110-disk-0.raw,discard=on,iothread=1,size=32G,ssd=1",
-      "sshkeys": "<redacted>",
-      "vmgenid": "7629c62c-0880-4f03-b30b-ada1f33ae2d9",
+      "cores": 2,
       "memory": "4096",
+      "scsi0": "local:9100/base-9100-disk-1.qcow2,discard=on,iothread=1,size=32G,ssd=1",
+      "sshkeys": "<redacted>",
+      "vmgenid": "4f89f38b-d8ce-4609-a0c8-477c5cccdf99",
       "ide2": "none,media=cdrom",
-      "name": "UbuntuNoble24.04"
+      "name": "UbuntuNoble24.04-qcow2"
     }
   },
   "inventory": {
-    "virtualMachineCount": 217,
+    "virtualMachineCount": 218,
     "lowestVmid": 101,
-    "highestVmid": 323,
-    "attachedToExpectedBridge": 134,
-    "configurationScanMs": 2710,
+    "highestVmid": 9100,
+    "attachedToExpectedBridge": 135,
+    "configurationScanMs": 2711,
     "configurationScanConcurrency": 12,
     "estimatedSerialScanSeconds": 33
   },

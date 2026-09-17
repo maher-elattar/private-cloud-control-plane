@@ -25,6 +25,7 @@ const tfvars: InstanceTfvars = {
   tags: ['private-cloud-control-plane', 'lab'],
   datastore_id: 'local',
   disk_interface: 'scsi0',
+  disk_format: 'qcow2',
   disk_gib: 32,
   cpu_cores: 2,
   memory_mib: 4096,

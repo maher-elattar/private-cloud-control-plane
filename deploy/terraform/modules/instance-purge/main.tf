@@ -59,16 +59,18 @@ resource "proxmox_virtual_environment_vm" "instance" {
 
     # Matches the template's format, which is not a free choice.
     #
-    # Measured: setting `qcow2` here does **not** convert on clone. bpg ignores `file_format` for
-    # a cloned disk — the clone copies the source format — so the declared value and the real one
-    # disagreed, which made every subsequent plan a *replacement* and the gate refused it. That
-    # took out convergence and resize as well as the snapshot it was meant to enable.
+    # Measured: setting a format here does **not** convert on clone. bpg ignores `file_format` for
+    # a cloned disk — the clone copies the source format — so a declared value that disagrees with
+    # the template's real format makes every subsequent plan a *replacement*, which the gate
+    # refuses. That took out convergence and resize as well as the snapshot it was meant to enable.
     #
-    # The consequence is worth stating plainly: Proxmox can only snapshot a disk whose storage
-    # supports it, and directory storage supports snapshots **only for qcow2**. With a raw
-    # template on directory storage, snapshots are impossible for clones of it, and the fix is a
-    # qcow2 template rather than anything in this module.
-    file_format = "raw"
+    # So this value must state what the clone will actually be, and the way to change it is to
+    # change the template. Proxmox snapshots a disk only where the storage supports it, and
+    # directory storage supports snapshots **only for qcow2** — which is why the deployment now
+    # clones from a qcow2 template built by `tools/proxmox/build-qcow2-template.mjs`, and why this
+    # is a variable rather than a literal: a deployment whose template is still raw must declare
+    # raw, or its first plan is a replacement.
+    file_format = var.disk_format
   }
 
   network_device {

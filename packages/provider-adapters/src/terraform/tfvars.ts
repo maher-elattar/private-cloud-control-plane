@@ -25,6 +25,13 @@ export interface InstanceTfvars {
   readonly tags: readonly string[];
   readonly datastore_id: string;
   readonly disk_interface: string;
+  /**
+   * The clone's disk format, which must equal the template's real format.
+   *
+   * bpg ignores `file_format` on a cloned disk, so a declared value the template does not have
+   * makes every later plan a replacement rather than converting anything.
+   */
+  readonly disk_format: 'qcow2' | 'raw';
   readonly disk_gib: number;
   readonly cpu_cores: number;
   readonly memory_mib: number;

@@ -37,8 +37,15 @@ const DEFAULT_CREDENTIALS = 'terraformProxServerTestCredntails.txt';
 /** Where the machine-readable survey is written. */
 const EVIDENCE_PATH = resolve('docs/verification/evidence/testsrv-survey.json');
 
-/** The clone template this work targets. */
-const TEMPLATE_VMID = 110;
+/**
+ * The clone template this work targets.
+ *
+ * 9100 rather than the original 110 because its disk is **qcow2**. Proxmox refuses to snapshot a
+ * `raw` disk, a full clone inherits its template's format, and bpg ignores `file_format` on a
+ * clone — so the template is the only place that format can be chosen. 110 remains on the server
+ * untouched as the source `tools/proxmox/build-qcow2-template.mjs` clones from.
+ */
+const TEMPLATE_VMID = 9100;
 
 /** The bridge the control plane is configured to attach instances to. */
 const EXPECTED_BRIDGE = 'vmbr1';
@@ -299,6 +306,12 @@ const evidence = {
     diskSpecification: primaryDisk,
     diskGiB: diskGiB(primaryDisk),
     storage: primaryDisk?.split(':')[0],
+    // WHY the format is recorded: it is the single fact that decides whether instance snapshots
+    // are possible at all. Proxmox refuses to snapshot a `raw` disk, and a full clone inherits
+    // this template's format, so a `raw` template means no snapshots anywhere downstream — a
+    // capability gap whose cause is invisible unless it is measured here.
+    diskFormat: /\.(qcow2|raw)\b/.exec(primaryDisk ?? '')?.[1] ?? null,
+    snapshotsPossible: /\.qcow2\b/.test(primaryDisk ?? ''),
     cpuCores: templateConfig?.cores,
     sockets: templateConfig?.sockets,
     memoryMib: templateConfig?.memory,

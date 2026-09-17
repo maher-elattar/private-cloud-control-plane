@@ -70,6 +70,27 @@ variable "disk_interface" {
   type        = string
 }
 
+variable "disk_format" {
+  description = <<-EOT
+    The clone's disk format, which must equal the template's real format.
+
+    Not a free choice and not a conversion. bpg ignores `file_format` on a cloned disk — the clone
+    copies its source's format — so declaring a value the template does not have makes every
+    subsequent plan a replacement, which the plan gate refuses. Changing the format means building
+    a new template, not editing this.
+
+    It matters because Proxmox snapshots a disk only where the storage supports it, and directory
+    storage supports snapshots only for `qcow2`. A `raw` template means clones of it cannot be
+    snapshotted at all.
+  EOT
+  type        = string
+
+  validation {
+    condition     = contains(["qcow2", "raw"], var.disk_format)
+    error_message = "disk_format must be qcow2 or raw."
+  }
+}
+
 variable "disk_gib" {
   description = <<-EOT
     Primary disk size in GiB. Growth only.

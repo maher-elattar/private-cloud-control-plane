@@ -104,6 +104,15 @@ export interface TerraformProxmoxConfiguration {
   readonly projectId: string;
   readonly node: string;
   readonly templateVmid: number;
+  /**
+   * The clone template's disk format, which is what decides whether snapshots are possible.
+   *
+   * WHY this is configuration rather than a hypervisor read: `getCapabilities` is called by the
+   * readiness probe every few seconds and must never reach the provider. The format is a static
+   * property of the deployment's template, measured by `pnpm run survey:proxmox` and carried here
+   * through `PROXMOX_TEMPLATE_DISK_FORMAT`, so the answer is both honest and free.
+   */
+  readonly templateDiskFormat: 'qcow2' | 'raw';
   readonly imageId: string;
   readonly storage: string;
   readonly diskInterface: string;
@@ -402,10 +411,17 @@ export class TerraformProxmoxProvider {
         power: true,
         resizeCompute: true,
         growDisk: true,
-        // Snapshots are not in this provider at all — bpg publishes no snapshot resource and no
-        // snapshot data source. They are served by the narrowed direct client, so this adapter
-        // reports them as unsupported rather than claiming work it cannot do.
-        snapshots: false,
+        // Snapshots do not go through Terraform — bpg publishes no snapshot resource and no
+        // snapshot data source — so they are served by the narrowed direct client. That makes
+        // them available in principle, and the *storage* decides whether they are available in
+        // fact: Proxmox refuses to snapshot a `raw` disk, and a full clone inherits its
+        // template's format.
+        //
+        // This flag was previously a hardcoded `false` justified by "bpg has no snapshot
+        // resource", which contradicted the six snapshot methods below that work perfectly well
+        // through the direct client. It was accidentally correct for a different reason — the
+        // template's disk really was `raw` — and would have stayed wrong after that was fixed.
+        snapshots: this.configuration.templateDiskFormat === 'qcow2',
         retentionMarker: true,
         purge: true,
         maximumCpuCount: MAXIMUM_CPU_COUNT,
@@ -735,6 +751,7 @@ export class TerraformProxmoxProvider {
       tags: [this.configuration.managedBy, this.configuration.environment],
       datastore_id: this.configuration.storage,
       disk_interface: this.configuration.diskInterface,
+      disk_format: this.configuration.templateDiskFormat,
       disk_gib: Number(resources.diskGib ?? 0),
       cpu_cores: resources.cpuCount ?? 1,
       memory_mib: Number(resources.memoryMib ?? 512),
@@ -1602,6 +1619,7 @@ export class TerraformProxmoxProvider {
       template_vm_id: this.configuration.templateVmid,
       datastore_id: this.configuration.storage,
       disk_interface: this.configuration.diskInterface,
+      disk_format: this.configuration.templateDiskFormat,
       bridge: this.configuration.bridge,
       network_mtu: this.configuration.networkMtu,
       dns_domain: this.configuration.dnsDomain,
@@ -1666,6 +1684,7 @@ export class TerraformProxmoxProvider {
       tags: [this.configuration.managedBy],
       datastore_id: this.configuration.storage,
       disk_interface: this.configuration.diskInterface,
+      disk_format: this.configuration.templateDiskFormat,
       disk_gib: 32,
       cpu_cores: 1,
       memory_mib: 512,

@@ -28,7 +28,8 @@ const configuration: TerraformProxmoxConfiguration = {
   providerProfileId: 'proxmox-testsrv',
   projectId: '00000000-0000-4000-8000-0000000000a1',
   node: 'proxtest',
-  templateVmid: 110,
+  templateVmid: 9100,
+  templateDiskFormat: 'qcow2',
   imageId: 'ubuntu-noble-2404',
   storage: 'local',
   diskInterface: 'scsi0',
@@ -134,8 +135,9 @@ function runsDouble(
 function provider(
   runner = runnerDouble(),
   runs: TerraformRunStore = runsDouble(null),
+  overrides: Partial<TerraformProxmoxConfiguration> = {},
 ): TerraformProxmoxProvider {
-  return new TerraformProxmoxProvider(configuration, runner, runs);
+  return new TerraformProxmoxProvider({ ...configuration, ...overrides }, runner, runs);
 }
 
 describe('construction', () => {
@@ -172,14 +174,13 @@ describe('getCapabilities', () => {
     await expect(promise).rejects.toThrow(/not allowlisted/);
   });
 
-  it('reports snapshots as unsupported, because this provider has no snapshot resource', async () => {
+  it('reports every capability Terraform genuinely has', async () => {
+    // A caller gating on these flags must not be refused work the adapter can perform. Snapshot
+    // support is asserted separately, because it depends on the template rather than on Terraform.
     const { capabilities } = await provider().getCapabilities({
       requestId: 'probe',
       providerProfileId: configuration.providerProfileId,
     });
-    expect(capabilities?.snapshots).toBe(false);
-    // Everything Terraform genuinely can do is reported true, so a caller gating on these flags
-    // does not refuse work the adapter can perform.
     expect(capabilities?.createInstance).toBe(true);
     expect(capabilities?.resizeCompute).toBe(true);
     expect(capabilities?.growDisk).toBe(true);
@@ -391,6 +392,31 @@ describe('getTask', () => {
 
   it('refuses a missing reference', async () => {
     await expect(provider().getTask({ context })).rejects.toThrow(/Task reference is required/);
+  });
+});
+
+describe('getCapabilities', () => {
+  it('reports snapshots available when the clone template is qcow2', async () => {
+    // Snapshots run through the direct client, not Terraform, so what decides their availability
+    // is the storage: Proxmox refuses to snapshot a `raw` disk and a full clone inherits its
+    // template's format.
+    const { capabilities } = await provider(runnerDouble()).getCapabilities({
+      providerProfileId: configuration.providerProfileId,
+    });
+
+    expect(capabilities?.snapshots).toBe(true);
+  });
+
+  it('reports snapshots unavailable when the clone template is raw', async () => {
+    // This was a hardcoded `false` justified by "bpg has no snapshot resource" — which
+    // contradicted the six snapshot methods that work through the direct client. It was
+    // accidentally right because the template really was raw, and would have stayed wrong once
+    // that was fixed.
+    const { capabilities } = await provider(runnerDouble(), runsDouble(null), {
+      templateDiskFormat: 'raw',
+    }).getCapabilities({ providerProfileId: configuration.providerProfileId });
+
+    expect(capabilities?.snapshots).toBe(false);
   });
 });
 

@@ -59,7 +59,19 @@ const NETWORK_ID = 'testsrv-vmbr1';
 const NODE = 'proxtest';
 const STORAGE = 'local';
 const BRIDGE = 'vmbr1';
-const TEMPLATE_VMID = 110;
+// The qcow2 clone template. 110 is the raw original and remains on the server as the source
+// `tools/proxmox/build-qcow2-template.mjs` clones from; cloning it directly would produce a raw
+// disk that Proxmox cannot snapshot.
+const TEMPLATE_VMID = 9100;
+
+/**
+ * The template's disk format, which decides whether snapshots are possible.
+ *
+ * Declared beside the VMID because the two must agree: bpg copies a clone's format from its
+ * source, so naming a template here and a different format below would make every plan a
+ * replacement.
+ */
+const TEMPLATE_DISK_FORMAT = 'qcow2';
 const NETWORK_MTU = 1400;
 
 /** The address this run's VM is given. Inside the pool, and excluded from no other lease. */
@@ -130,6 +142,7 @@ function fixtureTfvars() {
     tags: ['private-cloud-control-plane', 'lab'],
     datastore_id: STORAGE,
     disk_interface: 'scsi0',
+    disk_format: TEMPLATE_DISK_FORMAT,
     disk_gib: desired.diskGib,
     cpu_cores: desired.cpuCores,
     memory_mib: desired.memoryMib,
@@ -275,6 +288,7 @@ const provider = new TerraformProxmoxProvider(
     projectId: PROJECT_ID,
     node: NODE,
     templateVmid: TEMPLATE_VMID,
+    templateDiskFormat: TEMPLATE_DISK_FORMAT,
     imageId: IMAGE_ID,
     storage: STORAGE,
     diskInterface: 'scsi0',
@@ -684,14 +698,18 @@ try {
   });
 
   await check('snapshot-support-matches-the-storage', async () => {
-    // Not a skip. The storage genuinely cannot snapshot this disk, and what must be verified is
-    // that asking produces a *classified refusal* rather than a hang, a partial snapshot, or a
-    // corrupted workspace.
+    // Two outcomes, both valid, and which one applies is **measured from the disk** rather than
+    // assumed. Proxmox snapshots a disk only where the storage supports it, and directory storage
+    // supports snapshots only for qcow2; bpg does not convert format on a clone, so a clone's
+    // format is its template's.
     //
-    // Proxmox snapshots a disk only where the storage supports it, and directory storage supports
-    // snapshots only for qcow2. Template 110's disk is raw, and bpg does not convert format on a
-    // clone — measured, see the module comment — so every clone of it is raw too. Making
-    // snapshots work here needs a qcow2 template, which is an operator action.
+    // With a qcow2 template the full snapshot lifecycle must work. With a raw one the attempt must
+    // produce a *classified refusal* rather than a hang, a partial snapshot, or a corrupted
+    // workspace — and the listing must still answer, because a read of an empty set is correct.
+    //
+    // This check previously returned a hardcoded `limitation: "template 110 is raw"`. It kept
+    // passing after the template became qcow2, reporting a conclusion that was no longer true —
+    // the assertion held while its own evidence had gone stale.
     const config = await proxmox(`/nodes/${NODE}/qemu/${createdVmId}/config`);
     const raw =
       String(config.scsi0).includes('format=raw') || String(config.scsi0).includes('.raw');
@@ -714,7 +732,11 @@ try {
         request: { request: powerMutation(), providerSnapshotReference: name },
       });
       await pollUntilSettled(deleted.result.providerTaskReference, 'deleteSnapshot');
-      return { storageSupportsSnapshots: true, exercised: 'create, list, delete' };
+      return {
+        storageSupportsSnapshots: true,
+        exercised: 'create, list, delete',
+        disk: String(config.scsi0),
+      };
     }
 
     // The listing must still work: it is a read, and an empty list is the correct answer.
@@ -754,7 +776,8 @@ try {
 
     return {
       storageSupportsSnapshots: false,
-      limitation: 'directory storage snapshots qcow2 only; template 110 is raw',
+      limitation: `directory storage snapshots qcow2 only; this disk is ${config.scsi0}`,
+      refusalWasClassified: true,
     };
   });
 

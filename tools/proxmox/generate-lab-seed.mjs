@@ -38,8 +38,18 @@ const NETWORK_CIDR = '192.168.4.0/22';
 const GATEWAY = '192.168.4.1';
 const DNS_SERVERS = ['1.1.1.1'];
 
-/** The clone template. */
-const TEMPLATE_VMID = 110;
+/**
+ * The clone template, read from the survey rather than written here.
+ *
+ * Asserting it twice is how the seed and the surveyed facts drift apart: the flavour assertions
+ * below compare against the *surveyed* template's cores, memory and disk, so a constant naming a
+ * different template would generate a seed whose own reasoning was about something else.
+ */
+function templateVmid(evidence) {
+  const vmid = evidence.template?.vmid;
+  if (!vmid) throw new Error('The survey records no template. Run `pnpm run survey:proxmox`.');
+  return vmid;
+}
 
 /**
  * The reserved VMID interval the adapter clamps itself to — read from the survey, not assumed.
@@ -104,6 +114,9 @@ const evidence = JSON.parse(await readFile(EVIDENCE_PATH, 'utf8'));
 
 /** The VMID interval this seed may honestly claim, measured by the survey. */
 const { minimum: VMID_MINIMUM, maximum: VMID_MAXIMUM } = reservedInterval(evidence);
+
+/** The template every instance is cloned from, as measured. */
+const TEMPLATE_VMID = templateVmid(evidence);
 const addresses = (evidence.addressesInUseOnBridge?.addresses ?? []).map((entry) => entry.address);
 const capturedAt = String(evidence.capturedAt ?? '').slice(0, 10);
 const node = evidence.node;

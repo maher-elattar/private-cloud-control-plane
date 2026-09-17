@@ -57,6 +57,25 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
+/**
+ * The clone template's disk format, which decides whether the adapter reports snapshot support.
+ *
+ * Defaults to `raw`, the conservative answer: a deployment that has not declared its template
+ * format gets "snapshots unavailable" rather than a capability claim that fails at the first
+ * attempt. `pnpm run survey:proxmox` measures the real value and `tools/terraform/compose-env.mjs`
+ * carries it into the environment.
+ *
+ * @returns The declared format.
+ * @throws Error if the value is set to anything other than the two formats Proxmox uses here.
+ */
+function templateDiskFormat(): 'qcow2' | 'raw' {
+  const value = process.env.PROXMOX_TEMPLATE_DISK_FORMAT?.trim() || 'raw';
+  if (value !== 'qcow2' && value !== 'raw') {
+    throw new Error('PROXMOX_TEMPLATE_DISK_FORMAT must be qcow2 or raw.');
+  }
+  return value;
+}
+
 /** Reads a required integer setting, such as a VMID bound. */
 function requiredInteger(name: string): number {
   const value = Number(requiredEnvironment(name));
@@ -216,6 +235,7 @@ function createTerraformProvider(): ReturnType<typeof createProvider> {
       projectId: requiredEnvironment('PROXMOX_PROJECT_ID'),
       node: requiredEnvironment('PROXMOX_NODE'),
       templateVmid: requiredInteger('PROXMOX_TEMPLATE_VMID'),
+      templateDiskFormat: templateDiskFormat(),
       imageId: requiredEnvironment('PROXMOX_IMAGE_ID'),
       storage: requiredEnvironment('PROXMOX_STORAGE'),
       diskInterface: requiredEnvironment('PROXMOX_DISK_INTERFACE'),

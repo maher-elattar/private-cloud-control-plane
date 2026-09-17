@@ -1,0 +1,32 @@
+flowchart TB
+    T["Clone template disk format<br/>measured by pnpm run survey:proxmox"]
+
+    T -->|qcow2| ENV["PROXMOX_TEMPLATE_DISK_FORMAT=qcow2<br/>carried by compose-env.mjs"]
+    T -->|raw| ENVR["PROXMOX_TEMPLATE_DISK_FORMAT=raw"]
+
+    ENV --> CAP["getCapabilities reports<br/>snapshots: true"]
+    ENV --> TFV["tfvars disk_format = qcow2"]
+    ENVR --> CAPR["getCapabilities reports<br/>snapshots: false"]
+    ENVR --> TFVR["tfvars disk_format = raw"]
+
+    TFV --> CLONE["Full clone inherits qcow2"]
+    TFVR --> CLONER["Full clone inherits raw"]
+
+    CLONE --> SNAP["Proxmox accepts a snapshot<br/>create, list, rollback, delete"]
+    CLONER --> REF["Proxmox refuses:<br/>this storage snapshots qcow2 only"]
+
+    CAP --> UI["Console shows the snapshots tab"]
+    CAPR --> UIR["Console shows it unavailable"]
+
+    N1["bpg ignores file_format on a clone — it copies the<br/>source format. A declared value the template does not<br/>have makes every later plan a replacement, which the<br/>gate refuses. That takes out convergence and resize<br/>too, not only the snapshot it was meant to enable."]
+    N2["getCapabilities is called by the readiness probe every<br/>few seconds and must never reach the hypervisor, so the<br/>format is measured once and carried in configuration."]
+
+    TFV -.- N1
+    CAP -.- N2
+
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef note fill:#f8fafc,stroke:#94a3b8,color:#334155
+    class ENV,CAP,TFV,CLONE,SNAP,UI good
+    class ENVR,CAPR,TFVR,CLONER,REF,UIR bad
+    class N1,N2 note
