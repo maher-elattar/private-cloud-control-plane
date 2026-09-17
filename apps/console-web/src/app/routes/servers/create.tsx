@@ -1,359 +1,238 @@
 /**
  * Create-server wizard.
  *
- * A single scrolling form of twelve sections with a sticky order summary. Selection state is
- * mirrored into the query string so a configured order can be linked or reloaded, matching the
- * reference console's `?location=…&type=…&useIPv4=…` behaviour.
+ * The twelve-step stepper and the order-summary rail are kept exactly as designed. What changed is
+ * what fills them: flavours, images and networks now come from
+ * `/v1/projects/{id}/catalog/{flavors,images,networks}` instead of a hardcoded table of another
+ * provider's products, and the steps with nothing behind them say so.
  *
- * Submitting calls `createInstance`, which returns as soon as intent is durably recorded — the
- * resulting instance appears in the list in a provisioning state rather than blocking here.
+ * Four steps are real, because `CreateInstanceRequest` is exactly
+ * `{ imageId, flavorId, networkId, hostname, sshPublicKeys }` and the API sets
+ * `forbidNonWhitelisted` — one extra property is a hard rejection, not a field quietly ignored.
+ * The rest are roadmap-marked rather than removed, so the shape of the finished flow stays visible.
+ *
+ * SSH keys are among the real four. There is no stored key entity to pick from, but the create
+ * request accepts up to five inline public keys, so the step takes them as text.
  */
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import {
-  Badge,
-  Button,
-  Callout,
-  Checkbox,
-  DashedButton,
-  NewBadge,
-  SegmentedTabs,
-  TextField,
-} from '../../components/primitives';
+import { Badge, Button, Callout, TextField } from '../../components/primitives';
 import { StepMarker, StepperStep } from '../../components/stepper';
 import type { StepState } from '../../components/stepper';
-import { ArrowLeftIcon, ChevronDownIcon, MinusIcon, PlusIcon } from '../../components/icons';
-import { Flag } from '../../components/flags';
-import {
-  BACKUP_PRICE_RATIO,
-  FLAVORS,
-  IMAGES,
-  IPV4_PRICE_PER_MONTH,
-  LOCATIONS,
-  defaultInstanceName,
-  findFlavor,
-  findImage,
-  findLocation,
-  latestVersion,
-} from '../../data/catalog';
+import { ArrowLeftIcon, MinusIcon, PlusIcon } from '../../components/icons';
+import { IPV4_PRICE_PER_MONTH, priceFor, suggestedHostname } from '../../data/catalog';
 import { useConsole } from '../../data/store';
 
-const CATEGORY_LABELS = { shared: 'Shared Resources', dedicated: 'Dedicated Resources' } as const;
+/** MiB per GiB, for rendering a flavour's memory. */
+const MIB_PER_GIB = 1024;
 
-/**
- * Formats a euro amount, symbol first.
- *
- * Monthly figures carry two decimals; hourly rates carry three, because at these prices two
- * would collapse €0.018 and €0.022 into the same displayed value.
- */
+/** The API's cap on inline public keys in one create request. */
+const MAXIMUM_SSH_KEYS = 5;
+
+/** Formats a euro amount, symbol first. */
 function euro(amount: number, decimals = 2): string {
-  return `€${amount.toFixed(decimals)}`;
+  return `€ ${amount.toFixed(decimals)}`;
 }
 
 function money(amount: number, unit: string) {
   return (
-    <span className="whitespace-nowrap font-semibold text-primary">
+    <span className="whitespace-nowrap">
       {euro(amount)}
-      <span className="ml-0.5 text-xs font-normal">{unit}</span>
+      <span className="text-xs text-text-muted"> {unit}</span>
     </span>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Type section                                                               */
-/* -------------------------------------------------------------------------- */
+/**
+ * Splits pasted key text into individual keys.
+ *
+ * One per line, blanks dropped. Validation is the server's job — `validateCreateInstance` checks
+ * each key's structure, and duplicating that here would mean two definitions of a valid key that
+ * could disagree. What this does check is the count, because exceeding it is a whole-request
+ * failure the user can fix before submitting.
+ */
+function parseKeys(text: string): readonly string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
 
-const TYPE_CARDS = [
-  {
-    id: 'cost',
-    title: 'Cost-Optimized',
-    blurb: 'Cost-efficient on older hardware generations, with limited availability.',
-    tags: ['Cost effective', 'Low CPU usage', 'Medium traffic applications'],
-    // Two architectures are offered here, so the card renders a radio group rather than a label.
-    architecture: ['x86 (Intel®/AMD)', 'Arm64 (Ampere®)'],
-    disabled: true,
-  },
-  {
-    id: 'regular',
-    title: 'Regular Performance',
-    blurb: 'Higher CPU performance based on newer hardware generations.',
-    tags: ['Best price/performance', 'Low to medium CPU usage', 'Medium traffic applications'],
-    architecture: 'x86 (AMD)',
-    disabled: false,
-  },
-  {
-    id: 'dedicated',
-    title: 'General Purpose',
-    blurb: 'Provides dedicated vCPUs on the latest available hardware generation at the location.',
-    tags: [
-      'Predictable performance',
-      'Critical production',
-      'Sustained high CPU usage',
-      'High traffic applications',
-    ],
-    architecture: 'x86 (AMD)',
-    disabled: false,
-  },
-] as const;
-
-function TypeCard({
-  card,
-  selected,
-}: {
-  readonly card: (typeof TYPE_CARDS)[number];
-  readonly selected: boolean;
-}) {
+/** A step the control plane does not implement yet. */
+function RoadmapStep({ note }: { readonly note: string }) {
   return (
-    <div
-      className={`relative flex flex-col rounded-lg border p-6 transition-colors ${
-        card.disabled
-          ? 'border-border bg-surface-disabled text-text-disabled'
-          : selected
-            ? 'border-2 border-primary bg-surface'
-            : 'border-border bg-surface hover:bg-surface-hover'
-      }`}
-    >
-      {selected ? <StepMarker state="done" className="absolute -left-2.5 -top-2.5" /> : null}
-      <div className="flex items-center gap-2">
-        <h3 className={`text-lg font-semibold ${card.disabled ? '' : 'text-text'}`}>
-          {card.title}
-        </h3>
-        <span className="flex size-4 items-center justify-center rounded-full bg-badge-plain text-[0.625rem] text-text-muted">
-          ?
-        </span>
-      </div>
-      {card.disabled ? (
-        <div className="mt-2">
-          <Badge tone="orange">Limited availability</Badge>
-        </div>
-      ) : null}
-      <p className="mt-3 text-[0.9375rem] leading-6">{card.blurb}</p>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {card.tags.map((tag) => (
-          <Badge key={tag} tone="plain">
-            {tag}
-          </Badge>
-        ))}
-      </div>
-      <div className="mt-auto pt-8">
-        <p className="text-[0.6875rem] uppercase tracking-wide text-text-disabled">Architecture</p>
-        {Array.isArray(card.architecture) ? (
-          <div className="mt-2 space-y-2">
-            {card.architecture.map((option) => (
-              <label key={option} className="flex items-center gap-2.5 text-[0.9375rem]">
-                <span className="block size-4 rounded-full border border-form-border bg-surface" />
-                {option}
-              </label>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-1 text-[0.9375rem]">{card.architecture}</p>
-        )}
-      </div>
+    <div className="flex items-center gap-3">
+      <Badge tone="orange">On the roadmap</Badge>
+      <p className="text-[0.9375rem] text-text-muted">{note}</p>
     </div>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Wizard                                                                     */
-/* -------------------------------------------------------------------------- */
-
 export function CreateServer() {
   const navigate = useNavigate();
-  const { createInstance, instances } = useConsole();
   const [params, setParams] = useSearchParams();
+  const { flavors, images, networks, quota, createInstance, loading, error } = useConsole();
 
-  const [category, setCategory] = useState<'shared' | 'dedicated'>('shared');
-  const [imageTab, setImageTab] = useState('OS Images');
-  const [imageId, setImageId] = useState('ubuntu');
-  const [imageVersions, setImageVersions] = useState<Record<string, string>>({});
-  const [useIpv4, setUseIpv4] = useState(params.get('useIPv4') !== 'false');
-  const [useIpv6, setUseIpv6] = useState(params.get('useIPv6') !== 'false');
-  const [usePrivateNet, setUsePrivateNet] = useState(params.get('usePrivateNet') === 'true');
-  const [backups, setBackups] = useState(false);
-  const [labels, setLabels] = useState('');
-  const [cloudConfig, setCloudConfig] = useState('');
+  const [flavorId, setFlavorId] = useState(params.get('flavor') ?? '');
+  const [imageId, setImageId] = useState(params.get('image') ?? '');
+  const [networkId, setNetworkId] = useState(params.get('network') ?? '');
+  const [hostname, setHostname] = useState('');
+  const [hostnameTouched, setHostnameTouched] = useState(false);
+  const [sshKeys, setSshKeys] = useState('');
   const [count, setCount] = useState(1);
-  const [nameTouched, setNameTouched] = useState(false);
-  const [name, setName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const flavorId = params.get('type') ?? 'cpx22';
-  const locationId = params.get('location') ?? 'hel1';
+  // The first entry of each catalog is the default, so a wizard opened cold is already valid.
+  const flavor = flavors.find((entry) => entry.id === flavorId) ?? flavors[0];
+  const image = images.find((entry) => entry.id === imageId) ?? images[0];
+  const network = networks.find((entry) => entry.id === networkId) ?? networks[0];
 
-  const flavor = findFlavor(flavorId);
-  const location = findLocation(locationId);
-  const image = findImage(imageId);
-  const imageVersion = imageVersions[imageId] ?? latestVersion(image);
+  const keys = useMemo(() => parseKeys(sshKeys), [sshKeys]);
+  const tooManyKeys = keys.length > MAXIMUM_SSH_KEYS;
 
-  /** Writes one selection into the query string, preserving the rest. */
-  function setParam(key: string, value: string) {
+  const derivedHostname = useMemo(() => (image ? suggestedHostname(image.id) : 'server'), [image]);
+  const effectiveHostname = hostnameTouched ? hostname : derivedHostname;
+
+  /**
+   * How many more instances the project's quota allows.
+   *
+   * Shown and enforced before submitting, because the real quota here is three: without this the
+   * count stepper would happily offer ten and the fourth create would be refused with
+   * `QUOTA_EXCEEDED` after three had already been accepted.
+   */
+  const headroom = quota ? Math.max(0, quota.limits.instances - quota.usage.instances) : null;
+  const maximumCount = headroom === null ? 1 : Math.max(1, Math.min(10, headroom));
+
+  function remember(key: string, value: string) {
     const next = new URLSearchParams(params);
     next.set(key, value);
     setParams(next, { replace: true });
   }
 
-  const derivedName = defaultInstanceName(
-    image.family,
-    flavor.memoryGb,
-    location.id,
-    instances.length + 1,
-  );
-  const effectiveName = nameTouched ? name : derivedName;
-
-  const visibleFlavors = useMemo(
-    () => FLAVORS.filter((candidate) => candidate.category === category),
-    [category],
-  );
-
   const monthly = useMemo(() => {
-    const server = flavor.pricePerMonth + (location.surchargePerMonth ?? 0);
-    const ipv4 = useIpv4 ? IPV4_PRICE_PER_MONTH : 0;
-    const backup = backups ? server * BACKUP_PRICE_RATIO : 0;
-    return { server, ipv4, backup, total: (server + ipv4 + backup) * count };
-  }, [flavor, location, useIpv4, backups, count]);
-
-  const sshState: StepState = 'warning';
-
-  function submit() {
-    const parsedLabels = Object.fromEntries(
-      labels
-        .split('\n')
-        .map((line) => line.split('='))
-        .filter((parts): parts is [string, string] => parts.length === 2)
-        .map(([key, value]) => [key.trim(), value.trim()]),
-    );
-
-    for (let index = 0; index < count; index += 1) {
-      createInstance({
-        name: count === 1 ? effectiveName : `${effectiveName}-${index + 1}`,
-        flavorId: flavor.id,
-        locationId: location.id,
-        imageId: image.family,
-        imageVersion,
-        useIpv4,
-        useIpv6,
-        usePrivateNetwork: usePrivateNet,
-        backups,
-        labels: parsedLabels,
-        cloudConfig,
-      });
-    }
-    void navigate('/servers');
-  }
+    const server = flavor ? priceFor(flavor.id) : 0;
+    return { server, ipv4: IPV4_PRICE_PER_MONTH, total: (server + IPV4_PRICE_PER_MONTH) * count };
+  }, [flavor, count]);
 
   const summaryRows: readonly { label: string; value: string; state: StepState }[] = [
-    { label: flavor.name, value: 'Type', state: 'done' },
-    { label: location.city, value: 'Location', state: 'done' },
-    { label: `${image.family} ${imageVersion}`, value: 'Image', state: 'done' },
+    { label: 'Type', value: flavor?.name ?? '', state: flavor ? 'done' : 'optional' },
+    { label: 'Network', value: network?.name ?? '', state: network ? 'done' : 'optional' },
+    { label: 'Image', value: image?.name ?? '', state: image ? 'done' : 'optional' },
     {
-      label:
-        [useIpv4 ? 'IPv4' : null, useIpv6 ? 'IPv6' : null, usePrivateNet ? 'Private' : null]
-          .filter(Boolean)
-          .join(', ') || 'None',
-      value: 'Networking',
-      state: 'done',
+      label: 'SSH keys',
+      value: keys.length === 0 ? 'None — password login only' : `${keys.length} key(s)`,
+      state: keys.length === 0 ? 'warning' : 'done',
     },
-    { label: 'SSH keys', value: '', state: sshState },
-    { label: 'Volumes', value: '', state: 'optional' },
-    { label: 'Firewalls', value: '', state: 'optional' },
-    { label: 'Backups', value: '', state: backups ? 'done' : 'optional' },
-    { label: 'Placement groups', value: '', state: 'optional' },
-    { label: 'Labels', value: '', state: labels ? 'done' : 'optional' },
-    { label: 'Cloud config', value: '', state: cloudConfig ? 'done' : 'optional' },
-    { label: 'Name', value: '', state: 'done' },
+    { label: 'Volumes', value: 'On the roadmap', state: 'optional' },
+    { label: 'Firewalls', value: 'On the roadmap', state: 'optional' },
+    { label: 'Backups', value: 'On the roadmap', state: 'optional' },
+    { label: 'Placement groups', value: 'On the roadmap', state: 'optional' },
+    { label: 'Labels', value: 'On the roadmap', state: 'optional' },
+    { label: 'Cloud config', value: 'On the roadmap', state: 'optional' },
+    { label: 'Name', value: effectiveHostname, state: 'done' },
   ];
+
+  const ready = Boolean(flavor && image && network) && !tooManyKeys && !submitting;
+
+  async function submit() {
+    if (!flavor || !image || !network) return;
+    setSubmitting(true);
+    try {
+      // One request per server: the API has no batch create. Each carries its own hostname, which
+      // also gives each its own idempotency key — the same key for two different hostnames would
+      // be an `IDEMPOTENCY_CONFLICT`.
+      for (let index = 0; index < count; index += 1) {
+        const result = await createInstance({
+          hostname: count === 1 ? effectiveHostname : `${effectiveHostname}-${index + 1}`,
+          flavorId: flavor.id,
+          imageId: image.id,
+          networkId: network.id,
+          sshPublicKeys: keys,
+        });
+        // Stop at the first refusal rather than pushing the rest into the same wall. The toast
+        // already carries the reason.
+        if (!result.ok) return;
+      }
+      await navigate('/servers');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="px-8 py-6">
+        <p className="text-[0.9375rem] text-text-muted">Loading the catalog…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="px-8 py-6">
+        <Callout tone="error" title="The catalog could not be loaded.">
+          {error.detail ?? error.title} Reference {error.traceId}.
+        </Callout>
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-8 px-8 py-6">
       <div className="min-w-0 flex-1">
         <Link
           to="/servers"
-          className="inline-flex items-center gap-2 text-[0.9375rem] text-text-muted transition-colors hover:text-text"
+          className="inline-flex items-center gap-2 text-[0.9375rem] text-primary hover:underline"
         >
-          <ArrowLeftIcon size={17} />
+          <ArrowLeftIcon size={15} />
           Back to servers
         </Link>
-        <h1 className="mt-4 text-[2.5rem] font-semibold leading-tight text-text">
-          Create a server
-        </h1>
+        <h1 className="mt-4 text-[2.5rem] font-semibold leading-none text-text">Create a server</h1>
 
-        <div className="mt-8">
-          {/* Type ------------------------------------------------------------ */}
-          <StepperStep state="done" title="Type">
-            <SegmentedTabs
-              options={[CATEGORY_LABELS.shared, CATEGORY_LABELS.dedicated]}
-              value={CATEGORY_LABELS[category]}
-              onChange={(next) =>
-                setCategory(next === CATEGORY_LABELS.shared ? 'shared' : 'dedicated')
-              }
-            />
-
-            <div className="mt-5 grid gap-5 lg:grid-cols-3">
-              {TYPE_CARDS.map((card) => (
-                <TypeCard
-                  key={card.id}
-                  card={card}
-                  selected={
-                    (category === 'shared' && card.id === 'regular') ||
-                    (category === 'dedicated' && card.id === 'dedicated')
-                  }
-                />
-              ))}
-            </div>
-
-            <div className="mt-7 overflow-x-auto">
-              <table className="w-full min-w-[46rem] border-separate border-spacing-y-2">
+        <div className="mt-10">
+          <StepperStep state={flavor ? 'done' : 'optional'} title="Type">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[40rem] border-separate border-spacing-0 text-left">
                 <thead>
-                  <tr className="text-left text-[0.6875rem] uppercase tracking-wide text-text-muted">
-                    <th className="pb-1 pl-5 font-normal">Name</th>
-                    <th className="pb-1 font-normal">vCPUs</th>
-                    <th className="pb-1 font-normal">RAM</th>
-                    <th className="pb-1 font-normal">SSD</th>
-                    <th className="pb-1 font-normal">Traffic</th>
-                    <th className="pb-1 font-normal">Price / h</th>
-                    <th className="pb-1 pr-5 text-right font-normal">Price</th>
+                  <tr className="text-[0.6875rem] uppercase tracking-wide text-text-disabled">
+                    <th className="px-4 py-2 font-semibold">Name</th>
+                    <th className="px-4 py-2 font-semibold">vCPU</th>
+                    <th className="px-4 py-2 font-semibold">RAM</th>
+                    <th className="px-4 py-2 font-semibold">Disk</th>
+                    <th className="px-4 py-2 font-semibold">Price</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleFlavors.map((candidate) => {
-                    const selected = candidate.id === flavor.id;
+                  {flavors.map((candidate) => {
+                    const selected = candidate.id === flavor?.id;
                     return (
                       <tr
                         key={candidate.id}
-                        onClick={() => setParam('type', candidate.id)}
-                        className={`cursor-pointer bg-surface text-[0.9375rem] ${
-                          selected ? 'outline outline-2 outline-primary' : 'hover:bg-surface-hover'
+                        onClick={() => {
+                          setFlavorId(candidate.id);
+                          remember('flavor', candidate.id);
+                        }}
+                        className={`cursor-pointer text-[0.9375rem] transition-colors ${
+                          selected
+                            ? 'bg-select-bg-default text-text'
+                            : 'text-text hover:bg-surface-hover'
                         }`}
                       >
-                        <td className="relative rounded-l-lg py-4 pl-5">
-                          {selected ? (
-                            <StepMarker
-                              state="done"
-                              className="absolute -left-2.5 top-1/2 -translate-y-1/2"
-                            />
-                          ) : null}
-                          <span className="flex items-center gap-2 font-medium">
+                        <td className="border-t border-border px-4 py-4">
+                          <span className="flex items-center gap-2.5">
+                            <StepMarker state={selected ? 'done' : 'optional'} />
                             {candidate.name}
-                            {candidate.isNew ? <NewBadge /> : null}
                           </span>
                         </td>
-                        <td className="py-4">
-                          <span className="flex items-center gap-2">
-                            {candidate.vcpus}
-                            <Badge tone="plain">{candidate.architecture}</Badge>
-                          </span>
+                        <td className="border-t border-border px-4 py-4">{candidate.cpuCount}</td>
+                        <td className="border-t border-border px-4 py-4">
+                          {(candidate.memoryMiB / MIB_PER_GIB).toFixed(0)} GB
                         </td>
-                        <td className="py-4">{candidate.memoryGb} GB</td>
-                        <td className="py-4">{candidate.diskGb} GB</td>
-                        <td className="py-4">{candidate.trafficTb} TB</td>
-                        <td className="py-4">
-                          <span className="text-text">
-                            {euro(candidate.pricePerHour, 3)}
-                            <span className="text-xs text-text-muted"> / h</span>
-                          </span>
+                        <td className="border-t border-border px-4 py-4">
+                          {candidate.minimumDiskGiB} GB
                         </td>
-                        <td className="rounded-r-lg py-4 pr-5 text-right">
-                          {money(candidate.pricePerMonth, ' / mo')}
+                        <td className="border-t border-border px-4 py-4">
+                          {money(priceFor(candidate.id), '/mo')}
                         </td>
                       </tr>
                     );
@@ -363,303 +242,137 @@ export function CreateServer() {
             </div>
           </StepperStep>
 
-          {/* Location -------------------------------------------------------- */}
-          <StepperStep
-            state="done"
-            title="Location"
-            description="Choose a location for your server. You can only select some features, such as private Networks and Load Balancers, if they are in the same network zone as the server. You can only select Primary IPs and Volumes that are in the same location as the server."
-          >
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {LOCATIONS.map((candidate) => {
-                const selected = candidate.id === location.id;
+          <StepperStep state={network ? 'done' : 'optional'} title="Network">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {networks.map((candidate) => {
+                const selected = candidate.id === network?.id;
                 return (
                   <button
                     key={candidate.id}
                     type="button"
-                    onClick={() => setParam('location', candidate.id)}
-                    className={`relative flex items-center gap-4 rounded-lg border bg-surface px-5 py-4 text-left transition-colors ${
-                      selected ? 'border-2 border-primary' : 'border-border hover:bg-surface-hover'
+                    onClick={() => {
+                      setNetworkId(candidate.id);
+                      remember('network', candidate.id);
+                    }}
+                    className={`relative rounded-lg border p-5 text-left transition-colors ${
+                      selected
+                        ? 'border-2 border-primary bg-surface'
+                        : 'border-border bg-surface hover:bg-surface-hover'
                     }`}
                   >
                     {selected ? (
                       <StepMarker state="done" className="absolute -left-2.5 -top-2.5" />
                     ) : null}
-                    <Flag country={candidate.countryCode} width={38} />
-                    <span className="min-w-0">
-                      <span className="block text-[1.0625rem] text-text">{candidate.city}</span>
-                      <span className="block text-sm text-text-muted">{candidate.networkZone}</span>
+                    <span className="block text-[1.0625rem] text-text">{candidate.name}</span>
+                    <span className="mt-1 block text-sm text-text-muted">{candidate.ipv4Cidr}</span>
+                    <span className="mt-1 block text-sm text-text-muted">
+                      Gateway {candidate.gateway}
                     </span>
-                    {candidate.surchargePerMonth ? (
-                      <span className="ml-auto text-sm font-medium text-primary">
-                        + {euro(candidate.surchargePerMonth)}
-                        <span className="text-xs"> /mo</span>
-                      </span>
-                    ) : null}
                   </button>
                 );
               })}
             </div>
           </StepperStep>
 
-          {/* Image ----------------------------------------------------------- */}
-          <StepperStep
-            state="done"
-            title="Image"
-            description="Choose an operating system, or pick an app image that ships Docker, WordPress or Nextcloud pre-installed and ready to use when you create your server."
-          >
-            <div className="mb-6 flex gap-6 border-b border-border">
-              {['OS Images', 'Apps'].map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setImageTab(tab)}
-                  className={`-mb-px border-b-2 pb-2.5 text-[0.9375rem] transition-colors ${
-                    imageTab === tab
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-text'
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
-
-            {imageTab === 'OS Images' ? (
-              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {IMAGES.map((candidate) => {
-                  const selected = candidate.id === image.id;
-                  return (
-                    <div
-                      key={candidate.id}
-                      className={`relative overflow-hidden rounded-lg border bg-surface ${
-                        selected ? 'border-2 border-primary' : 'border-border'
-                      }`}
-                    >
-                      {selected ? (
-                        <StepMarker state="done" className="absolute -left-2.5 -top-2.5 z-10" />
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => setImageId(candidate.id)}
-                        className="flex w-full items-center gap-4 px-5 py-5 text-left"
-                      >
-                        <span
-                          className="flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
-                          style={{ backgroundColor: candidate.logo }}
-                        >
-                          {candidate.family.charAt(0)}
-                        </span>
-                        <span className="text-[1.0625rem] text-text">{candidate.family}</span>
-                      </button>
-                      <label className="flex items-center justify-center gap-2 border-t border-border bg-select-bg-default py-3 text-[0.9375rem]">
-                        <select
-                          value={imageVersions[candidate.id] ?? latestVersion(candidate)}
-                          onChange={(event) =>
-                            setImageVersions((prev) => ({
-                              ...prev,
-                              [candidate.id]: event.target.value,
-                            }))
-                          }
-                          className="cursor-pointer appearance-none bg-transparent text-center outline-none"
-                        >
-                          {candidate.versions.map((version) => (
-                            <option key={version}>{version}</option>
-                          ))}
-                        </select>
-                        <ChevronDownIcon size={16} className="text-text-muted" />
-                      </label>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-[0.9375rem] text-text-muted">
-                No app images are available in this catalog yet.
-              </p>
-            )}
-          </StepperStep>
-
-          {/* Networking ------------------------------------------------------ */}
-          <StepperStep
-            state="done"
-            title="Networking"
-            description="Choose from three networking options for your server. You can also create servers without a public network. If you want to disable the public network, you need to select a private network first."
-          >
-            <div className="space-y-5">
-              <Checkbox
-                label="Public IPv4"
-                description={`A public IPv4 address costs ${euro(IPV4_PRICE_PER_MONTH)} per month.`}
-                checked={useIpv4}
-                onChange={(event) => {
-                  setUseIpv4(event.target.checked);
-                  setParam('useIPv4', String(event.target.checked));
-                }}
-              />
-              <Checkbox
-                label="Public IPv6"
-                description="IPv6 addresses are free of charge."
-                checked={useIpv6}
-                onChange={(event) => {
-                  setUseIpv6(event.target.checked);
-                  setParam('useIPv6', String(event.target.checked));
-                }}
-              />
-              <Checkbox
-                label="Private networks"
-                description="Private networks allow your servers to communicate with each other over a dedicated link. You can also disable the public network with this function, so that your server can be reached only within this network. Only networks of the same network zone are available."
-                checked={usePrivateNet}
-                onChange={(event) => {
-                  setUsePrivateNet(event.target.checked);
-                  setParam('usePrivateNet', String(event.target.checked));
-                }}
-              />
-            </div>
-          </StepperStep>
-
-          {/* SSH keys -------------------------------------------------------- */}
-          <StepperStep
-            state={sshState}
-            title="SSH keys"
-            description={
-              <>
-                Use SSH keys for secure and efficient authentication. Ensure the key is in OpenSSH
-                format. If you add an SSH key, no root credentials will be sent via email.{' '}
-                <a href="#" className="text-primary hover:underline">
-                  Learn more.
-                </a>
-              </>
-            }
-          >
-            <Callout tone="warning" title="No SSH key selected.">
-              <p>
-                We recommend using an SSH key. Otherwise you will receive the root password via
-                email.
-              </p>
-            </Callout>
-            <DashedButton className="mt-6">Add SSH key</DashedButton>
-          </StepperStep>
-
-          {/* Volumes --------------------------------------------------------- */}
-          <StepperStep
-            state="optional"
-            title="Volumes"
-            description="Volumes are additional network-attached disks you can mount to your server and move between servers in the same location."
-          >
-            <DashedButton>Create Volume</DashedButton>
-          </StepperStep>
-
-          {/* Firewalls ------------------------------------------------------- */}
-          <StepperStep state="optional" title="Firewalls">
-            <p className="text-[0.9375rem] leading-6 text-text">
-              Firewalls allow you to easily secure your servers by restricting or allowing traffic
-              based on rules.
-            </p>
-            <p className="mt-5 text-[0.9375rem] leading-6 text-text">
-              There are no Firewalls in this project yet. Go to{' '}
-              <Link to="/firewalls" className="text-primary hover:underline">
-                Firewalls
-              </Link>{' '}
-              to create your first one.
-            </p>
-          </StepperStep>
-
-          {/* Backups --------------------------------------------------------- */}
-          <StepperStep state={backups ? 'done' : 'optional'} title="Backups">
-            <p className="text-[0.9375rem] leading-6 text-text">
-              Backups are daily automatic copies of your server's disk. With Backups, you can easily
-              restore a server to a previous state or use it to create a new server.{' '}
-              <a href="#" className="text-primary hover:underline">
-                Learn more.
-              </a>
-            </p>
-            <p className="mt-5 text-[0.9375rem] leading-6 text-text">
-              Backups cost an additional {BACKUP_PRICE_RATIO * 100} % of the server price. Volumes
-              are not included in backups.
-            </p>
-            <div className="mt-6">
-              <Checkbox
-                label={
-                  <span className="flex items-center gap-2">
-                    Backups
-                    <span className="flex size-4 items-center justify-center rounded-full bg-badge-plain text-[0.625rem] text-text-muted">
-                      €
+          <StepperStep state={image ? 'done' : 'optional'} title="Image">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {images.map((candidate) => {
+                const selected = candidate.id === image?.id;
+                return (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    onClick={() => {
+                      setImageId(candidate.id);
+                      remember('image', candidate.id);
+                    }}
+                    className={`relative rounded-lg border p-5 text-left transition-colors ${
+                      selected
+                        ? 'border-2 border-primary bg-surface'
+                        : 'border-border bg-surface hover:bg-surface-hover'
+                    }`}
+                  >
+                    {selected ? (
+                      <StepMarker state="done" className="absolute -left-2.5 -top-2.5" />
+                    ) : null}
+                    <span className="block text-[1.0625rem] text-text">{candidate.name}</span>
+                    <span className="mt-1 block text-sm text-text-muted">
+                      {candidate.architecture}
                     </span>
-                  </span>
-                }
-                checked={backups}
-                onChange={(event) => setBackups(event.target.checked)}
-              />
+                  </button>
+                );
+              })}
             </div>
           </StepperStep>
 
-          {/* Placement groups ------------------------------------------------ */}
-          <StepperStep
-            state="optional"
-            title="Placement groups"
-            description="Placement groups influence how your servers are spread across physical hosts, so one host failure cannot take all of them down."
-          >
-            <DashedButton>Create placement group</DashedButton>
+          <StepperStep state={keys.length === 0 ? 'warning' : 'done'} title="SSH keys">
+            {keys.length === 0 ? (
+              <Callout tone="warning" title="No SSH key selected.">
+                Without a key you will have to sign in with the image's cloud-init password. Paste
+                one public key per line.
+              </Callout>
+            ) : null}
+            <textarea
+              value={sshKeys}
+              onChange={(event) => setSshKeys(event.target.value)}
+              rows={4}
+              spellCheck={false}
+              placeholder="ssh-ed25519 AAAA… you@example.com"
+              aria-label="SSH public keys, one per line"
+              className="mt-4 w-full rounded border border-form-border bg-input-bg p-3 font-mono text-sm text-text"
+            />
+            {tooManyKeys ? (
+              <Callout tone="error" title="Too many keys.">
+                A create request accepts at most {MAXIMUM_SSH_KEYS}; you have pasted {keys.length}.
+              </Callout>
+            ) : null}
           </StepperStep>
 
-          {/* Labels ---------------------------------------------------------- */}
-          <StepperStep
-            state={labels ? 'done' : 'optional'}
-            title="Labels"
-            description={
-              <>
-                Labels are key-value pairs. Both key and value must be 63 characters or less, and
-                must begin and end with an alphanumeric character. Alphanumerics or dashes, hyphens,
-                and dots can be used in-between. The value is optional.{' '}
-                <a href="#" className="text-primary hover:underline">
-                  Learn more.
-                </a>
-              </>
-            }
-          >
-            <div className="rounded-lg bg-[hsl(0_0%_98%)] p-5">
-              <textarea
-                value={labels}
-                onChange={(event) => setLabels(event.target.value)}
-                placeholder={'env=production\ntier=web'}
-                rows={7}
-                className="w-full max-w-lg resize-y rounded border border-form-border bg-input-bg p-3 font-mono text-sm text-text outline-none focus:border-primary"
-              />
-            </div>
+          <StepperStep state="optional" title="Volumes">
+            <RoadmapStep note="Network-attached disks that can be moved between servers." />
           </StepperStep>
 
-          {/* Cloud config ---------------------------------------------------- */}
-          <StepperStep
-            state={cloudConfig ? 'done' : 'optional'}
-            title="Cloud config"
-            description="When creating a server, you can use cloud-init to process and execute scripts of up to 32 KiB for your server."
-          >
-            <div className="rounded-lg bg-[hsl(0_0%_98%)] p-5">
-              <textarea
-                value={cloudConfig}
-                onChange={(event) => setCloudConfig(event.target.value)}
-                placeholder="Cloud-init configuration"
-                rows={6}
-                className="w-full max-w-lg resize-y rounded border border-form-border bg-input-bg p-3 font-mono text-sm text-text outline-none focus:border-primary"
-              />
-            </div>
+          <StepperStep state="optional" title="Firewalls">
+            <RoadmapStep note="Stateful packet filters applied to a server's interfaces." />
           </StepperStep>
 
-          {/* Name ------------------------------------------------------------ */}
+          <StepperStep state="optional" title="Backups">
+            <RoadmapStep note="Scheduled daily copies on a rotation. Snapshots are available today." />
+          </StepperStep>
+
+          <StepperStep state="optional" title="Placement groups">
+            <RoadmapStep note="Spreading servers across hosts so one failure cannot take all of them." />
+          </StepperStep>
+
+          <StepperStep state="optional" title="Labels">
+            <RoadmapStep note="Key-value metadata for grouping and filtering servers." />
+          </StepperStep>
+
+          <StepperStep state="optional" title="Cloud config">
+            <RoadmapStep note="A cloud-init document applied on first boot." />
+          </StepperStep>
+
           <StepperStep state="done" title="Name" last>
-            <div className="inline-flex items-center gap-4 rounded-lg bg-surface p-4">
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white">
-                {count}
-              </span>
+            <div className="max-w-md">
               <TextField
-                label="Server name"
+                label="Hostname"
                 required
-                value={effectiveName}
+                value={effectiveHostname}
                 onChange={(event) => {
-                  setNameTouched(true);
-                  setName(event.target.value);
+                  setHostnameTouched(true);
+                  setHostname(event.target.value);
                 }}
                 className="w-80"
               />
+              <p className="mt-2 text-sm text-text-muted">
+                Lower case, digits and hyphens, up to 63 characters. This is the server's hostname;
+                there is no separate display name.
+              </p>
+              {count > 1 ? (
+                <p className="mt-2 text-sm text-text-muted">
+                  Creating {count} servers, numbered from {effectiveHostname}-1.
+                </p>
+              ) : null}
             </div>
           </StepperStep>
         </div>
@@ -670,7 +383,7 @@ export function CreateServer() {
         <div className="sticky top-6 rounded-lg border border-border bg-surface">
           <ul className="max-h-[26rem] overflow-y-auto p-6 scrollbar-thin">
             {summaryRows.map((row) => (
-              <li key={row.label + row.value} className="flex items-start gap-3 py-2.5">
+              <li key={row.label} className="flex items-start gap-3 py-2.5">
                 <StepMarker state={row.state} className="mt-0.5" />
                 <span className="min-w-0">
                   <span
@@ -703,12 +416,21 @@ export function CreateServer() {
             <button
               type="button"
               aria-label="More servers"
-              onClick={() => setCount((value) => Math.min(10, value + 1))}
-              className="flex size-8 items-center justify-center rounded bg-button-secondary text-text transition-colors hover:bg-button-secondary-hover"
+              disabled={count >= maximumCount}
+              onClick={() => setCount((value) => Math.min(maximumCount, value + 1))}
+              className="flex size-8 items-center justify-center rounded bg-button-secondary text-text transition-colors hover:bg-button-secondary-hover disabled:cursor-not-allowed disabled:bg-button-secondary-disabled disabled:text-text-disabled"
             >
               <PlusIcon size={16} />
             </button>
           </div>
+
+          {headroom !== null ? (
+            <p className="px-4 pt-3 text-center text-xs text-text-muted">
+              {headroom === 0
+                ? 'This project is at its instance quota.'
+                : `${headroom} of ${quota?.limits.instances} instances remaining in this project.`}
+            </p>
+          ) : null}
 
           <div className="p-6">
             <dl className="space-y-1.5 text-sm">
@@ -716,35 +438,26 @@ export function CreateServer() {
                 <dt className="uppercase tracking-wide text-text-muted">{count} Server</dt>
                 <dd>{money(monthly.server * count, '/mo')}</dd>
               </div>
-              {useIpv4 ? (
-                <div className="flex items-center justify-between">
-                  <dt className="uppercase tracking-wide text-text-muted">{count} IPv4</dt>
-                  <dd>{money(monthly.ipv4 * count, '/mo')}</dd>
-                </div>
-              ) : null}
-              {backups ? (
-                <div className="flex items-center justify-between">
-                  <dt className="uppercase tracking-wide text-text-muted">Backups</dt>
-                  <dd>{money(monthly.backup * count, '/mo')}</dd>
-                </div>
-              ) : null}
+              <div className="flex items-center justify-between">
+                <dt className="uppercase tracking-wide text-text-muted">{count} IPv4</dt>
+                <dd>{money(monthly.ipv4 * count, '/mo')}</dd>
+              </div>
             </dl>
 
             <div className="mt-4 flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xl font-semibold text-text">
-                TOTAL
-                <span className="flex size-4 items-center justify-center rounded-full bg-badge-plain text-[0.625rem] font-normal text-text-muted">
-                  ?
-                </span>
-              </span>
+              <span className="text-xl font-semibold text-text">TOTAL</span>
               <span className="text-xl font-semibold text-primary">
                 {euro(monthly.total)}
                 <span className="text-xs font-normal"> /mo</span>
               </span>
             </div>
 
-            <Button className="mt-5 h-12 w-full text-base" onClick={submit}>
-              Create &amp; Buy now
+            <Button
+              className="mt-5 h-12 w-full text-base"
+              onClick={() => void submit()}
+              disabled={!ready || headroom === 0}
+            >
+              {submitting ? 'Creating…' : 'Create & Buy now'}
             </Button>
             <p className="mt-3 text-center text-xs leading-5 text-text-muted">
               All prices excl. VAT. Our{' '}

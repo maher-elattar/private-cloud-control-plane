@@ -230,6 +230,15 @@ export function SegmentedTabs({
 /**
  * Centred empty state: a 10rem grey disc holding a 5rem icon, headline, muted body copy, a
  * primary CTA, and a red "Learn more" external link.
+ *
+ * `roadmap` marks a section the control plane does not implement yet.
+ *
+ * WHY the distinction is drawn in the UI and not only in a comment: an empty state and an
+ * unimplemented feature look identical to a user — both are a page with nothing on it and a button
+ * that does not work. One means "you have not created anything", the other means "this cannot be
+ * created here yet", and a console that cannot tell them apart invites a support ticket for a
+ * feature that was never shipped. The `EmptyState` already carried `actionDisabled` for exactly
+ * these pages; this says out loud what that disabled button meant.
  */
 export function EmptyState({
   icon,
@@ -239,6 +248,7 @@ export function EmptyState({
   onAction,
   actionDisabled = false,
   learnMoreHref,
+  roadmap = false,
 }: {
   readonly icon: ReactNode;
   readonly title: string;
@@ -247,14 +257,26 @@ export function EmptyState({
   readonly onAction?: () => void;
   readonly actionDisabled?: boolean;
   readonly learnMoreHref?: string;
+  readonly roadmap?: boolean;
 }) {
   return (
     <div className="flex flex-col items-center px-6 py-24 text-center">
       <div className="flex size-40 items-center justify-center rounded-full bg-empty-state text-[hsl(0_0%_72%)]">
         {icon}
       </div>
-      <h2 className="mt-9 text-lg font-bold text-text">{title}</h2>
+      {roadmap ? (
+        <span className="mt-7 rounded bg-badge-orange-bg px-2.5 py-[0.1875rem] text-[0.6875rem] font-semibold uppercase tracking-wide text-badge-orange-fg">
+          On the roadmap
+        </span>
+      ) : null}
+      <h2 className={`${roadmap ? 'mt-3' : 'mt-9'} text-lg font-bold text-text`}>{title}</h2>
       <div className="mt-2 max-w-xl text-[0.9375rem] leading-6 text-text">{description}</div>
+      {roadmap ? (
+        <p className="mt-3 max-w-xl text-sm leading-6 text-text-muted">
+          This capability is planned but not implemented yet, so there is nothing behind this page
+          to act on. Nothing here is broken.
+        </p>
+      ) : null}
       {actionLabel ? (
         <Button className="mt-7" onClick={onAction} disabled={actionDisabled}>
           {actionLabel}

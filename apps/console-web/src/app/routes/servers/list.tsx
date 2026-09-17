@@ -95,14 +95,20 @@ export function ServerList() {
                         {instance.name}
                       </Link>
                       <p className="mt-0.5 text-sm text-text-muted">
-                        {instance.flavorName} | {instance.architecture} | {instance.diskGb} GB |{' '}
-                        {instance.networkZone}
+                        {[
+                          instance.flavorName,
+                          instance.architecture,
+                          instance.diskGb === null ? null : `${instance.diskGb} GB`,
+                          instance.imageName,
+                        ]
+                          .filter(Boolean)
+                          .join(' | ')}
                       </p>
                     </div>
                   </div>
                 </td>
                 <td className="py-5 align-middle text-[0.9375rem]">{instance.ipv4 ?? '—'}</td>
-                <td className="py-5 align-middle text-[0.9375rem]">{instance.locationCity}</td>
+                <td className="py-5 align-middle text-[0.9375rem]">{instance.networkName}</td>
                 <td className="py-5 pr-6 align-middle text-[0.9375rem] text-text-muted">
                   {instance.status === 'provisioning' ? (
                     <ProgressBar percent={instance.progressPercent ?? 0} />

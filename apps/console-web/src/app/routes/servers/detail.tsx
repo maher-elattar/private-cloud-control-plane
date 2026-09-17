@@ -12,18 +12,15 @@ import {
   Button,
   Card,
   CardTitle,
-  DashedButton,
   EmptyState,
-  ProgressBar,
   StatusDot,
   TabBar,
   TextField,
 } from '../../components/primitives';
-import { ContextMenu } from '../../components/menus';
 import type { TabItem } from '../../components/primitives';
-import { Modal, ModalNote, Spinner } from '../../components/overlays';
+import { Modal, ModalNote } from '../../components/overlays';
 import { ImageTable } from '../../components/image-table';
-import { BACKUP_PRICE_RATIO, SNAPSHOT_PRICE_PER_GB } from '../../data/catalog';
+import { SNAPSHOT_PRICE_PER_GB } from '../../data/catalog';
 import {
   BackupIcon,
   BellIcon,
@@ -44,12 +41,8 @@ import {
   VolumeIcon,
 } from '../../components/icons';
 import { relativeTime, useConsole } from '../../data/store';
+import { toDiskImage } from '../../data/view-model';
 import type { Instance } from '../../data/types';
-
-/** Formats a euro amount, symbol first, with the console's two-decimal convention. */
-function euro(amount: number): string {
-  return `€${amount.toFixed(2)}`;
-}
 
 function serverTabs(id: string): readonly TabItem[] {
   return [
@@ -100,11 +93,9 @@ function PowerToggle({ on, onToggle }: { readonly on: boolean; readonly onToggle
 
 export function ServerDetailLayout() {
   const instance = useInstance();
-  const { setPower, floatingIps } = useConsole();
+  const { setPower } = useConsole();
 
   if (!instance) return <Navigate to="/servers" replace />;
-
-  const attachedFloatingIps = floatingIps.filter((ip) => ip.assignedTo === instance.id);
 
   return (
     <div className="px-8 py-6">
@@ -133,18 +124,17 @@ export function ServerDetailLayout() {
                 {instance.ipv6}
               </span>
             ) : null}
-            {attachedFloatingIps.map((ip) => (
-              <span key={ip.id} className="flex items-center gap-2 text-text">
-                <FloatingIpIcon size={16} className="text-text-muted" />
-                {ip.address}
-              </span>
-            ))}
+            {/* The lease state matters: a quarantined address is held back after a failed
+                release and is not usable, which looks identical to an active one unless said. */}
+            {instance.ipv4State && instance.ipv4State !== 'active' ? (
+              <Badge tone="orange">Address {instance.ipv4State}</Badge>
+            ) : null}
             <Link
               to="/floating-ips"
-              className="flex items-center gap-2 text-primary hover:underline"
+              className="flex items-center gap-2 text-text-disabled hover:underline"
             >
               <FloatingIpIcon size={16} />
-              Add Floating IP
+              Floating IPs
             </Link>
           </div>
         </div>
@@ -171,9 +161,14 @@ export function ServerDetailLayout() {
             Actions
             <span className="text-xs">▾</span>
           </Button>
+          {/* `shutdown` rather than `stop`: the contract keeps them distinct on purpose —
+              `shutdown` asks the guest to stop itself, `stop` cuts power and can lose unflushed
+              writes. A single toggle must take the safe one; the Power tab offers both. */}
           <PowerToggle
             on={instance.status === 'running'}
-            onToggle={() => setPower(instance.id, instance.status !== 'running')}
+            onToggle={() =>
+              void setPower(instance.id, instance.status === 'running' ? 'shutdown' : 'start')
+            }
           />
         </div>
       </div>
@@ -215,33 +210,53 @@ function Stat({
   );
 }
 
+/**
+ * A stat's label, saying so when the provider reported something different from what was asked.
+ *
+ * WHY surface this at all rather than showing one number: desired and observed disagreeing is
+ * exactly what the reconciler exists to detect, and a console that displays only the desired value
+ * tells a user their server is the size they ordered when the hypervisor disagrees.
+ *
+ * @param label The base label.
+ * @param desired What was requested.
+ * @param observed What the provider reported, or null when it reported nothing.
+ * @returns The label, with a drift note appended when the two differ.
+ */
+function observedLabel(label: string, desired: number | null, observed: number | null): string {
+  if (observed === null || desired === null || observed === desired) return label;
+  return `${label} · provider reports ${observed}`;
+}
+
 export function ServerOverview() {
   const instance = useInstance();
-  const { activities, backupsEnabled, setBackups } = useConsole();
+  const { activities } = useConsole();
   if (!instance) return null;
 
-  const hasBackups = backupsEnabled.has(instance.id);
+  /** The activity feed, narrowed to this server. The API has no per-instance operation filter. */
+  const ownActivities = activities.filter((entry) => entry.targetId === instance.id);
 
   return (
     <div className="space-y-5">
       <Card className="py-7">
         <div className="flex flex-wrap gap-x-14 gap-y-6">
-          <Stat icon={<CpuIcon size={20} />} value={String(instance.vcpus)} label="vCPU" />
-          <Stat icon={<MemoryIcon size={20} />} value={`${instance.memoryGb} GB`} label="RAM" />
+          {/* Requested sizing, with what the provider reported beneath it when the two differ.
+              A disagreement here is drift — the reconciler's whole subject — and a strip showing
+              only one of the pair cannot express it. Traffic accounting used to sit in this row
+              and always read 0.000 TB, because nothing in the control plane measures it. */}
+          <Stat
+            icon={<CpuIcon size={20} />}
+            value={instance.vcpus === null ? '—' : String(instance.vcpus)}
+            label={observedLabel('vCPU', instance.vcpus, instance.observedVcpus)}
+          />
+          <Stat
+            icon={<MemoryIcon size={20} />}
+            value={instance.memoryGb === null ? '—' : `${instance.memoryGb} GB`}
+            label={observedLabel('RAM', instance.memoryGb, instance.observedMemoryGb)}
+          />
           <Stat
             icon={<VolumeIcon size={20} />}
-            value={`${instance.diskGb} GB`}
-            label="Disk local"
-          />
-          <Stat
-            icon={<EuroIcon size={20} />}
-            value={instance.trafficUsedTb.toFixed(2)}
-            label="Usage"
-          />
-          <Stat
-            icon={<TrafficIcon size={20} />}
-            value={`${instance.trafficUsedTb}/${instance.trafficIncludedTb} TB`}
-            label="Traffic out"
+            value={instance.diskGb === null ? '—' : `${instance.diskGb} GB`}
+            label={observedLabel('Disk local', instance.diskGb, instance.observedDiskGb)}
           />
           <Stat
             icon={<EuroIcon size={20} />}
@@ -249,9 +264,6 @@ export function ServerOverview() {
             suffix="/mo"
             label="Price"
           />
-        </div>
-        <div className="mt-6">
-          <DashedButton className="px-4 py-2 text-sm">Add labels</DashedButton>
         </div>
       </Card>
 
@@ -267,7 +279,7 @@ export function ServerOverview() {
             <p className="text-[0.9375rem] text-text-muted">No activity recorded yet.</p>
           ) : (
             <ul className="-mx-4">
-              {activities.slice(0, 5).map((entry, index) => (
+              {ownActivities.slice(0, 5).map((entry, index) => (
                 <li
                   key={entry.id}
                   className={`flex items-center gap-4 px-4 py-3.5 ${index % 2 === 1 ? 'bg-table-even' : ''}`}
@@ -298,16 +310,16 @@ export function ServerOverview() {
         <div className="space-y-5">
           <Card>
             <CardTitle icon={<GearIcon size={18} />}>OPTIONS</CardTitle>
+            <p className="-mt-2 mb-5 text-sm text-text-muted">
+              These three are on the roadmap. Snapshots, power, rescale and delete all work today
+              and are on their own tabs.
+            </p>
             <div className="flex flex-wrap gap-8">
               <div className="flex flex-col items-start gap-2">
                 <span className="flex items-center gap-3">
-                  <BackupIcon size={20} className="text-primary" />
-                  <Button
-                    size="sm"
-                    variant={hasBackups ? 'secondary' : 'primary'}
-                    onClick={() => setBackups(instance.id, !hasBackups)}
-                  >
-                    {hasBackups ? 'Disable' : 'Enable'}
+                  <BackupIcon size={20} className="text-text-disabled" />
+                  <Button size="sm" disabled>
+                    Enable
                   </Button>
                 </span>
                 <span className="text-[0.6875rem] uppercase tracking-wide text-text-muted">
@@ -316,7 +328,7 @@ export function ServerOverview() {
               </div>
               <div className="flex flex-col items-start gap-2">
                 <span className="flex items-center gap-3">
-                  <FirewallIcon size={20} className="text-primary" />
+                  <FirewallIcon size={20} className="text-text-disabled" />
                   <Button size="sm" disabled>
                     Select group
                   </Button>
@@ -327,7 +339,7 @@ export function ServerOverview() {
               </div>
               <div className="flex flex-col items-start gap-2">
                 <span className="flex items-center gap-3">
-                  <GlobeIcon size={20} className="text-primary" />
+                  <GlobeIcon size={20} className="text-text-disabled" />
                   <Button size="sm" disabled>
                     Disable
                   </Button>
@@ -346,25 +358,30 @@ export function ServerOverview() {
               aria-hidden="true"
               className="pointer-events-none absolute -bottom-6 right-2 text-[hsl(0_0%_91%)]"
             />
-            <CardTitle icon={<MapPinIcon size={18} />}>LOCATION</CardTitle>
+            {/* NETWORK, not LOCATION. There are no regions, zones or cities in this control
+                plane — `control.networks` describes one pre-existing bridge, and the previous
+                version derived a city and a continent from the network's identifier. */}
+            <CardTitle icon={<MapPinIcon size={18} />}>NETWORK</CardTitle>
             <dl className="relative grid grid-cols-2 gap-y-5 text-[0.9375rem]">
               <div>
                 <dt className="text-[0.6875rem] uppercase tracking-wide text-text-muted">
-                  Network zone
+                  Network
                 </dt>
-                <dd className="mt-1">{instance.networkZone}</dd>
-              </div>
-              <div>
-                <dt className="text-[0.6875rem] uppercase tracking-wide text-text-muted">City</dt>
-                <dd className="mt-1">{instance.locationCity}</dd>
+                <dd className="mt-1">{instance.networkName}</dd>
               </div>
               <div>
                 <dt className="text-[0.6875rem] uppercase tracking-wide text-text-muted">
-                  Country
+                  Address
                 </dt>
-                <dd className="mt-1">
-                  {instance.networkZone.startsWith('eu') ? 'Europe' : 'United States'}
-                </dd>
+                <dd className="mt-1">{instance.ipv4 ?? '—'}</dd>
+              </div>
+              <div>
+                <dt className="text-[0.6875rem] uppercase tracking-wide text-text-muted">Lease</dt>
+                <dd className="mt-1 capitalize">{instance.ipv4State ?? '—'}</dd>
+              </div>
+              <div>
+                <dt className="text-[0.6875rem] uppercase tracking-wide text-text-muted">Image</dt>
+                <dd className="mt-1">{instance.imageName}</dd>
               </div>
             </dl>
           </Card>
@@ -401,92 +418,61 @@ function InfoPanel({
   );
 }
 
+/**
+ * Automatic backups — on the roadmap.
+ *
+ * This tab previously maintained a full set of backups in `localStorage`, complete with a
+ * seven-slot rotation, a manual-run button and a recurring-charge confirmation. None of it
+ * reached the control plane, which has no backup entity, no scheduler and no rotation — only
+ * `control.snapshots`, which is a different thing taken on demand.
+ */
 export function ServerBackups() {
   const instance = useInstance();
-  const { backups, backupsEnabled, setBackups, runManualBackup, deleteBackup } = useConsole();
-  const [confirming, setConfirming] = useState(false);
   if (!instance) return null;
-
-  const enabled = backupsEnabled.has(instance.id);
-  const mine = backups.filter((backup) => backup.instanceId === instance.id);
-  const busy = mine.some((backup) => backup.status === 'creating');
-  const monthlyCost = instance.pricePerMonth * BACKUP_PRICE_RATIO;
 
   return (
     <div className="space-y-5">
       <InfoPanel
         title="BACKUPS"
         lines={[
-          'Backups are automatic copies of your servers disks. For every server there are seven slots for backups.',
-          'If all slots are full and an additional one is created, then the oldest backup will be deleted.',
-          'We recommend that you power off your server before creating a backup to ensure data consistency on the disks.',
-          'Enabling Backups for your server will cost 20 % of your server plan per month.',
+          'Backups are scheduled copies of a server\u2019s disks, kept on a rotation so an older state can be restored.',
+          'This is not implemented yet. The control plane has no backup schedule and no rotation.',
+          'Snapshots, on the next tab, are available today: they are taken on demand, outlive the server, and can be rolled back.',
         ]}
         action={
-          enabled ? (
-            <div className="flex flex-wrap gap-3">
-              <Button onClick={() => runManualBackup(instance.id)} disabled={busy}>
-                {busy ? <Spinner /> : null}
-                Run Manual Backup
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={busy}
-                onClick={() => setBackups(instance.id, false)}
-              >
-                Disable Backups
-              </Button>
-            </div>
-          ) : (
-            <Button onClick={() => setConfirming(true)}>Enable Backups</Button>
-          )
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge tone="orange">On the roadmap</Badge>
+            <Button disabled>Enable Backups</Button>
+          </div>
         }
       />
-
-      {enabled ? (
-        <ImageTable
-          images={mine}
-          emptyMessage="No backups were created from this server yet."
-          onDelete={deleteBackup}
-        />
-      ) : null}
-
-      <Modal
-        open={confirming}
-        title="Enable Backups"
-        confirmLabel="Enable &amp; Buy now"
-        onCancel={() => setConfirming(false)}
-        onConfirm={() => {
-          setBackups(instance.id, true);
-          setConfirming(false);
-        }}
-      >
-        <p>
-          Enabling backups will be recurringly billed, for {BACKUP_PRICE_RATIO * 100} % per month of
-          your current plan &mdash; {euro(monthlyCost)}/mo. Our{' '}
-          <a href="#" className="text-primary hover:underline">
-            terms and conditions
-          </a>{' '}
-          apply.
-        </p>
-        <ModalNote>Volumes are not included in backups.</ModalNote>
-      </Modal>
     </div>
   );
 }
 
+/**
+ * Snapshots — real, and the whole lifecycle.
+ *
+ * Create, list, roll back and delete all reach the control plane. They work on this deployment
+ * because the clone template's disk is qcow2: Proxmox refuses to snapshot a `raw` disk, a full
+ * clone inherits its template's format, and the provider reports the capability from that format
+ * rather than claiming it unconditionally.
+ */
 export function ServerSnapshots() {
   const instance = useInstance();
-  const { snapshots, takeSnapshot, deleteSnapshot } = useConsole();
+  const { useSnapshots, takeSnapshot, rollbackSnapshot, deleteSnapshot } = useConsole();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [description, setDescription] = useState('');
+  const [rollbackTarget, setRollbackTarget] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const { snapshots } = useSnapshots(instance?.id ?? '');
   if (!instance) return null;
 
-  const mine = snapshots.filter((snapshot) => snapshot.instanceId === instance.id);
+  const mine = snapshots.map(toDiskImage);
+  const busy = mine.some((snapshot) => snapshot.status === 'creating');
 
-  /** The console pre-fills the description with `<server>-<unix seconds>`. */
+  /** Pre-fills the name with `<server>-<unix seconds>`, which is unique and sorts usefully. */
   function openDialog() {
-    setDescription(`${instance?.name ?? 'snapshot'}-${Math.floor(Date.now() / 1000)}`);
+    setName(`${instance?.name ?? 'snapshot'}-${Math.floor(Date.now() / 1000)}`);
     setDialogOpen(true);
   }
 
@@ -501,7 +487,11 @@ export function ServerSnapshots() {
           `Snapshots cost €${SNAPSHOT_PRICE_PER_GB}/GB/month (incl. 0 % VAT).`,
           mine.length === 0 ? "You currently don't have any snapshots for this server." : '',
         ].filter(Boolean)}
-        action={<Button onClick={openDialog}>Take snapshot</Button>}
+        action={
+          <Button onClick={openDialog} disabled={busy}>
+            Take snapshot
+          </Button>
+        }
       />
 
       {mine.length > 0 ? (
@@ -509,18 +499,39 @@ export function ServerSnapshots() {
           images={mine}
           showId
           emptyMessage="You currently don't have any snapshots for this server."
-          onDelete={deleteSnapshot}
+          onDelete={(snapshotId) => void deleteSnapshot(instance.id, snapshotId)}
+          onRollback={(snapshotId) => setRollbackTarget(snapshotId)}
         />
       ) : null}
+
+      {/* Rollback is confirmed separately from deletion, because it is the destructive one of the
+          pair from the guest's point of view: it discards everything written since the snapshot
+          was taken. Deleting a snapshot loses the snapshot; rolling back loses the present. */}
+      <Modal
+        open={rollbackTarget !== null}
+        title="Roll back to snapshot"
+        confirmLabel="Roll back"
+        onCancel={() => setRollbackTarget(null)}
+        onConfirm={() => {
+          if (rollbackTarget) void rollbackSnapshot(instance.id, rollbackTarget);
+          setRollbackTarget(null);
+        }}
+      >
+        <p>
+          The server&apos;s disk returns to the state it was in when this snapshot was taken.
+          Everything written since is discarded, and that cannot be undone.
+        </p>
+        <ModalNote>The server is stopped first if it is running.</ModalNote>
+      </Modal>
 
       <Modal
         open={dialogOpen}
         title="Take snapshot"
         confirmLabel="Create &amp; Buy now"
-        confirmDisabled={description.trim().length === 0}
+        confirmDisabled={name.trim().length === 0}
         onCancel={() => setDialogOpen(false)}
         onConfirm={() => {
-          takeSnapshot(instance.id, description.trim());
+          void takeSnapshot(instance.id, name.trim());
           setDialogOpen(false);
         }}
       >
@@ -533,18 +544,18 @@ export function ServerSnapshots() {
         </p>
         <div className="relative mt-5">
           <TextField
-            label="Description"
+            label="Name"
             required
             autoFocus
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
             className="border-primary pr-9"
           />
-          {description ? (
+          {name ? (
             <button
               type="button"
-              aria-label="Clear description"
-              onClick={() => setDescription('')}
+              aria-label="Clear name"
+              onClick={() => setName('')}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted transition-colors hover:text-text"
             >
               ×
@@ -621,13 +632,20 @@ function NetworkTable({
   );
 }
 
+/**
+ * Networking.
+ *
+ * One card has real data behind it and the rest do not, so the rest say so. Previously all five
+ * were populated: the private-network card offered an enabled "Create network" button for a
+ * capability whose design document says *"DEFERRED — not scheduled, not being implemented"*, the
+ * floating-IP card listed `localStorage` entries, the two traffic cards read a counter that was
+ * always zero because nothing in the control plane measures traffic, and the reverse-DNS column
+ * showed a PTR record synthesised from the address by string reversal, ending in a domain
+ * belonging to another company.
+ */
 export function ServerNetworking() {
   const instance = useInstance();
-  const { floatingIps } = useConsole();
   if (!instance) return null;
-
-  const attached = floatingIps.filter((ip) => ip.assignedTo === instance.id);
-  const trafficPercent = (instance.trafficUsedTb / instance.trafficIncludedTb) * 100;
 
   return (
     <div className="space-y-5">
@@ -635,7 +653,7 @@ export function ServerNetworking() {
         <NetworkCardTitle icon={<GlobeIcon size={17} className="text-status-green" />}>
           PUBLIC NETWORK
         </NetworkCardTitle>
-        <NetworkTable headers={['Primary IP', 'Protocol', 'Reverse DNS']}>
+        <NetworkTable headers={['Primary IP', 'Protocol', 'Lease state']}>
           {instance.ipv4 ? (
             <tr className="border-t border-border">
               <td className="px-5 py-4">{instance.ipv4}</td>
@@ -643,132 +661,58 @@ export function ServerNetworking() {
                 <Badge tone="plain">IPv4</Badge>
               </td>
               <td className="px-5 py-4">
-                static.{instance.ipv4.split('.').reverse().join('.')}.clients.your-server.de
-              </td>
-              <td className="px-5 py-4 text-right">
-                <ContextMenu
-                  label="IPv4 actions"
-                  actions={[{ label: 'Edit Reverse DNS', onSelect: () => undefined }]}
-                />
+                {/* The lease state, not a reverse-DNS record. There is no PTR management here,
+                    and the column previously showed one built by reversing the octets. */}
+                <Badge tone={instance.ipv4State === 'active' ? 'green' : 'orange'}>
+                  {instance.ipv4State ?? 'unknown'}
+                </Badge>
               </td>
             </tr>
-          ) : null}
-          {instance.ipv6 ? (
+          ) : (
             <tr className="border-t border-border">
-              <td className="px-5 py-4">{instance.ipv6}</td>
-              <td className="px-5 py-4">
-                <Badge tone="plain">IPv6</Badge>
-              </td>
-              <td className="px-5 py-4">0 Entries</td>
-              <td className="px-5 py-4 text-right">
-                <ContextMenu
-                  label="IPv6 actions"
-                  actions={[{ label: 'Edit Reverse DNS', onSelect: () => undefined }]}
-                />
+              <td className="px-5 py-4 text-text-muted" colSpan={3}>
+                No address is leased to this server yet.
               </td>
             </tr>
-          ) : null}
+          )}
         </NetworkTable>
-        <Button className="mt-5" disabled>
-          Disable public network
-        </Button>
+        <p className="mt-4 text-sm text-text-muted">
+          One IPv4 address is leased from {instance.networkName} for the life of the server. It
+          cannot be detached or moved.
+        </p>
       </Card>
 
       <Card>
         <NetworkCardTitle>PRIVATE NETWORK</NetworkCardTitle>
-        <p className="mb-5 text-[0.9375rem] leading-6 text-text">
-          Private IPs identify your server in a network. Private networks allow your servers to talk
-          to each other over a dedicated link.
-        </p>
-        <NetworkTable headers={['Private IP', 'Network']}>
-          <tr className="border-t border-border">
-            <td colSpan={3} className="px-5 py-6 text-center text-text-muted">
-              There is no private IP assigned to this server.
-            </td>
-          </tr>
-        </NetworkTable>
-        <div className="mt-5 flex gap-3">
-          <Button>Create network</Button>
-          <Button disabled>Attach to network</Button>
+        <div className="flex items-center gap-3">
+          <Badge tone="orange">On the roadmap</Badge>
+          <p className="text-[0.9375rem] text-text-muted">
+            Tenant-defined private networks are designed but not implemented. Every server today
+            attaches to the one operator-managed network shown above.
+          </p>
         </div>
       </Card>
 
       <Card>
         <NetworkCardTitle>FLOATING IPS</NetworkCardTitle>
-        <div className="mb-5 space-y-2.5 text-[0.9375rem] leading-6 text-text">
-          <p>
-            Floating IPs help you to create highly flexible setups. A Floating IP can be assigned
-            and reassigned to any server at any time as long as they are in the same network zone.
+        <div className="flex items-center gap-3">
+          <Badge tone="orange">On the roadmap</Badge>
+          <p className="text-[0.9375rem] text-text-muted">
+            An address that outlives the server it is attached to. Not available yet.
           </p>
-          <p>
-            For optimal routing and latency, Floating IPs should be used in the location they were
-            created in.
-          </p>
-          <p>
-            Floating IPs need to be configured on your server in order to work. You can find a short
-            example configuration in our{' '}
-            <a href="#" className="text-primary hover:underline">
-              Docs
-            </a>
-            .
-          </p>
-        </div>
-        <NetworkTable headers={['Name', 'IP', 'Reverse DNS']}>
-          {attached.length === 0 ? (
-            <tr className="border-t border-border">
-              <td colSpan={4} className="px-5 py-6 text-center text-text-muted">
-                No Floating IP is assigned to this server.
-              </td>
-            </tr>
-          ) : (
-            attached.map((ip) => (
-              <tr key={ip.id} className="border-t border-border">
-                <td className="px-5 py-4">{ip.name}</td>
-                <td className="px-5 py-4">{ip.address}</td>
-                <td className="px-5 py-4">{ip.reverseDnsEntries} Entries</td>
-                <td className="px-5 py-4 text-right">
-                  <ContextMenu
-                    label={`Actions for ${ip.name}`}
-                    actions={[{ label: 'Unassign', onSelect: () => undefined }]}
-                  />
-                </td>
-              </tr>
-            ))
-          )}
-        </NetworkTable>
-        <div className="mt-5 flex gap-3">
-          <Link to="/floating-ips">
-            <Button>Add Floating IP</Button>
-          </Link>
-          <Button disabled>Assign Floating IP</Button>
         </div>
       </Card>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Card>
-          <div className="flex items-baseline justify-between">
-            <NetworkCardTitle>OUTGOING TRAFFIC</NetworkCardTitle>
-            <span className="text-[0.9375rem] text-text-muted">
-              {instance.trafficUsedTb.toFixed(3)} TB / {instance.trafficIncludedTb} TB
-            </span>
-          </div>
-          <ProgressBar percent={trafficPercent} />
-          <p className="mt-4 text-[0.9375rem] leading-6 text-text">
-            If you exceed the included traffic, the cost for every commenced TB extra is €1.00
-            (incl. 0 % VAT).
+      <Card>
+        <NetworkCardTitle>TRAFFIC</NetworkCardTitle>
+        <div className="flex items-center gap-3">
+          <Badge tone="orange">On the roadmap</Badge>
+          <p className="text-[0.9375rem] text-text-muted">
+            Traffic accounting is not measured. These two cards previously showed a fixed 0.000 TB
+            against a 20 TB allowance, neither of which came from anywhere.
           </p>
-        </Card>
-
-        <Card>
-          <div className="flex items-baseline justify-between">
-            <NetworkCardTitle>INCOMING TRAFFIC</NetworkCardTitle>
-            <span className="text-[0.9375rem] text-text-muted">0.000 TB</span>
-          </div>
-          <p className="text-[0.9375rem] leading-6 text-text">
-            Any incoming traffic is free and does not cause additional charges.
-          </p>
-        </Card>
-      </div>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -800,27 +744,60 @@ export function ServerVolumes() {
 export function ServerPower() {
   const instance = useInstance();
   const { setPower } = useConsole();
+  const [forceStop, setForceStop] = useState(false);
   if (!instance) return null;
   const on = instance.status === 'running';
 
   return (
-    <InfoPanel
-      title="POWER"
-      lines={[
-        'Power the server on or off, or send an ACPI shutdown signal to the running operating system.',
-        'A powered-off server keeps its disks and its Primary IP, and continues to be billed.',
-      ]}
-      action={
-        <div className="flex gap-3">
-          <Button onClick={() => setPower(instance.id, !on)}>
-            {on ? 'Power off' : 'Power on'}
-          </Button>
-          <Button variant="secondary" disabled={!on}>
-            Reboot
-          </Button>
-        </div>
-      }
-    />
+    <>
+      <InfoPanel
+        title="POWER"
+        lines={[
+          'Shut down asks the operating system to stop itself, and takes as long as the guest needs.',
+          'Force off cuts power immediately and can lose anything not yet written to disk.',
+          'A powered-off server keeps its disk and its leased address.',
+        ]}
+        action={
+          <div className="flex flex-wrap gap-3">
+            {/* All four contract actions, kept distinct. `shutdown` asks the guest to stop itself
+              and may take as long as it needs; `stop` cuts power and can lose unflushed writes.
+              The contract keeps them separate rather than as one action with a force flag,
+              precisely so a parameter default cannot destroy data — collapsing them here would
+              undo that. */}
+            {on ? (
+              <>
+                <Button onClick={() => void setPower(instance.id, 'shutdown')}>Shut down</Button>
+                <Button variant="secondary" onClick={() => void setPower(instance.id, 'reboot')}>
+                  Reboot
+                </Button>
+                <Button variant="secondary" onClick={() => setForceStop(true)}>
+                  Force off
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => void setPower(instance.id, 'start')}>Power on</Button>
+            )}
+          </div>
+        }
+      />
+
+      {/* Force off is confirmed because it is the one power action that can lose data. */}
+      <Modal
+        open={forceStop}
+        title="Force off"
+        confirmLabel="Force off"
+        onCancel={() => setForceStop(false)}
+        onConfirm={() => {
+          void setPower(instance.id, 'stop');
+          setForceStop(false);
+        }}
+      >
+        <p>
+          This cuts power immediately, without asking the operating system to stop. Anything not yet
+          written to disk is lost. Use Shut down unless the server is unresponsive.
+        </p>
+      </Modal>
+    </>
   );
 }
 

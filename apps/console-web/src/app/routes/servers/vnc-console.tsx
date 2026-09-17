@@ -71,7 +71,7 @@ export function VncConsole() {
         <div className="flex flex-wrap items-start gap-x-12 gap-y-3">
           <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-2">
             <InfoPair label="Server" value={instance.name} />
-            <InfoPair label="Location" value={`${instance.locationCity} DC Park 1`} />
+            <InfoPair label="Location" value={`${instance.networkName} DC Park 1`} />
           </dl>
           <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-2">
             <InfoPair label="IPv4" value={instance.ipv4 ?? '—'} />

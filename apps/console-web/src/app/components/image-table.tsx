@@ -2,11 +2,11 @@
  * Table of stored disk images, shared by the snapshots and backups tabs.
  *
  * A row that is still being written shows a determinate progress bar with a spinner in its status
- * cell instead of a status word — the same treatment the servers list gives a provisioning
- * instance, so "work in flight" reads identically everywhere in the console.
+ * cell instead of a status word. A snapshot in flight shows a spinner and the contract's own
+ * state name rather than a progress bar: snapshot operations report no percentage, and a bar
+ * creeping on a timer would be inventing one.
  */
 import { ChevronDownIcon, DotsIcon } from './icons';
-import { ProgressBar } from './primitives';
 import { Spinner } from './overlays';
 import { relativeTime } from '../data/store';
 import type { DiskImage } from '../data/types';
@@ -16,11 +16,14 @@ export function ImageTable({
   showId = false,
   emptyMessage,
   onDelete,
+  onRollback,
 }: {
   readonly images: readonly DiskImage[];
   readonly showId?: boolean;
   readonly emptyMessage: string;
   readonly onDelete?: (id: string) => void;
+  /** Offered only where rollback is supported, which is snapshots and not backups. */
+  readonly onRollback?: (id: string) => void;
 }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
@@ -58,20 +61,35 @@ export function ImageTable({
                   </span>
                 </td>
                 <td className="px-6 py-5">{relativeTime(image.createdAt)}</td>
-                <td className="px-6 py-5">{image.sizeGb.toFixed(2)} GB</td>
+                {/* An em dash, not a computed figure: the contract carries no snapshot size. */}
+                <td className="px-6 py-5">
+                  {image.sizeGb === null ? '—' : `${image.sizeGb.toFixed(2)} GB`}
+                </td>
                 <td className="px-6 py-5">
                   {image.status === 'creating' ? (
+                    // A spinner rather than a progress bar. Snapshot operations report no
+                    // percentage, and a bar that sat at zero or crept on a timer would be
+                    // inventing progress — the contract's five states are all there is to show.
                     <span className="flex items-center gap-3">
-                      <span className="w-56">
-                        <ProgressBar percent={image.progressPercent ?? 0} />
-                      </span>
                       <Spinner className="text-primary" />
+                      <span className="capitalize">{image.state.replaceAll('_', ' ')}</span>
                     </span>
+                  ) : image.state === 'failed' ? (
+                    <span className="text-badge-red-fg">Failed</span>
                   ) : (
                     'Available'
                   )}
                 </td>
                 <td className="px-6 py-5 text-right">
+                  {onRollback && image.status === 'available' ? (
+                    <button
+                      type="button"
+                      onClick={() => onRollback(image.id)}
+                      className="mr-4 text-[0.9375rem] text-primary transition-colors hover:underline"
+                    >
+                      Roll back
+                    </button>
+                  ) : null}
                   {onDelete && image.status === 'available' ? (
                     <button
                       type="button"

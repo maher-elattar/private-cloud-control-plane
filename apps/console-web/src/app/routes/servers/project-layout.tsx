@@ -28,7 +28,8 @@ export function ProjectLayout() {
 }
 
 export function ProjectSnapshots() {
-  const { snapshots, instances, deleteSnapshot } = useConsole();
+  const { allSnapshots, instances, deleteSnapshot } = useConsole();
+  const snapshots = allSnapshots;
 
   if (snapshots.length === 0) {
     return (
@@ -49,37 +50,38 @@ export function ProjectSnapshots() {
         images={snapshots}
         showId
         emptyMessage="You haven't taken a snapshot yet."
-        onDelete={deleteSnapshot}
+        onDelete={(snapshotId) => {
+          // `deleteSnapshot` is scoped to the instance that owns the snapshot, because that is how
+          // the route is shaped. The project-wide table carries the owner on each row.
+          const owner = snapshots.find((snapshot) => snapshot.id === snapshotId);
+          if (owner) void deleteSnapshot(owner.instanceId, snapshotId);
+        }}
       />
     </div>
   );
 }
 
+/**
+ * Automatic backups — on the roadmap.
+ *
+ * Distinct from snapshots, which do exist: a backup is one of a rotating set of scheduled copies,
+ * and the control plane has no scheduler, no rotation and no backup entity — only
+ * `control.snapshots`. This page previously maintained a full set of backups in `localStorage`,
+ * which made an unbuilt feature look finished.
+ */
 export function ProjectBackups() {
-  const { instances, backups, deleteBackup } = useConsole();
-
-  if (backups.length === 0) {
+  {
     return (
       <EmptyState
+        roadmap
         icon={<BackupIcon size={80} />}
-        title="No backups have been enabled yet."
-        description="Backups are daily automatic copies of your server's disk. With backups, you can easily restore a server to a previous state or use it to create a new server."
+        title="Automatic backups are not available yet."
+        description="Backups are scheduled daily copies of a server's disk, kept on a rotation. Snapshots, which you can take on demand from a server's own page, are available today."
         actionLabel="Enable Backups"
-        actionDisabled={instances.length === 0}
-        learnMoreHref="#"
+        actionDisabled
       />
     );
   }
-
-  return (
-    <div className="mt-6">
-      <ImageTable
-        images={backups}
-        emptyMessage="No backups have been created yet."
-        onDelete={deleteBackup}
-      />
-    </div>
-  );
 }
 
 export function ProjectPlacementGroups() {
@@ -127,7 +129,7 @@ export function ProjectPrimaryIps() {
               <td className="py-4 font-medium">{instance.ipv4}</td>
               <td className="py-4">IPv4</td>
               <td className="py-4 text-primary">{instance.name}</td>
-              <td className="py-4">{instance.locationCity}</td>
+              <td className="py-4">{instance.networkName}</td>
             </tr>
           ))}
         </tbody>
