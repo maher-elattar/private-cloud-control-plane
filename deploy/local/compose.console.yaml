@@ -1,0 +1,70 @@
+# Customer console, as an overlay on the Phase 4 stack.
+#
+# WHY an overlay rather than a service in the base file: the base stack is what CI builds, and it
+# must keep booting with no credentials. The console needs a demo user's password hash, which is
+# generated into the gitignored environment file — so every value here is `${VAR:?}` and
+# `docker compose config` fails loudly rather than starting a console with no way to sign in.
+#
+# Usage:
+#   pnpm run terraform:compose-env          # writes the gitignored env file
+#   pnpm run console:demo-user              # adds the demo user, prints the password once
+#   docker compose --env-file .env.terraform \
+#     -f compose.phase4.yaml -f compose.terraform.yaml -f compose.console.yaml up -d --build
+#
+# @see tools/docker/service.Dockerfile
+# @see tools/console/demo-user.mjs
+name: private-cloud-phase4
+
+services:
+  # The identity stub gains the seeded demo user. Everything else about it is unchanged, including
+  # the credential-free `GET /token` the verification scripts depend on.
+  local-oidc:
+    environment:
+      LOCAL_OIDC_HOST: 0.0.0.0
+      LOCAL_OIDC_PORT: '18080'
+      LOCAL_OIDC_ISSUER: http://local-oidc:18080
+      LOCAL_OIDC_AUDIENCE: private-cloud-control-plane
+      # `username:scrypt-hex:salt-hex:roles:projects`. Written by `pnpm run console:demo-user`,
+      # which prints the password once and stores only its hash.
+      LOCAL_OIDC_USERS: ${LOCAL_OIDC_USERS:?run pnpm run console:demo-user}
+
+  console:
+    image: private-cloud/console:phase4
+    build:
+      context: ../..
+      dockerfile: tools/docker/service.Dockerfile
+      target: console-runtime
+    environment:
+      NODE_ENV: production
+      DEPLOYMENT_ENVIRONMENT: local
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_METRIC_EXPORT_INTERVAL: '5000'
+      OTEL_METRIC_EXPORT_TIMEOUT: '4000'
+      OTEL_SDK_DISABLED: 'false'
+      OTEL_TRACES_SAMPLER: always_on
+      PORT: '3000'
+      # The container port, not the published one: this is an internal call.
+      CONTROL_API_URL: http://control-api:3000
+      OIDC_ISSUER: http://local-oidc:18080
+      # Plain HTTP locally, so the session cookie must not be marked Secure — a browser silently
+      # drops a Secure cookie on an insecure origin, which presents as "login appears to work but
+      # the session never sticks". Any real deployment sets this to true.
+      CONSOLE_SECURE_COOKIES: 'false'
+    # 3102, next in the 31xx band after control-api on 3100 and Grafana on 3101.
+    ports: ['3102:3000']
+    depends_on:
+      control-api: { condition: service_healthy }
+      local-oidc: { condition: service_healthy }
+    healthcheck:
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+    restart: unless-stopped

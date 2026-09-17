@@ -1,16 +1,17 @@
-import { shutdownTelemetry, startTelemetry } from '@private-cloud/observability';
+/**
+ * Console server entry point.
+ *
+ * Unlike the backend services there is no telemetry SDK to start before the framework loads: this
+ * process forwards `traceparent` rather than emitting its own spans, which keeps a request on one
+ * trace across it without an instrumentation runtime inside what is largely a static file server.
+ *
+ * @see apps/console-bff/src/app/log.ts
+ */
+import { bootstrap } from './bootstrap.js';
 
-// The SDK starts before Fastify is evaluated, for the same reason it does in every other service
-// here: Node instrumentation patches modules at load time, so importing the framework first would
-// silently omit the inbound and outbound spans this process exists to contribute.
-startTelemetry({ serviceName: 'console-bff' });
-
-void import('./bootstrap.js')
-  .then(({ bootstrap }) => bootstrap())
-  .catch(async (error: unknown) => {
-    process.stderr.write(
-      `console-bff failed to start: ${error instanceof Error ? error.message : 'unknown error'}\n`,
-    );
-    await shutdownTelemetry().catch(() => undefined);
-    process.exitCode = 1;
-  });
+void bootstrap().catch((error: unknown) => {
+  process.stderr.write(
+    `console-bff failed to start: ${error instanceof Error ? error.message : 'unknown error'}\n`,
+  );
+  process.exitCode = 1;
+});

@@ -126,3 +126,52 @@ ENV TERRAFORM_BINARY=/usr/local/bin/terraform \
 
 # The default target is the production service image and contains no local signing key or DB tools.
 FROM runtime-common AS runtime
+
+# --- Console -----------------------------------------------------------------------------------
+#
+# WHY a stage of its own rather than an `APP` of the shared build. The shared stage runs
+# `nx run "${APP}:build" && nx run "${APP}:prune"`, and a Vite app has no prune chain — it emits a
+# self-contained `dist/` already. It also needs *two* projects built: the SPA bundle and the small
+# server that holds the session and proxies the API.
+#
+# The copy list above deliberately names only the four Phase 4 services, "so additional workspace
+# applications cannot alter the production image inputs". The console is now one of the deployed
+# applications, so it is named here rather than smuggled in by widening that list.
+FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS console-build
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+WORKDIR /workspace
+
+RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc nx.json tsconfig*.json ./
+COPY tools/docker/tsconfig.console.json ./tsconfig.json
+COPY apps/console-web ./apps/console-web
+COPY apps/console-bff ./apps/console-bff
+COPY packages ./packages
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm config set store-dir /pnpm/store \
+  && pnpm install --frozen-lockfile
+COPY eslint.config.mjs ./
+RUN pnpm nx run console-web:build && pnpm nx run console-bff:build
+
+FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS console-runtime
+ENV NODE_ENV=production
+ENV PORT=3000
+# Where the server looks for the bundle. Declared rather than assumed, so the two halves of this
+# image cannot disagree about it.
+ENV CONSOLE_STATIC_ROOT=/app/public
+WORKDIR /app
+
+# No install step, unlike the service images.
+#
+# WHY this one differs: the backend services carry the OpenTelemetry SDK, which patches modules at
+# require time and therefore cannot be bundled — so they externalise their dependencies and
+# install them here from a pruned lockfile. This process has none, so its bundle is complete and
+# the image is a copy of two directories. That removes the pruned lockfile, the second workspace
+# file, and the second place a supply-chain policy is evaluated.
+COPY --from=console-build --chown=node:node /workspace/apps/console-bff/dist ./
+COPY --from=console-build --chown=node:node /workspace/apps/console-web/dist ./public
+
+USER node
+EXPOSE 3000
+CMD ["node", "main.js"]

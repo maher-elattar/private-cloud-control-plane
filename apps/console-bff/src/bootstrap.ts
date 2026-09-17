@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import cookie from '@fastify/cookie';
 import staticFiles from '@fastify/static';
 import Fastify from 'fastify';
-import { currentTraceFields, shutdownTelemetry, structuredLog } from '@private-cloud/observability';
+import { structuredLog, traceReference } from './app/log.js';
 import { authenticate } from './app/identity.js';
 import { problem } from './app/problem.js';
 import { publicView, SessionStore } from './app/session.js';
@@ -47,18 +47,6 @@ const FORWARDED_REQUEST_HEADERS = [
   'traceparent',
   'tracestate',
 ];
-
-/**
- * The active trace id, in the shape `ProblemDetails` wants.
- *
- * `currentTraceFields()` is shaped for structured logs and returns `trace_id`; the contract's
- * field is `traceId`. Mapping once here keeps every error response carrying the reference an
- * operator can actually look up.
- */
-function traceReference(): { readonly traceId?: string } {
-  const { trace_id: traceId } = currentTraceFields();
-  return traceId === undefined ? {} : { traceId };
-}
 
 /** Reads a required setting, failing at startup rather than on the first request. */
 function required(name: string): string {
@@ -119,7 +107,7 @@ export async function bootstrap(): Promise<void> {
             title: 'Sign-in details are incomplete',
             code: 'VALIDATION_FAILED',
             detail: 'Enter both a username and a password.',
-            ...traceReference(),
+            ...traceReference(httpRequest.headers['traceparent'] as string | undefined),
           }),
         );
     }
@@ -136,7 +124,7 @@ export async function bootstrap(): Promise<void> {
               title: 'Sign-in failed',
               code: 'AUTHENTICATION_REQUIRED',
               detail: 'That username and password combination was not accepted.',
-              ...traceReference(),
+              ...traceReference(httpRequest.headers['traceparent'] as string | undefined),
             }),
           );
       }
@@ -149,7 +137,7 @@ export async function bootstrap(): Promise<void> {
             title: 'Sign-in is unavailable',
             code: 'DEPENDENCY_UNAVAILABLE',
             detail: identity.detail,
-            ...traceReference(),
+            ...traceReference(httpRequest.headers['traceparent'] as string | undefined),
           }),
         );
     }
@@ -201,7 +189,7 @@ export async function bootstrap(): Promise<void> {
             title: 'Not signed in',
             code: 'AUTHENTICATION_REQUIRED',
             detail: 'There is no active session.',
-            ...traceReference(),
+            ...traceReference(httpRequest.headers['traceparent'] as string | undefined),
           }),
         );
     }
@@ -223,7 +211,7 @@ export async function bootstrap(): Promise<void> {
             code: 'AUTHENTICATION_REQUIRED',
             detail: 'Sign in again to continue.',
             instance: httpRequest.url,
-            ...traceReference(),
+            ...traceReference(httpRequest.headers['traceparent'] as string | undefined),
           }),
         );
     }
@@ -262,7 +250,7 @@ export async function bootstrap(): Promise<void> {
             code: 'DEPENDENCY_UNAVAILABLE',
             detail: error instanceof Error ? error.message : 'The request did not complete.',
             instance: httpRequest.url,
-            ...traceReference(),
+            ...traceReference(httpRequest.headers['traceparent'] as string | undefined),
           }),
         );
     }
@@ -291,7 +279,6 @@ export async function bootstrap(): Promise<void> {
 
   const close = async (): Promise<void> => {
     await app.close();
-    await shutdownTelemetry().catch(() => undefined);
   };
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => void close().then(() => process.exit(0)));

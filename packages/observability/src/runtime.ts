@@ -34,6 +34,10 @@ import {
   type SpanExporter,
   type SpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
+// A **type-only** import, so nothing from the application layer survives into the bundle. It is
+// declared as a devDependency for exactly that reason: listing it as a runtime dependency made
+// every service image carry the whole application layer plus its own transitive graph — five
+// workspace modules — for three interfaces that are erased at build time.
 import type {
   ApplicationTelemetry,
   ApplicationTraceContext,

@@ -25,10 +25,10 @@
     "@opentelemetry/sdk-metrics": "2.10.0",
     "@opentelemetry/sdk-node": "0.221.0",
     "@opentelemetry/sdk-trace-base": "2.10.0",
-    "@private-cloud/application": "workspace:*",
     "tslib": "2.8.1"
   },
   "devDependencies": {
+    "@private-cloud/application": "workspace:*",
     "vitest": "4.1.11"
   }
 }

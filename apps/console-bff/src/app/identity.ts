@@ -15,7 +15,7 @@
  *
  * In a real deployment `OIDC_ISSUER` points at a real provider and this module points with it.
  */
-import { structuredLog } from '@private-cloud/observability';
+import { structuredLog } from './log.js';
 
 /** What a successful exchange yields. */
 export interface Identity {

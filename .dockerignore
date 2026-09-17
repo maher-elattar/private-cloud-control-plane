@@ -1,10 +1,23 @@
+# Build context exclusions.
+#
+# WHY every directory pattern is `**/`-prefixed: a `.dockerignore` pattern is matched against the
+# path relative to the context root, so a bare `dist` excludes only the root `dist` and leaves
+# `apps/*/dist` and `packages/*/dist` in the context. That was the previous behaviour, and it was
+# invisible until someone ran `nx run <app>:prune` locally before a build — the leftover
+# `apps/*/dist/workspace_modules/@private-cloud/*` directories then entered the image, where Nx
+# found two projects claiming the same name and refused to build anything.
+#
+# The same applies to `node_modules`: nested ones were being copied into every build context.
 .git
 .github
-.nx
-coverage
-dist
+**/.nx
+**/coverage
+**/dist
+**/out-tsc
+**/node_modules
 docs
-node_modules
 proxmox-
-test-results
+**/test-results
+**/playwright-report
+.backup
 *.log

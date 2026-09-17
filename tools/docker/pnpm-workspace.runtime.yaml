@@ -1,2 +1,20 @@
+# The workspace file inside a runtime image.
+#
+# A built service's `dist/` carries its own pruned `package.json` and `pnpm-lock.yaml`, and its
+# workspace dependencies as real directories under `workspace_modules/`. This file is what tells
+# pnpm to treat those as workspace packages rather than trying to fetch them from a registry.
 packages:
   - 'workspace_modules/@private-cloud/*'
+
+# WHY an override appears in a two-line stub.
+#
+# `pnpm install --frozen-lockfile` compares the lockfile's recorded `overrides` against the active
+# configuration and refuses to proceed when they differ. The root workspace pins `fastify` because
+# `@nestjs/platform-fastify` otherwise resolves its own older copy, and that nested copy carried a
+# schema validation bypass — which matters here specifically, since control-api's rejection of
+# unknown body properties rests on schema validation.
+#
+# The pruned lockfile inherits that record, so this file has to agree with it. It must be kept in
+# step with `overrides` in the root `pnpm-workspace.yaml`.
+overrides:
+  fastify: 5.12.4
