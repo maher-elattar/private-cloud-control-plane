@@ -4,7 +4,7 @@
  * Fixed at `--top-bar-element-height` (4rem) with a white surface and a bottom hairline. The
  * wordmark is deliberately this product's own, not the reference console's brand.
  */
-import { BellIcon, ChevronDownIcon, GridIcon, SearchIcon, UserIcon } from '../components/icons';
+import { BellIcon, ChevronDownIcon, SearchIcon, UserIcon } from '../components/icons';
 
 /** Trigger with a chevron, used for each utility cluster on the right of the bar. */
 function UtilityButton({
@@ -38,9 +38,13 @@ function UtilityButton({
 export function TopBar({
   projectName,
   activityCount,
+  userName,
+  onSignOut,
 }: {
   readonly projectName: string;
   readonly activityCount: number;
+  readonly userName: string;
+  readonly onSignOut: () => void;
 }) {
   return (
     <header className="flex h-topbar shrink-0 items-center gap-4 border-b border-border bg-surface px-6">
@@ -53,35 +57,45 @@ export function TopBar({
 
       <button
         type="button"
-        className="flex items-center gap-1.5 rounded px-2 py-1.5 text-[0.9375rem] text-text transition-colors hover:bg-surface-hover"
+        className="flex items-center gap-1.5 rounded px-2 py-1.5 text-[0.9375rem] text-text"
+        title="A token carries one project, so there is nothing to switch to yet."
+        disabled
       >
         {projectName}
         <ChevronDownIcon size={14} />
       </button>
 
+      {/* The search field is disabled rather than removed: there is no search endpoint, and an
+          input that silently matches nothing is worse than one that says it is unavailable. */}
       <div className="mx-auto w-full max-w-[28rem]">
-        <div className="flex h-9 items-center gap-2 rounded bg-[hsl(0_0%_93%)] px-3 text-text-disabled transition-colors hover:bg-[hsl(0_0%_95%)]">
+        <div className="flex h-9 items-center gap-2 rounded bg-[hsl(0_0%_93%)] px-3 text-text-disabled">
           <SearchIcon size={16} />
           <input
-            placeholder="Search…"
-            className="w-full bg-transparent text-[0.9375rem] text-text outline-none placeholder:text-text-disabled"
+            placeholder="Search is not available yet"
+            aria-label="Search"
+            disabled
+            className="w-full cursor-not-allowed bg-transparent text-[0.9375rem] text-text outline-none placeholder:text-text-disabled"
           />
-          <kbd className="shrink-0 whitespace-nowrap rounded bg-[hsl(0_0%_88%)] px-1.5 py-0.5 text-[0.6875rem] text-text-muted">
-            Ctrl K
-          </kbd>
         </div>
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-2">
+        {/* The count is operations still running, which is what a notification badge should mean.
+            It previously counted every activity ever recorded. */}
         <UtilityButton label="Activities" badge={activityCount}>
           <BellIcon size={19} />
         </UtilityButton>
-        <UtilityButton label="Products">
-          <GridIcon size={19} />
-        </UtilityButton>
-        <UtilityButton label="Account">
-          <UserIcon size={19} />
-        </UtilityButton>
+        <span className="flex items-center gap-2 pl-2 text-[0.9375rem] text-text">
+          <UserIcon size={17} className="text-text-muted" />
+          {userName}
+        </span>
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="rounded px-2.5 py-1.5 text-[0.9375rem] text-text transition-colors hover:bg-surface-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          Sign out
+        </button>
       </div>
     </header>
   );

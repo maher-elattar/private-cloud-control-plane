@@ -6,8 +6,9 @@
  * and location — the same four-panel arrangement the reference console uses.
  */
 import { useState } from 'react';
-import { Link, Navigate, Outlet, useParams } from 'react-router';
+import { Link, Navigate, Outlet, useNavigate, useParams } from 'react-router';
 import {
+  Callout,
   Badge,
   Button,
   Card,
@@ -570,6 +571,7 @@ export function ServerSnapshots() {
 export function ServerGraphs() {
   return (
     <EmptyState
+      roadmap
       icon={<TrafficIcon size={72} />}
       title="No metrics collected yet."
       description="CPU, network, and disk graphs appear here once the server has been running long enough to report telemetry."
@@ -580,6 +582,7 @@ export function ServerGraphs() {
 export function ServerLoadBalancers() {
   return (
     <EmptyState
+      roadmap
       icon={<LoadBalancerIcon size={72} />}
       title="This server is not behind a load balancer."
       description="Attach the server to a load balancer to distribute incoming traffic across several targets."
@@ -720,6 +723,7 @@ export function ServerNetworking() {
 export function ServerFirewalls() {
   return (
     <EmptyState
+      roadmap
       icon={<FirewallIcon size={72} />}
       title="No firewall applied."
       description="Firewalls restrict or allow traffic to this server based on rules. Create one in the Firewalls section, then apply it here."
@@ -732,6 +736,7 @@ export function ServerFirewalls() {
 export function ServerVolumes() {
   return (
     <EmptyState
+      roadmap
       icon={<VolumeIcon size={72} />}
       title="No volumes attached."
       description="Volumes are additional network-attached disks. Attach one to extend this server's storage without rebuilding it."
@@ -817,6 +822,7 @@ export function ServerRescue() {
 export function ServerIsoImages() {
   return (
     <EmptyState
+      roadmap
       icon={<CameraIcon size={72} />}
       title="No ISO image mounted."
       description="Mount an ISO image to install an operating system manually or to boot a recovery environment."
@@ -826,19 +832,90 @@ export function ServerIsoImages() {
   );
 }
 
+/**
+ * Rescale — real, with the disk guard enforced before the request is sent.
+ *
+ * SAFE-026: a disk can grow but never shrink. The API refuses one with `DISK_SHRINK_FORBIDDEN`
+ * and bpg refuses it again at apply time, but refusing it here as well is what stops a user
+ * choosing a smaller flavour, waiting, and being told no — and the control plane's own note on
+ * this is worth respecting: a refused shrink still writes the rejected size into Terraform state.
+ */
 export function ServerRescale() {
   const instance = useInstance();
+  const { flavors, resizeInstance } = useConsole();
+  const [target, setTarget] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   if (!instance) return null;
 
+  const chosen = flavors.find((flavor) => flavor.id === target);
+  const currentDisk = instance.diskGb;
+  const wouldShrink =
+    chosen !== undefined && currentDisk !== null && chosen.minimumDiskGiB < currentDisk;
+
   return (
-    <InfoPanel
-      title="RESCALE"
-      lines={[
-        `This server currently runs as ${instance.flavorName} with ${instance.vcpus} vCPU and ${instance.memoryGb} GB RAM.`,
-        'Rescaling requires a power cycle. Upgrading the disk is irreversible; CPU and RAM can be changed in both directions.',
-      ]}
-      action={<Button variant="secondary">Choose a new type</Button>}
-    />
+    <>
+      <InfoPanel
+        title="RESCALE"
+        lines={[
+          `This server runs as ${instance.flavorName}${
+            instance.vcpus === null ? '' : ` with ${instance.vcpus} vCPU`
+          }${instance.memoryGb === null ? '' : ` and ${instance.memoryGb} GB RAM`}.`,
+          'Rescaling stops the server, changes it, and starts it again.',
+          'The disk can only grow. A flavour with a smaller disk cannot be applied.',
+        ]}
+        action={
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={target ?? ''}
+              onChange={(event) => setTarget(event.target.value || null)}
+              aria-label="New server type"
+              className="h-10 rounded border border-form-border bg-input-bg px-3 text-[0.9375rem] text-text"
+            >
+              <option value="">Choose a new type…</option>
+              {flavors
+                .filter((flavor) => flavor.id !== instance.flavorId)
+                .map((flavor) => (
+                  <option key={flavor.id} value={flavor.id}>
+                    {flavor.name} — {flavor.cpuCount} vCPU, {flavor.memoryMiB / 1024} GB RAM,{' '}
+                    {flavor.minimumDiskGiB} GB disk
+                  </option>
+                ))}
+            </select>
+            <Button disabled={!chosen || wouldShrink} onClick={() => setConfirming(true)}>
+              Rescale
+            </Button>
+          </div>
+        }
+      />
+
+      {wouldShrink && chosen ? (
+        <div className="mt-5">
+          <Callout tone="error" title="That type has a smaller disk.">
+            {chosen.name} offers {chosen.minimumDiskGiB} GB and this server already has{' '}
+            {currentDisk} GB. A disk can grow but never shrink, so this change cannot be applied.
+          </Callout>
+        </div>
+      ) : null}
+
+      <Modal
+        open={confirming}
+        title="Rescale server"
+        confirmLabel="Rescale"
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          if (chosen) void resizeInstance(instance.id, chosen.id, chosen.minimumDiskGiB);
+          setConfirming(false);
+        }}
+      >
+        <p>
+          The server is stopped, changed to {chosen?.name}, and started again. It will be
+          unavailable while that happens.
+        </p>
+        <ModalNote>
+          The disk grows to {chosen?.minimumDiskGiB} GB and cannot be reduced later.
+        </ModalNote>
+      </Modal>
+    </>
   );
 }
 
@@ -855,19 +932,79 @@ export function ServerRebuild() {
   );
 }
 
+/**
+ * Delete — real, and a soft delete, which the copy has to say plainly.
+ *
+ * SAFE-028: normal delete detaches access and **retains** the provider resource for review. The
+ * virtual machine is not destroyed. The only destroy is an administrative purge, which requires
+ * both database ownership and matching live provider ownership markers (SAFE-006) and is not
+ * exposed to a customer at all.
+ *
+ * Calling this "delete" while it retains the machine would be misleading in the other direction,
+ * so the button says what happens rather than what the route is called.
+ */
 export function ServerDelete() {
+  const instance = useInstance();
+  const { retainInstance } = useConsole();
+  const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState('');
+  if (!instance) return null;
+
   return (
-    <InfoPanel
-      title="DELETE"
-      lines={[
-        'Deleting a server releases its resources and stops billing at the end of the current hour.',
-        'This console does not perform destructive actions automatically — deletion must be confirmed explicitly, and snapshots are never removed as a side effect.',
-      ]}
-      action={
-        <Button variant="secondary" disabled>
-          Delete server
-        </Button>
-      }
-    />
+    <>
+      <InfoPanel
+        title="DELETE"
+        lines={[
+          'Deleting this server detaches it and releases its leased address.',
+          'The virtual machine itself is retained for a review period rather than destroyed, so a mistake can be recovered by an administrator.',
+          'Snapshots are never removed as a side effect of deleting a server.',
+        ]}
+        action={
+          <Button
+            onClick={() => {
+              setTyped('');
+              setConfirming(true);
+            }}
+          >
+            Delete server
+          </Button>
+        }
+      />
+
+      <Modal
+        open={confirming}
+        title="Delete server"
+        confirmLabel="Delete server"
+        confirmDisabled={typed.trim() !== instance.name}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          void retainInstance(instance.id).then(async (result) => {
+            if (result.ok) await navigate('/servers');
+          });
+          setConfirming(false);
+        }}
+      >
+        <p>
+          {instance.name} will be detached and its address released. The virtual machine is retained
+          for review and is not destroyed.
+        </p>
+        {/* Typing the hostname, because this is the only irreversible-feeling action a customer
+            can take and a single click is too little friction for it. */}
+        <div className="mt-5">
+          <TextField
+            label={`Type ${instance.name} to confirm`}
+            required
+            autoFocus
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+          />
+        </div>
+        <ModalNote>
+          Permanently destroying a retained server is an administrative action and is not available
+          here.
+        </ModalNote>
+      </Modal>
+    </>
   );
 }

@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./out-tsc/vitest",
+    "types": ["vitest/globals", "node"],
+    "jsx": "react-jsx",
+    "moduleResolution": "bundler",
+    "module": "preserve",
+    "noEmit": true
+  },
+  "include": ["src/**/*.spec.ts", "src/**/*.spec.tsx", "vite.config.ts"],
+  "references": [{ "path": "./tsconfig.app.json" }]
+}

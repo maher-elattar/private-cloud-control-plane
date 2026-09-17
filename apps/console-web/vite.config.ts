@@ -22,6 +22,11 @@ export default defineConfig({
       '/health': { target: CONTROL_API_URL, changeOrigin: true },
     },
   },
+  test: {
+    name: 'console-web',
+    environment: 'node',
+    include: ['src/**/*.spec.ts', 'src/**/*.spec.tsx'],
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

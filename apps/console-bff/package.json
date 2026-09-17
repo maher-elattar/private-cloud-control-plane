@@ -1,0 +1,15 @@
+{
+  "name": "console-bff",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/static": "10.1.4",
+    "@private-cloud/observability": "workspace:*",
+    "fastify": "5.12.5",
+    "tslib": "2.8.1"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}

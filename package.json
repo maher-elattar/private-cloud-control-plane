@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "nx run-many -t build",
+    "console:demo-user": "node tools/console/demo-user.mjs",
+    "console:demo-user:check": "node tools/console/demo-user.mjs --check",
     "contracts:check": "pnpm run contracts:generate && pnpm run contracts:validate && pnpm run contracts:docs && git diff --exit-code -- packages/contracts/src/generated docs/contracts",
     "contracts:docs": "node tools/contracts/generate-docs.mjs",
     "contracts:generate": "node tools/contracts/generate.mjs",

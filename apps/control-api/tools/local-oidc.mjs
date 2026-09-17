@@ -1,5 +1,9 @@
 import { createServer } from 'node:http';
+import { scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 import { importJWK, SignJWT } from 'jose';
+
+const scrypt = promisify(scryptCallback);
 
 const hostname = process.env.LOCAL_OIDC_HOST?.trim() || '127.0.0.1';
 const port = Number.parseInt(process.env.LOCAL_OIDC_PORT ?? '18080', 10);
@@ -34,13 +38,80 @@ const publicJwk = {
   use: signingJwk.use,
 };
 
+/**
+ * The seeded development users, read from the environment.
+ *
+ * Format, one record per entry, semicolon-separated:
+ *
+ *     username:scrypt-hex:salt-hex:roles,comma,separated:projects,comma,separated
+ *
+ * WHY this exists at all. Until now the only way to obtain a token here was `GET /token`, which
+ * mints one for whatever roles and projects are asked for, with **no credential of any kind**.
+ * That is exactly right for the verification scripts, which need a token without a login flow, and
+ * exactly wrong as the thing a login page talks to: a console in front of it would be theatre —
+ * type anything, receive administrator.
+ *
+ * WHY a hash and not a password. The value reaches this process through an environment variable
+ * that is generated into a gitignored file, and SAFE-036 governs what may enter history. A hash
+ * means a leaked environment does not hand over a reusable credential, and it costs one line.
+ *
+ * This is still a development identity stub. Production points `OIDC_ISSUER` at a real provider
+ * and none of this runs.
+ */
+const users = new Map(
+  (process.env.LOCAL_OIDC_USERS ?? '')
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [username, hash, salt, roles, projects] = entry.split(':');
+      return [
+        username,
+        {
+          hash: hash ?? '',
+          salt: salt ?? '',
+          roles: (roles ?? 'tenant_developer').split(',').filter(Boolean),
+          projects: (projects ?? '').split(',').filter(Boolean),
+        },
+      ];
+    }),
+);
+
+/**
+ * Verifies a password against a seeded user.
+ *
+ * Comparison is `timingSafeEqual` on the derived key rather than `===` on the hex, and an unknown
+ * username still performs a derivation before failing — so the answer takes the same time whether
+ * the user exists or not, and cannot be used to enumerate accounts.
+ *
+ * @param {string} username The username as typed.
+ * @param {string} password The password as typed.
+ * @returns {Promise<{roles: string[], projects: string[]} | null>} The user, or null.
+ */
+async function verify(username, password) {
+  const user = users.get(username);
+  const salt = user?.salt ?? 'absent';
+  const expected = Buffer.from(user?.hash ?? '00'.repeat(32), 'hex');
+  const derived = await scrypt(password, salt, expected.length);
+  const matches = expected.length === derived.length && timingSafeEqual(expected, derived);
+  return user && matches ? { roles: user.roles, projects: user.projects } : null;
+}
+
 /** Sends a JSON response without exposing signing material. */
 function respond(response, statusCode, body) {
   response.writeHead(statusCode, { 'content-type': 'application/json' });
   response.end(`${JSON.stringify(body)}\n`);
 }
 
-/** Issues a short-lived token for the seeded local project. */
+/**
+ * Issues a short-lived token for whatever was asked for, with no credential.
+ *
+ * **Development only.** `tools/verification/verify-*.mjs` depend on this, which is why it is still
+ * here, but anything that can reach it can mint an administrator token for any project. It must
+ * never be exposed outside a local stack, and a real deployment replaces this whole process.
+ *
+ * The credential-verifying path is `POST /token` below.
+ */
 async function token(searchParams) {
   const roles = (searchParams.get('roles') ?? 'tenant_developer').split(',').filter(Boolean);
   const projects = (searchParams.get('projects') ?? defaultProject).split(',').filter(Boolean);
@@ -61,6 +132,7 @@ const server = createServer((request, response) => {
       issuer,
       jwks_uri: `${issuer}/.well-known/jwks.json`,
       token_endpoint: `${issuer}/token`,
+      grant_types_supported: ['password'],
       id_token_signing_alg_values_supported: ['RS256'],
       subject_types_supported: ['public'],
     });
@@ -76,6 +148,44 @@ const server = createServer((request, response) => {
       .catch(() => respond(response, 500, { error: 'token_issuance_failed' }));
     return;
   }
+  if (request.method === 'POST' && url.pathname === '/token') {
+    // The OAuth 2.0 password grant. Deprecated in OAuth 2.1 and not what production should use —
+    // but it is the only grant that lets the console own its own sign-in screen, which is the
+    // point of having one here rather than redirecting to a page this stub does not have.
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      body += chunk;
+      // A login body is a few hundred bytes. Anything larger is not a login.
+      if (body.length > 4096) request.destroy();
+    });
+    request.on('end', () => {
+      const form = new URLSearchParams(body);
+      if (form.get('grant_type') !== 'password') {
+        respond(response, 400, { error: 'unsupported_grant_type' });
+        return;
+      }
+      void verify(form.get('username') ?? '', form.get('password') ?? '')
+        .then(async (user) => {
+          if (!user) {
+            // One answer for an unknown user and a wrong password alike.
+            respond(response, 401, { error: 'invalid_grant' });
+            return;
+          }
+          const parameters = new URLSearchParams();
+          parameters.set('roles', user.roles.join(','));
+          parameters.set('projects', user.projects.join(','));
+          parameters.set('subject', form.get('username') ?? 'local-user');
+          respond(response, 200, {
+            access_token: await token(parameters),
+            token_type: 'Bearer',
+            expires_in: 900,
+          });
+        })
+        .catch(() => respond(response, 500, { error: 'token_issuance_failed' }));
+    });
+    return;
+  }
   if (request.method === 'GET' && url.pathname === '/health/live') {
     respond(response, 200, { status: 'ok' });
     return;
@@ -85,7 +195,7 @@ const server = createServer((request, response) => {
 
 server.listen(port, hostname, () => {
   process.stdout.write(
-    `${JSON.stringify({ event: 'local_oidc_ready', issuer, audience, jwks: `${issuer}/.well-known/jwks.json` })}\n`,
+    `${JSON.stringify({ event: 'local_oidc_ready', issuer, audience, users: users.size, jwks: `${issuer}/.well-known/jwks.json` })}\n`,
   );
 });
 

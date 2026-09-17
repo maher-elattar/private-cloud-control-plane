@@ -4,6 +4,9 @@
   "files": [],
   "references": [
     {
+      "path": "./apps/console-bff"
+    },
+    {
       "path": "./apps/console-web"
     },
     {
@@ -19,31 +22,31 @@
       "path": "./apps/reconciler"
     },
     {
-      "path": "./packages/domain"
+      "path": "./packages/application"
     },
     {
       "path": "./packages/contracts"
+    },
+    {
+      "path": "./packages/domain"
+    },
+    {
+      "path": "./packages/messaging"
+    },
+    {
+      "path": "./packages/observability"
+    },
+    {
+      "path": "./packages/postgres-adapter"
+    },
+    {
+      "path": "./packages/provider-adapters"
     },
     {
       "path": "./packages/provider-sdk"
     },
     {
       "path": "./packages/testing"
-    },
-    {
-      "path": "./packages/postgres-adapter"
-    },
-    {
-      "path": "./packages/application"
-    },
-    {
-      "path": "./packages/provider-adapters"
-    },
-    {
-      "path": "./packages/observability"
-    },
-    {
-      "path": "./packages/messaging"
     }
   ]
 }

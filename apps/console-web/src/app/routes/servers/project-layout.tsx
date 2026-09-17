@@ -34,6 +34,7 @@ export function ProjectSnapshots() {
   if (snapshots.length === 0) {
     return (
       <EmptyState
+        roadmap
         icon={<CameraIcon size={80} />}
         title="You haven't taken a snapshot yet."
         description="A snapshot is a full copy of your server's disk. Snapshots are not bound to the server and will be kept, even if the server is deleted. You can create new servers from a snapshot, or transfer it to another project."
@@ -87,6 +88,7 @@ export function ProjectBackups() {
 export function ProjectPlacementGroups() {
   return (
     <EmptyState
+      roadmap
       icon={<PlacementGroupIcon size={72} />}
       title="You don't have any placement groups yet."
       description="Placement groups let you influence how your servers are distributed across physical hosts, so a single host failure cannot take all of them down at once."
@@ -103,6 +105,7 @@ export function ProjectPrimaryIps() {
   if (withIp.length === 0) {
     return (
       <EmptyState
+        roadmap
         icon={<FloatingIpIcon size={72} />}
         title="You don't have any Primary IPs yet."
         description="Primary IPs are permanently assigned to a server and stay reserved for your project even while the server they belong to is rebuilt."
