@@ -8,6 +8,7 @@ resources:
   - control-api.yaml
   - workers.yaml
   - routing.yaml
+  - console.yaml
   - local-oidc.yaml
   - load-generator.yaml
   - autoscaling.yaml

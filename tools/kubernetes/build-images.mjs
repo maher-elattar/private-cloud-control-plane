@@ -50,6 +50,15 @@ const IMAGES = [
     usedBy: 'applications/control-api.yaml',
   },
   {
+    name: 'console',
+    dockerfile: 'tools/docker/service.Dockerfile',
+    // Its own stage, not `runtime` with an `APP`: this image bundles its dependencies and needs
+    // no install step, because it carries no OpenTelemetry SDK to defeat bundling.
+    target: 'console-runtime',
+    buildArgs: {},
+    usedBy: 'applications/console.yaml',
+  },
+  {
     name: 'provisioning-orchestrator',
     dockerfile: 'tools/docker/service.Dockerfile',
     target: 'runtime',
